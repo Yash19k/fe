@@ -4,7 +4,8 @@
  */
 
 export const API_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
+  (import.meta.env?.VITE_API_URL as string | undefined) ??
+  (typeof window !== 'undefined' ? '' : 'http://localhost:3000');
 
 export class ApiError extends Error {
   status?: number;
@@ -24,7 +25,8 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = API_BASE_URL ? `${API_BASE_URL.replace(/\/+$/, '')}${cleanEndpoint}` : cleanEndpoint;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -86,7 +88,8 @@ async function request<T>(
  * Check backend health status (GET /)
  */
 export async function checkBackendHealth(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/');
+  const endpoint = API_BASE_URL ? '/' : '/api-health';
+  return request<{ success: boolean; message: string }>(endpoint);
 }
 
 /**
