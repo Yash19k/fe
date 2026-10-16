@@ -62,14 +62,19 @@ export const getProjectDashboard = async (
     select: { id: true, organizationId: true, role: true },
   });
 
+  if (!user || !user.organizationId) {
+    throw new AppError("Organization not found", 404, "ORGANIZATION_NOT_FOUND");
+  }
+
   // Find the project.
   const project = await projectRepo().findOne({
-    where: { id: projectId, organizationId: user?.organizationId },
+    where: { id: projectId, organizationId: user.organizationId },
     select: {
       id: true,
       name: true,
       key: true,
       organizationId: true,
+      visibility: true,
     },
   });
 

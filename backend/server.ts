@@ -23,8 +23,17 @@ async function startServer(): Promise<void> {
       );
     });
 
-    server.on("error", (error) => {
-      console.error("HTTP server error:", error);
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        console.error(
+          `Port ${config.port} is already in use. Stop the existing backend process or set a different PORT before starting TaskFlow.`,
+        );
+      } else {
+        console.error("HTTP server error:", error);
+      }
+
+      process.exitCode = 1;
+      server.close();
     });
 
     server.on("close", () => {

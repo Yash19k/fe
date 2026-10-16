@@ -15,18 +15,31 @@ export interface InvitedMember {
   role: UserRole;
 }
 
-function issueAuthCookie(res: Response, userId: string): void {
-  const secret = process.env.JWT_SECRET;
+function issueAuthCookie(
+  res: Response,
+  user: { id: string; role?: string; organizationId?: string | null }
+): string {
+  const secret = process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET;
   if (!secret) {
     throw new AppError("Internal server error.", 500, "INTERNAL_SERVER_ERROR");
   }
-  const token = jwt.sign({ userId }, secret, { algorithm: "HS256", expiresIn: "7d" });
+  const token = jwt.sign(
+    {
+      userId: user.id,
+      role: user.role || "ADMIN",
+      organizationId: user.organizationId || undefined,
+      type: "ACCESS",
+    },
+    secret,
+    { algorithm: "HS256", expiresIn: "7d" }
+  );
   res.cookie("token", token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
+  return token;
 }
 
 export interface RegisterOrganizationPayload {
@@ -79,10 +92,15 @@ export async function registerOrganization(req: Request, res: Response) {
       return { org, newUser };
     });
 
-    issueAuthCookie(res, result.newUser.id);
+    const token = issueAuthCookie(res, {
+      id: result.newUser.id,
+      role: result.newUser.role,
+      organizationId: result.org.id,
+    });
 
     return res.status(201).json({
       success: true,
+      token,
       organizationId: result.org.id,
       userId: result.newUser.id,
       data: {
@@ -133,14 +151,24 @@ export async function login(req: Request, res: Response) {
     throw new AppError("Invalid email or password.", 401, "INVALID_CREDENTIALS");
   }
 
+  if (!user.organizationId) {
+    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
+  }
+
   const organization = await organizationRepository.findOne({ where: { id: user.organizationId } });
   if (!organization) {
     throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
   }
 
-  issueAuthCookie(res, user.id);
+  const token = issueAuthCookie(res, {
+    id: user.id,
+    role: user.role,
+    organizationId: user.organizationId,
+  });
 
   return res.json({
+    success: true,
+    token,
     user: {
       id: user.id,
       name: user.fullName,
@@ -168,7 +196,11 @@ export async function currentUser(req: Request, res: Response) {
     throw new AppError("Invalid authentication token.", 401, "INVALID_TOKEN");
   }
 
-  const organization = await organizationRepository.findOne({ where: { id: user.organizationId} });
+  if (!user.organizationId) {
+    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
+  }
+
+  const organization = await organizationRepository.findOne({ where: { id: user.organizationId } });
   if (!organization) {
     throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
   }

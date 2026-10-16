@@ -35,6 +35,8 @@ app.use(cookieParser());
 app.use("/api/users", userRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/work-items", workItemRoutes);
+app.use("/api/organizations", organizationRoutes);
+app.use("/api/organization", organizationRoutes);
 app.use("/api", sprintRoutes);
 app.use("/api", dashboardRoutes);
 

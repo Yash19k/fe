@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const work_item_validations_1 = require("../validations/work.item.validations");
+const is_loggedin_1 = require("../middleware/is.loggedin");
+const task_controller_1 = require("../controllers/task.controller");
+const async_handler_1 = require("../middleware/async.handler");
+const check_permissions_1 = require("../middleware/check.permissions");
+const router = (0, express_1.Router)();
+router.post("/", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("task:create"), work_item_validations_1.validateCreateWorkItem, (0, async_handler_1.asyncHandler)(task_controller_1.createWorkItem));
+router.patch("/:workItemId", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("task:update"), work_item_validations_1.validateUpdateWorkItem, (0, async_handler_1.asyncHandler)(task_controller_1.updateWorkItem));
+router.delete("/:workItemId", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("task:delete"), (0, async_handler_1.asyncHandler)(task_controller_1.deleteWorkItem));
+router.get("/project/:projectId", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("task:read"), work_item_validations_1.validateViewProjectWorkItems, (0, async_handler_1.asyncHandler)(task_controller_1.getProjectWorkItems));
+exports.default = router;

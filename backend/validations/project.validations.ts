@@ -8,7 +8,7 @@ const projectIdSchema = Joi.object({
   projectId: Joi.string()
     .guid({ version: ["uuidv4"] })
     .required(),
-}).unknown(false);
+}).unknown(true);
 
 const createProjectSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150).required(),

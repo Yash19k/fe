@@ -18,7 +18,9 @@ export const isLoggedIn = async (
   next: NextFunction,
 ): Promise<void> => {
   try {
-    const token = req.cookies?.token;
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+    const token = req.cookies?.token || bearerToken;
 
     if (!token || typeof token !== "string") {
       throw new AppError("Authentication required. Please log in.", 401, "UNAUTHORIZED");
@@ -32,14 +34,13 @@ export const isLoggedIn = async (
       throw new AppError("Internal server error.", 500, "INTERNAL_SERVER_ERROR");
     }
 
-    const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
+    const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] }) as any;
 
     if (
+      !decoded ||
       typeof decoded === "string" ||
       typeof decoded.userId !== "string" ||
-      decoded.userId.length === 0 ||
-      typeof decoded.role !== "string" ||
-      decoded.type !== "ACCESS"
+      decoded.userId.length === 0
     ) {
       throw new AppError("Invalid authentication token.", 401, "INVALID_TOKEN");
     }

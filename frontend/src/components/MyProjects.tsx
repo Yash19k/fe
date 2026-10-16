@@ -1,6 +1,6 @@
 import React from 'react';
 import { Users, ListTodo, Calendar } from 'lucide-react';
-import { formatDeadline } from '../data/mockData';
+import { formatDeadline } from '../data/appDefaults';
 
 export interface MyProjectItem {
   id: string | number;

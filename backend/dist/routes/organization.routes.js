@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const organization_controller_1 = require("../controllers/organization.controller");
+const member_invitation_controller_1 = require("../controllers/member-invitation.controller");
+const is_loggedin_1 = require("../middleware/is.loggedin");
+const router = (0, express_1.Router)();
+router.post("/", organization_controller_1.registerOrganization);
+router.post("/members/invite", is_loggedin_1.isLoggedIn, member_invitation_controller_1.inviteMembersController);
+router.post("/accept", member_invitation_controller_1.acceptInvitationController);
+exports.default = router;

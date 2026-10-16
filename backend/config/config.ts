@@ -1,9 +1,6 @@
 
 import dotenv from "dotenv";
-<<<<<<< HEAD
-// import { string } from "joi";
-=======
->>>>>>> origin/develop
+
 
 dotenv.config();
 

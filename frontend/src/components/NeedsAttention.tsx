@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Clock, Circle, ArrowRight, Minus } from 'lucide-react';
-import { formatDueDate, PRIORITY, STATUS } from '../data/mockData';
+import { formatDueDate } from '../data/appDefaults';
 
 export interface NeedsAttentionTask {
   id: string | number;

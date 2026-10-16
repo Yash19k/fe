@@ -4,12 +4,9 @@ import {
   LayoutDashboard,
   Plus,
   Radio,
-  ChevronRight,
   Shield,
-  Lock,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
-import { canUserAccessProject } from '../../domain/permissions';
 
 export interface WorkspaceSidebarProps {
   isOpen: boolean;
@@ -19,8 +16,6 @@ export interface WorkspaceSidebarProps {
 
 export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: WorkspaceSidebarProps) {
   const {
-    projects,
-    currentProjectId,
     currentCompany,
     currentUser,
     switchUser,
@@ -28,8 +23,6 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
     navigate,
     crossTabIndicator,
   } = useApp();
-
-  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
 
   const isHome = activeRoute === '/' || activeRoute === '';
   const isMyTasks = activeRoute.startsWith('/my-tasks');
@@ -112,7 +105,7 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
         {/* Projects Section */}
         <div className="flex-1 px-3 py-2 overflow-y-auto space-y-1">
           <div className="flex items-center justify-between px-2 py-1.5 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-            <span>Projects ({visibleProjects.length})</span>
+            <span>Projects</span>
             {currentUser.role !== 'Teammate' && (
               <button
                 onClick={onOpenCreateProject}
@@ -124,54 +117,6 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
             )}
           </div>
 
-          <div className="space-y-0.5">
-            {visibleProjects.map((proj) => {
-              const isSelected =
-                activeRoute.startsWith(`/project/${proj.id}`) ||
-                (activeRoute.startsWith('/project') && currentProjectId === proj.id);
-
-              return (
-                <button
-                  key={proj.id}
-                  onClick={() => {
-                    navigate(`/project/${proj.id}/overview`);
-                    onClose?.();
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors group ${
-                    isSelected
-                      ? 'bg-surface-active text-text-primary font-medium'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0 pr-1">
-                    <span
-                      className="w-2.5 h-2.5 rounded-xs flex-shrink-0"
-                      style={{ backgroundColor: proj.color }}
-                    />
-                    <span className="truncate text-left">{proj.name}</span>
-                    {proj.visibility === 'private' && (
-                      <Lock size={10} className="text-amber-400/80 flex-shrink-0" />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span
-                      className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
-                        proj.status === 'On Track'
-                          ? 'text-emerald-400 bg-emerald-500/10'
-                          : 'text-amber-400 bg-amber-500/10'
-                      }`}
-                    >
-                      {proj.status === 'On Track' ? 'Track' : 'Risk'}
-                    </span>
-                    <ChevronRight
-                      size={12}
-                      className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity"
-                    />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         {/* Role Demo Quick Switcher Banner */}

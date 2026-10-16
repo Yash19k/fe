@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { PRIORITY, teamMembers } from '../data/mockData';
+import { PRIORITY, teamMembers } from '../data/appDefaults';
 
 export interface CreateTaskDialogProps {
   onClose: () => void;

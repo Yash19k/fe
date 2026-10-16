@@ -183,6 +183,11 @@ export const createWorkItem =
           throw new AppError("Your account is not active", 403, "ACCOUNT_INACTIVE");
         }
 
+        if (!user.organizationId) {
+          throw new AppError("Account is not associated with an organization", 403, "ORGANIZATION_NOT_FOUND");
+        }
+        const organizationId: string = user.organizationId;
+
         // 2. Check organization isolation and project visibility.
         const project = await projectRepository
           .createQueryBuilder("project")
@@ -195,7 +200,7 @@ export const createWorkItem =
           .where("project.id = :projectId", { projectId })
           .andWhere(
             "project.organizationId = :organizationId",
-            { organizationId: user.organizationId }
+            { organizationId }
           )
           .andWhere(
             `(
@@ -288,7 +293,7 @@ export const createWorkItem =
 
         // 6. Create the work item.
         const workItem = workItemRepository.create({
-          organizationId: user.organizationId,
+          organizationId,
           projectId: project.id,
           createdById: user.id,
           parentWorkItemId: parentWorkItemId ?? null,
@@ -301,7 +306,7 @@ export const createWorkItem =
             dueDate == null ? null : new Date(dueDate),
         });
 
-        const savedWorkItem =
+        const savedWorkItem: WorkItem =
           await workItemRepository.save(workItem);
 
         // 7. Create multiple assignee records.
@@ -526,11 +531,15 @@ export const updateWorkItem = async (req: Request, res: Response) => {
     where: { id: userId },
     select: { id: true, organizationId: true },
   });
+  if (!user || !user.organizationId) {
+    throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+  }
+  const organizationId = user.organizationId;
   const project = await AppDataSource.getRepository(Project)
     .createQueryBuilder("project")
     .leftJoin("project.memberships", "membership", "membership.userId = :userId", { userId })
     .where("project.id = (SELECT work_item.project_id FROM work_items work_item WHERE work_item.id = :workItemId)", { workItemId })
-    .andWhere("project.organizationId = :organizationId", { organizationId: user?.organizationId })
+    .andWhere("project.organizationId = :organizationId", { organizationId })
     .andWhere("(project.visibility = :publicVisibility OR membership.userId = :userId)", {
       publicVisibility: ProjectVisibility.PUBLIC,
       userId,
@@ -538,9 +547,9 @@ export const updateWorkItem = async (req: Request, res: Response) => {
     .getOne();
   const workItemRepository = AppDataSource.getRepository(WorkItem);
   const workItem = await workItemRepository.findOne({
-    where: { id: workItemId, organizationId: user?.organizationId, projectId: project?.id },
+    where: { id: workItemId, organizationId, projectId: project?.id },
   });
-  if (!user || !workItem) {
+  if (!workItem) {
     throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
   }
 
@@ -563,11 +572,15 @@ export const deleteWorkItem = async (req: Request, res: Response) => {
     where: { id: userId },
     select: { id: true, organizationId: true },
   });
+  if (!user || !user.organizationId) {
+    throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+  }
+  const organizationId = user.organizationId;
   const project = await AppDataSource.getRepository(Project)
     .createQueryBuilder("project")
     .leftJoin("project.memberships", "membership", "membership.userId = :userId", { userId })
     .where("project.id = (SELECT work_item.project_id FROM work_items work_item WHERE work_item.id = :workItemId)", { workItemId })
-    .andWhere("project.organizationId = :organizationId", { organizationId: user?.organizationId })
+    .andWhere("project.organizationId = :organizationId", { organizationId })
     .andWhere("(project.visibility = :publicVisibility OR membership.userId = :userId)", {
       publicVisibility: ProjectVisibility.PUBLIC,
       userId,
@@ -575,9 +588,9 @@ export const deleteWorkItem = async (req: Request, res: Response) => {
     .getOne();
   const workItemRepository = AppDataSource.getRepository(WorkItem);
   const workItem = await workItemRepository.findOne({
-    where: { id: workItemId, organizationId: user?.organizationId, projectId: project?.id },
+    where: { id: workItemId, organizationId, projectId: project?.id },
   });
-  if (!user || !workItem) {
+  if (!workItem) {
     throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "taskflow",
   "version": "1.0.0",
-  "packageManager": "pnpm@10.34.7",
+  "packageManager": "pnpm@12.11.2",
   "description": "",
   "type": "commonjs",
   "main": "server.ts",
@@ -9,6 +9,7 @@
     "test": "node --test",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "seed": "ts-node seed.ts",
     "dev": "nodemon --exec \"ts-node --files server.ts\""
   },
   "dependencies": {

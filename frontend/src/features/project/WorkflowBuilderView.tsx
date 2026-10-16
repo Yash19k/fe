@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../hooks/useApp';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Plus, Trash2, ArrowRight, Shield, ArrowUp, ArrowDown, Info, RotateCcw, Save } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, Shield, GripVertical, Info, RotateCcw, Save } from 'lucide-react';
 import type { WorkflowStatus, Workflow, Task } from '../../types';
 
 export function WorkflowBuilderView() {
@@ -16,6 +16,12 @@ export function WorkflowBuilderView() {
   const [newStatusColor, setNewStatusColor] = useState('#6366F1');
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
   const [editingStatusName, setEditingStatusName] = useState('');
+
+  // Drag-and-drop & keyboard reordering state for Lifecycle Flow Stages
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [grabbedIdx, setGrabbedIdx] = useState<number | null>(null);
+  const [liveAnnouncement, setLiveAnnouncement] = useState<string>('');
 
   if (!currentWorkflow) return null;
 
@@ -66,15 +72,86 @@ export function WorkflowBuilderView() {
     showToast(`Status "${statusObj.name}" removed from draft`, 'info');
   }
 
-  function handleMoveStatus(index: number, direction: 'up' | 'down') {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= draftStatuses.length) return;
+  function handleDragStart(e: React.DragEvent, index: number) {
+    if (currentUser.role === 'Teammate') return;
+    setDraggedIdx(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }
 
-    const next = [...draftStatuses];
-    const temp = next[index];
-    next[index] = next[targetIndex];
-    next[targetIndex] = temp;
-    setDraftStatuses(next);
+  function handleDragOver(e: React.DragEvent, index: number) {
+    if (currentUser.role === 'Teammate') return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIdx !== index) {
+      setDragOverIdx(index);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent, targetIndex: number) {
+    e.preventDefault();
+    if (currentUser.role === 'Teammate') return;
+    if (draggedIdx === null || draggedIdx === targetIndex) {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+
+    const updated = [...draftStatuses];
+    const [moved] = updated.splice(draggedIdx, 1);
+    updated.splice(targetIndex, 0, moved);
+
+    setDraftStatuses(updated);
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+    setLiveAnnouncement(`Moved stage "${moved.name}" to position ${targetIndex + 1} of ${updated.length}`);
+  }
+
+  function handleDragEnd() {
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  }
+
+  function handleKeyDownHandle(e: React.KeyboardEvent, index: number, status: WorkflowStatus) {
+    if (currentUser.role === 'Teammate') return;
+
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (grabbedIdx === null) {
+        setGrabbedIdx(index);
+        setLiveAnnouncement(
+          `Grabbed stage "${status.name}" at position ${index + 1} of ${draftStatuses.length}. Use Left/Right arrow keys to move, Space or Enter to drop, Escape to cancel.`
+        );
+      } else {
+        const targetPos = index + 1;
+        setGrabbedIdx(null);
+        setLiveAnnouncement(`Dropped stage "${status.name}" at position ${targetPos} of ${draftStatuses.length}`);
+      }
+    } else if (grabbedIdx !== null && (e.key === 'ArrowLeft' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      if (index > 0) {
+        const next = [...draftStatuses];
+        const [moved] = next.splice(index, 1);
+        next.splice(index - 1, 0, moved);
+        setDraftStatuses(next);
+        setGrabbedIdx(index - 1);
+        setLiveAnnouncement(`Moved "${status.name}" to position ${index} of ${next.length}`);
+      }
+    } else if (grabbedIdx !== null && (e.key === 'ArrowRight' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      if (index < draftStatuses.length - 1) {
+        const next = [...draftStatuses];
+        const [moved] = next.splice(index, 1);
+        next.splice(index + 1, 0, moved);
+        setDraftStatuses(next);
+        setGrabbedIdx(index + 1);
+        setLiveAnnouncement(`Moved "${status.name}" to position ${index + 2} of ${next.length}`);
+      }
+    } else if (e.key === 'Escape' && grabbedIdx !== null) {
+      e.preventDefault();
+      setGrabbedIdx(null);
+      setLiveAnnouncement(`Reordering cancelled for "${status.name}".`);
+    }
   }
 
   function handleStartRename(status: WorkflowStatus) {
@@ -227,17 +304,57 @@ export function WorkflowBuilderView() {
           <div>
             <h3 className="text-sm font-semibold text-text-primary">Lifecycle Flow Stages</h3>
             <p className="text-xs text-text-muted">
-              Sequential order of project workflow statuses. Reorder using up/down arrows.
+              Sequential order of project workflow statuses. Drag and drop stages to reorder, or use keyboard controls.
             </p>
           </div>
+        </div>
+
+        {/* Accessibility screen-reader live announcement region */}
+        <div className="sr-only" aria-live="polite" aria-atomic="true">
+          {liveAnnouncement}
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto py-2 scrollbar-none">
           {draftStatuses.map((st: WorkflowStatus, idx: number) => {
             const hasRestrictions = Object.keys(st.roleRestrictions || {}).length > 0;
+            const isDragging = draggedIdx === idx;
+            const isDragOver = dragOverIdx === idx && draggedIdx !== idx;
+            const isGrabbed = grabbedIdx === idx;
+
             return (
               <React.Fragment key={st.id}>
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-elevated border border-border flex-shrink-0 group">
+                <div
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={(e) => handleDrop(e, idx)}
+                  className={`flex items-center gap-2 p-2.5 rounded-lg bg-surface-elevated border flex-shrink-0 group transition-all select-none ${
+                    isDragging
+                      ? 'opacity-40 scale-95 border-dashed border-brand-primary'
+                      : isDragOver
+                      ? 'border-brand-primary ring-2 ring-brand-primary/30 shadow-md'
+                      : isGrabbed
+                      ? 'border-brand-primary ring-2 ring-brand-primary shadow-md'
+                      : 'border-border'
+                  }`}
+                >
+                  {/* Drag Handle & Accessible Keyboard Reorder Button */}
+                  {currentUser.role !== 'Teammate' && (
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, idx)}
+                      onDragEnd={handleDragEnd}
+                      onKeyDown={(e) => handleKeyDownHandle(e, idx, st)}
+                      className={`p-1 -ml-1 rounded text-text-muted hover:text-text-primary hover:bg-surface focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary cursor-grab active:cursor-grabbing transition-colors ${
+                        isGrabbed ? 'text-brand-primary bg-surface' : ''
+                      }`}
+                      title="Drag to reorder stage (or press Space to reorder with keyboard)"
+                      aria-label={`Reorder ${st.name} stage. Currently position ${idx + 1} of ${draftStatuses.length}. Press Space to grab and arrow keys to move.`}
+                      aria-grabbed={isGrabbed}
+                    >
+                      <GripVertical size={13} className="shrink-0" />
+                    </button>
+                  )}
+
                   <span
                     className="w-3 h-3 rounded-full flex-shrink-0"
                     style={{ backgroundColor: st.color }}
@@ -277,27 +394,6 @@ export function WorkflowBuilderView() {
                     >
                       <Shield size={11} />
                     </span>
-                  )}
-
-                  {currentUser.role !== 'Teammate' && (
-                    <div className="flex items-center gap-0.5 ml-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => handleMoveStatus(idx, 'up')}
-                        disabled={idx === 0}
-                        className="p-0.5 rounded text-text-muted hover:text-text-primary disabled:opacity-30"
-                        title="Move left"
-                      >
-                        <ArrowUp size={11} className="-rotate-90" />
-                      </button>
-                      <button
-                        onClick={() => handleMoveStatus(idx, 'down')}
-                        disabled={idx === draftStatuses.length - 1}
-                        className="p-0.5 rounded text-text-muted hover:text-text-primary disabled:opacity-30"
-                        title="Move right"
-                      >
-                        <ArrowDown size={11} className="-rotate-90" />
-                      </button>
-                    </div>
                   )}
                 </div>
 

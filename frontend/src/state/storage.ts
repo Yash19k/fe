@@ -1,6 +1,6 @@
 /**
  * LocalStorage Persistence Layer for TaskFlow Pro.
- * Provides safe serialization, fallbacks to realistic seed data,
+ * Provides safe serialization and non-destructive schema migration,
  * non-destructive schema migration, and a complete Reset Demo Data capability.
  */
 
@@ -14,7 +14,7 @@ import {
   defaultCompany,
   mockSprints,
   mockLabels,
-} from '../data/seedData';
+} from '../data/appDefaults';
 import {
   User,
   Project,

@@ -295,3 +295,31 @@ export const createSprint = async (
     next(error);
   }
 };
+
+export const getProjectSprints = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const projectIdParam = req.params.projectId;
+    if (!projectIdParam || typeof projectIdParam !== "string") {
+      throw new AppError("Invalid project ID.", 400, "INVALID_PROJECT_ID");
+    }
+
+    const sprintRepo = AppDataSource.getRepository(Sprint);
+    const sprints = await sprintRepo.find({
+      where: { projectId: projectIdParam },
+      order: { startDate: "ASC" },
+      relations: { workItems: true },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: sprints,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

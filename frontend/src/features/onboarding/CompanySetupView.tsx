@@ -12,7 +12,7 @@ import {
   ArrowRight,
   Info,
 } from 'lucide-react';
-import { registerOrganizationApi } from '../../services/api';
+import { registerOrganizationApi, inviteOrganizationMembersApi } from '../../services/api';
 import type { Role } from '../../types';
 
 interface InviteRow {
@@ -23,13 +23,15 @@ interface InviteRow {
 }
 
 export function CompanySetupView() {
-  const { currentUser, completeCompanyOnboarding, navigate, showToast } = useApp();
+  const { currentUser, finishOnboarding, navigate, showToast, login } = useApp();
 
   // Multi-step state: 'company' -> 'invitations'
-  const [step, setStep] = useState<'company' | 'invitations'>('company');
+  const [step, setStep] = useState<'company' | 'invitations'>(() => {
+    return currentUser?.companyName || currentUser?.companyId ? 'invitations' : 'company';
+  });
 
   // Step 1: Company form state
-  const [companyName, setCompanyName] = useState('');
+  const [companyName, setCompanyName] = useState(currentUser?.companyName || '');
   const [companyError, setCompanyError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmittingCompany, setIsSubmittingCompany] = useState(false);
@@ -77,7 +79,7 @@ export function CompanySetupView() {
       .replace(/^-+|-+$/g, '')
       .slice(0, 50) || 'workspace';
 
-    // Attempt registration against real backend API if configured
+    // The backend creates the organization and its owner in one transaction.
     try {
       const pendingPassword =
         sessionStorage.getItem('pending_signup_password') || 'Password123!';
@@ -92,24 +94,27 @@ export function CompanySetupView() {
           name: trimmed,
           slug,
         },
-      }).catch((err) => {
-        // If server is unreachable or 409 already exists, log actionable message
-        console.warn('TaskFlow: registerOrganizationApi response/notice:', err.message);
       });
+
+      // Hydrate the app with the persisted backend user instead of the temporary local user.
+      const loggedIn = await login(
+        currentUser.email,
+        pendingPassword,
+      );
+      if (!loggedIn) {
+        throw new Error('Account was created, but the new session could not be started.');
+      }
     } catch (err: any) {
-      console.warn('TaskFlow: Backend API communication notice:', err?.message);
+      setIsSubmittingCompany(false);
+      setApiError(err?.message || 'Unable to create the account in the backend.');
+      return;
     }
 
-    // Persist company in local application state
-    const saved = completeCompanyOnboarding(trimmed);
     setIsSubmittingCompany(false);
 
-    if (saved) {
-      // Advance to optional invitations step
-      setStep('invitations');
-    } else {
-      setApiError('Unable to save company information to storage. Please try again.');
-    }
+    // Keep the organization ID returned by the backend; only advance locally.
+    setStep('invitations');
+    showToast(`Company "${trimmed}" registered. Invite your team or skip to continue.`, 'success');
   }
 
   function handleAddInviteRow() {
@@ -188,22 +193,29 @@ export function CompanySetupView() {
     setIsSubmittingInvites(true);
     setInviteNotice(null);
 
-    // In backend analysis, email invitation delivery endpoint is not implemented on server.
-    // Accurately inform the user without fake server persistence.
-    setTimeout(() => {
-      setIsSubmittingInvites(false);
-      setInviteNotice(
-        `Workspace created. Note: Outbound SMTP email delivery is not configured on the backend server. ${filledRows.length} member invitations were staged and can be managed under Project Settings.`
+    // The backend creates pending user rows before attempting email delivery.
+    try {
+      await inviteOrganizationMembersApi(
+        filledRows.map((r) => ({
+          email: r.email.trim().toLowerCase(),
+          role: r.role.toUpperCase(),
+        }))
       );
-      showToast(`Workspace ready with ${filledRows.length} team members staged.`, 'success');
-      setTimeout(() => {
-        navigate('/');
-      }, 1500);
-    }, 600);
+    } catch (err: any) {
+      setIsSubmittingInvites(false);
+      setInviteError(err?.message || 'Unable to save invitations to the backend.');
+      return;
+    }
+
+    finishOnboarding();
+    setIsSubmittingInvites(false);
+    showToast(`Workspace ready with ${filledRows.length} team member invitation${filledRows.length > 1 ? 's' : ''} staged.`, 'success');
+    navigate('/');
   }
 
   function handleSkipInvitations() {
-    showToast(`Welcome to ${companyName.trim() || 'your workspace'}!`, 'success');
+    finishOnboarding();
+    showToast(`Welcome to ${companyName.trim() || currentUser?.companyName || 'your workspace'}!`, 'success');
     navigate('/');
   }
 

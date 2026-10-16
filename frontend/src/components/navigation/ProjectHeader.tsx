@@ -68,8 +68,8 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
 
   function handleManageMembersClick() {
     if (!currentProject) return;
-    setProjectTab('settings');
-    navigate(`/project/${currentProject.id}/settings#members`);
+    setProjectTab('members');
+    navigate(`/project/${currentProject.id}/members`);
   }
 
   return (
@@ -147,14 +147,17 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
 
         {/* Right side: Member avatars & prominent Add Work Item / Add Sprint buttons */}
         <div className="flex items-center gap-3">
-          {/* Member avatars button: opens Project Settings -> Members */}
+          {/* Member avatars button: opens Project Settings -> Members in ONE click */}
           <button
             onClick={handleManageMembersClick}
-            className="flex items-center gap-1.5 p-1 -m-1 rounded-lg hover:bg-surface-elevated border border-transparent hover:border-border transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            title="Manage project members"
+            className="flex items-center gap-1.5 px-2 py-1 -m-1 rounded-lg hover:bg-surface-elevated border border-transparent hover:border-border transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            title="Manage project members (Settings → Members)"
             aria-label="Manage project members"
           >
             <AvatarGroup users={projectMembers} max={4} />
+            <span className="text-xs font-medium text-text-secondary group-hover:text-text-primary hidden sm:inline ml-0.5">
+              Members
+            </span>
           </button>
 
           {/* Prominent Header Actions: Add Work Item and Add Sprint side-by-side */}
@@ -187,7 +190,9 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
       {/* Horizontal Tab Navigation */}
       <nav className="flex items-center gap-1 px-4 sm:px-6 overflow-x-auto scrollbar-none border-t border-border/50">
         {tabs.map((tab) => {
-          const isActive = projectTab === tab.id;
+          const isActive =
+            projectTab === tab.id ||
+            (tab.id === 'settings' && (projectTab === 'members' || projectTab === 'activity'));
           const Icon = tab.icon;
 
           return (

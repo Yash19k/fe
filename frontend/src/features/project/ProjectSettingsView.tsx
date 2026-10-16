@@ -56,24 +56,32 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
 
   // Active section inside Settings
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
-    if (typeof window !== 'undefined' && window.location.hash.includes('#members')) {
+    if (initialSection) return initialSection;
+    if (typeof window !== 'undefined' && (window.location.hash.includes('#members') || window.location.hash.endsWith('/members'))) {
       return 'members';
     }
-    if (typeof window !== 'undefined' && window.location.hash.includes('#activity')) {
+    if (typeof window !== 'undefined' && (window.location.hash.includes('#activity') || window.location.hash.endsWith('/activity'))) {
       return 'activity';
     }
     if (typeof window !== 'undefined' && window.location.hash.includes('#labels')) {
       return 'labels';
     }
-    return initialSection;
+    return 'general';
   });
+
+  // Sync active section if initialSection prop changes
+  useEffect(() => {
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [initialSection]);
 
   // Listen for hash changes to sync internal section
   useEffect(() => {
     function handleHash() {
       const hash = window.location.hash;
-      if (hash.includes('#members')) setActiveSection('members');
-      else if (hash.includes('#activity')) setActiveSection('activity');
+      if (hash.includes('#members') || hash.endsWith('/members')) setActiveSection('members');
+      else if (hash.includes('#activity') || hash.endsWith('/activity')) setActiveSection('activity');
       else if (hash.includes('#labels')) setActiveSection('labels');
       else if (hash.includes('#general')) setActiveSection('general');
     }

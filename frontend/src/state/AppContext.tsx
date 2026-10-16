@@ -9,7 +9,7 @@ import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
 import { normalizeProjectId, validateProjectId } from '../domain/projects';
-import { mockUsers, mockProjects, mockTasks, mockWorkflows, mockNotifications, mockAuditLog, defaultCompany, mockSprints, mockLabels } from '../data/seedData';
+import { mockUsers, mockProjects, mockTasks, mockWorkflows, mockNotifications, mockAuditLog, defaultCompany, mockSprints, mockLabels } from '../data/appDefaults';
 import {
   AppContextValue,
   User,
@@ -29,7 +29,34 @@ import {
   SprintStatus,
   Label,
 } from '../types';
-import { createSprintApi } from '../services/api';
+import {
+  createSprintApi,
+  getProjectsApi,
+  createProjectApi,
+  updateProjectApi,
+  deleteProjectApi,
+  getProjectMembersApi,
+  addProjectMemberApi,
+  removeProjectMemberApi,
+  updateProjectMemberRoleApi,
+  getProjectWorkItemsApi,
+  createWorkItemApi,
+  updateWorkItemApi,
+  deleteWorkItemApi,
+  getProjectSprintsApi,
+  currentUserApi,
+  loginApi,
+  logoutApi,
+  backendProjectToFrontend,
+  backendWorkItemToTask,
+  backendSprintToFrontend,
+  frontendStatusToBackend,
+  frontendTypeToBackend,
+  frontendPriorityToBackend,
+  normalizeRole,
+  toBackendRole,
+  isBackendEntityId,
+} from '../services/api';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const initial = useMemo(() => loadInitialState(), []);
@@ -43,6 +70,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(initial.auditLog);
   const [sprints, setSprints] = useState<Sprint[]>(initial.sprints || []);
   const [labels, setLabels] = useState<Label[]>(initial.labels || []);
+  const [allUsers, setAllUsers] = useState<User[]>(mockUsers);
+  const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
 
   // Navigation & UI state
   const [activeRoute, setActiveRoute] = useState<string>(() => {
@@ -71,10 +100,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (match) {
         setCurrentProjectId(match[1]);
         if (match[2]) {
-          setProjectTab(match[2]);
+          const rawTab = match[2].split(/[#?]/)[0];
+          const hashSection = match[2].includes('#') ? match[2].split('#')[1] : null;
+          if (rawTab === 'settings' && hashSection === 'members') {
+            setProjectTab('members');
+          } else {
+            setProjectTab(rawTab);
+          }
         }
       }
     }
+
+    // Run on initial mount to sync direct links and browser refresh
+    handleHashChange();
+
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
@@ -103,6 +142,147 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   }, []);
+
+  // Load authenticated backend data on boot
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function initBackend() {
+      try {
+        const authRes = await currentUserApi().catch(() => null);
+        if (authRes?.user && !isCancelled) {
+          const u = authRes.user;
+          const org = authRes.organization;
+          const mappedUser: User = {
+            id: u.id,
+            name: u.name || u.fullName || 'Workspace Member',
+            email: u.email,
+            role: normalizeRole(u.role),
+            companyId: org?.id,
+            companyName: org?.name,
+            onboardingCompleted: true,
+          };
+          setCurrentUser(mappedUser);
+          if (org) {
+            setCurrentCompany({
+              id: org.id,
+              name: org.name,
+              createdByUserId: org.createdByUserId || u.id,
+              createdAt: org.createdAt || new Date().toISOString(),
+            });
+          }
+        }
+
+        // Fetch real projects from backend
+        const projsRes = await getProjectsApi().catch((err) => {
+          if (err?.code === 'SERVER_UNREACHABLE') {
+            showToast('Backend is unavailable. Showing local data until it reconnects.', 'warning');
+          }
+          return null;
+        });
+        if (projsRes?.data && Array.isArray(projsRes.data) && !isCancelled) {
+          if (projsRes.data.length > 0) {
+            const mapped = projsRes.data.map(backendProjectToFrontend);
+            setProjects(mapped);
+
+            setCurrentProjectId((prev) => {
+              const exists = mapped.some((p) => p.id === prev);
+              return exists ? prev : mapped[0].id;
+            });
+          } else {
+            // Clean empty workspace
+            setProjects([]);
+            setTasks([]);
+            setSprints([]);
+          }
+        }
+      } catch (err: any) {
+        console.warn('TaskFlow: Backend initialization notice:', err?.message);
+      } finally {
+        if (!isCancelled) setIsLoadingBackend(false);
+      }
+    }
+
+    initBackend();
+    return () => {
+      isCancelled = true;
+    };
+  }, [showToast]);
+
+  // Fetch real project details (work items, sprints, members) whenever active project changes
+  useEffect(() => {
+    if (!currentProjectId || currentProjectId === 'proj-1') return;
+    let isCancelled = false;
+
+    async function loadProjectData() {
+      try {
+        // Fetch project work items
+        const itemsRes = await getProjectWorkItemsApi(currentProjectId, 1, 100).catch(() => null);
+        if (itemsRes?.data?.workItems && Array.isArray(itemsRes.data.workItems) && !isCancelled) {
+          const mappedTasks = itemsRes.data.workItems.map((item: any) =>
+            backendWorkItemToTask(item, currentProjectId)
+          );
+          setTasks((prev) => {
+            const otherTasks = prev.filter((t) => t.projectId !== currentProjectId);
+            return [...mappedTasks, ...otherTasks];
+          });
+        }
+
+        // Fetch project sprints
+        const sprintsRes = await getProjectSprintsApi(currentProjectId).catch(() => null);
+        if (sprintsRes?.data && Array.isArray(sprintsRes.data) && !isCancelled) {
+          const mappedSprints = sprintsRes.data.map(backendSprintToFrontend);
+          setSprints((prev) => {
+            const otherSprints = prev.filter((s) => s.projectId !== currentProjectId);
+            return [...mappedSprints, ...otherSprints];
+          });
+        }
+
+        // Fetch project members
+        const membersRes = await getProjectMembersApi(currentProjectId).catch(() => null);
+        if (membersRes?.data && Array.isArray(membersRes.data) && !isCancelled) {
+          const memberUserList: User[] = membersRes.data.map((m: any) => ({
+            id: m.userId,
+            name: m.name || m.email?.split('@')[0] || 'Member',
+            email: m.email || '',
+            role: normalizeRole(m.role),
+            initials: (m.name || m.email || 'M').slice(0, 2).toUpperCase(),
+          }));
+
+          setAllUsers((prev) => {
+            const existingIds = new Set(prev.map((u) => u.id));
+            const newUsers = memberUserList.filter((u) => !existingIds.has(u.id));
+            return [...prev, ...newUsers];
+          });
+
+          setProjects((prev) =>
+            prev.map((p) => {
+              if (p.id === currentProjectId) {
+                const memberIds = membersRes.data.map((m: any) => m.userId);
+                const memberRoles: Record<string, Role> = {};
+                membersRes.data.forEach((m: any) => {
+                  memberRoles[m.userId] = normalizeRole(m.role);
+                });
+                return {
+                  ...p,
+                  memberIds,
+                  memberRoles,
+                };
+              }
+              return p;
+            })
+          );
+        }
+      } catch (err: any) {
+        console.warn('TaskFlow: Project data load notice:', err?.message);
+      }
+    }
+
+    loadProjectData();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentProjectId]);
 
   // Multi-tab broadcast subscription
   useEffect(() => {
@@ -290,8 +470,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('created', 'task', newTask.id, `Created ${newTask.type} "${newTask.title}"`, null, newTask, false, newTask.projectId);
     broadcastEvent('TASK_CREATED', newTask);
     showToast(`${newTask.type} "${newTask.title}" created`, 'success');
+
+    // Async persist to backend API
+    const targetProject = projects.find((p) => p.id === newTask.projectId);
+    const isServerProject = targetProject && targetProject.id.includes('-');
+    if (isServerProject) {
+      createWorkItemApi({
+        projectId: newTask.projectId,
+        parentWorkItemId: newTask.parentId || null,
+        type: frontendTypeToBackend(newTask.type),
+        title: newTask.title,
+        description: newTask.description || null,
+        priority: frontendPriorityToBackend(newTask.priority),
+        status: frontendStatusToBackend(newTask.status),
+        dueDate: newTask.dueDate || null,
+        assignees: newTask.assigneeId ? [{ userId: newTask.assigneeId }] : [],
+      }).then((res) => {
+        const serverItem = res?.data || res?.workItem;
+        if (serverItem?.id) {
+          setTasks((prev) => prev.map((t) => (t.id === newTask.id ? { ...t, id: serverItem.id } : t)));
+        }
+      }).catch((err) => {
+        console.warn('TaskFlow: Backend task creation notice:', err.message);
+      });
+    }
+
     return { success: true, task: newTask };
-  }, [currentUser, currentProjectId, currentProject, tasks, recordAudit, showToast]);
+  }, [currentUser, currentProjectId, currentProject, projects, tasks, recordAudit, showToast]);
 
   const updateTask = useCallback((taskId: string, updates: any, snapshotVersion: number | null = null) => {
     let validationError = null;
@@ -361,6 +566,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(validationError, 'error');
       return { success: false, reason: validationError };
     }
+
+    if (typeof taskId === 'string' && taskId.includes('-')) {
+      const backendUpdates: any = {};
+      if (updates.title !== undefined) backendUpdates.title = updates.title;
+      if (updates.description !== undefined) backendUpdates.description = updates.description;
+      if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
+      if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
+      if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
+      if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = updates.parentId || null;
+
+      if (Object.keys(backendUpdates).length > 0) {
+        updateWorkItemApi(taskId, backendUpdates).catch((err) => {
+          console.warn('TaskFlow: Backend task update notice:', err.message);
+        });
+      }
+    }
+
     return { success: true };
   }, [recordAudit, showToast]);
 
@@ -375,13 +597,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // Remove task, clean up dependencies, and handle parent-child cascades safely
     setTasks((prev) => {
-      // 1. If deleting an Epic, unlink parentId for any child Stories/Tasks/Bugs
-      // 2. If deleting a Task/Story/Bug, delete its child Subtasks
-      // 3. If deleting a Subtask, clean it from parent's subtasks array
       return prev
         .filter((t) => {
           if (t.id === taskId) return false;
-          // Cascade delete child subtasks of deleted parent
           if (t.parentId === taskId && t.type === WORK_ITEM_TYPES.SUBTASK) return false;
           return true;
         })
@@ -389,7 +607,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const cleanedDeps = (t.dependencyIds || []).filter((id: string) => id !== taskId);
           let cleanedParentId = t.parentId;
           if (cleanedParentId === taskId) {
-            cleanedParentId = null; // Unlink parent if story/task/bug under epic
+            cleanedParentId = null;
           }
           const cleanedSubtasks = (t.subtasks || []).filter((s) => s.id !== taskId);
           return {
@@ -407,6 +625,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     recordAudit('deleted', 'task', taskId, `Deleted ${target.type || 'task'} "${target.title}"`, target, null, true, target.projectId);
     showToast(`${target.type || 'Task'} "${target.title}" deleted`, 'info');
+
+    if (typeof taskId === 'string' && taskId.includes('-')) {
+      deleteWorkItemApi(taskId).catch((err) => {
+        console.warn('TaskFlow: Backend task deletion notice:', err.message);
+      });
+    }
+
     return true;
   }, [currentUser.role, tasks, activeDrawerTaskId, recordAudit, showToast]);
 
@@ -435,7 +660,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setTasks((prev) => {
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
-      // Sync parent's subtask completed state if this is a subtask
       if (updated.parentId && updated.type === WORK_ITEM_TYPES.SUBTASK) {
         nextList = nextList.map((t) => {
           if (t.id === updated.parentId) {
@@ -463,6 +687,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } else {
       showToast(`Status updated to ${newStatus}`, 'success');
     }
+
+    if (typeof taskId === 'string' && taskId.includes('-')) {
+      updateWorkItemApi(taskId, { status: frontendStatusToBackend(newStatus) }).catch((err) => {
+        console.warn('TaskFlow: Backend status update notice:', err.message);
+      });
+    }
+
     return true;
   }, [tasks, currentUser.role, currentWorkflow, recordAudit, showToast]);
 
@@ -829,6 +1060,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCurrentProjectId(newProj.id);
     recordAudit('created', 'project', newProj.id, `Created project "${newProj.name}"`, null, newProj, false, newProj.id);
     showToast(`Project "${newProj.name}" created`, 'success');
+
+    // Async persist to backend API
+    createProjectApi({
+      name: newProj.name,
+      key: newProj.projectKey || newProj.id.slice(0, 10).toUpperCase(),
+      description: newProj.description || null,
+      startDate: newProj.startDate || null,
+      endDate: newProj.dueDate || null,
+      visibility: newProj.visibility === 'global' ? 'PUBLIC' : 'PRIVATE',
+    }).then((res) => {
+      const serverProj = res?.project || res?.data;
+      if (serverProj?.id) {
+        setProjects((prev) =>
+          prev.map((p) => (p.id === newId ? { ...p, id: serverProj.id } : p))
+        );
+        setCurrentProjectId((prev) => (prev === newId ? serverProj.id : prev));
+      }
+    }).catch((err) => {
+      console.warn('TaskFlow: Backend project creation notice:', err.message);
+    });
+
     return newProj;
   }, [currentUser, recordAudit, showToast]);
 
@@ -850,6 +1102,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setProjects((prev) => prev.map((p) => (p.id === projectId ? updated : p)));
     recordAudit('updated', 'project', projectId, `Updated settings for project "${updated.name}"`, target, updated, false, projectId);
     showToast(`Project settings saved`, 'success');
+
+    if (isBackendEntityId(projectId)) {
+      const backendPayload: any = {};
+      if (updates.name) backendPayload.name = updates.name;
+      if (updates.description !== undefined) backendPayload.description = updates.description;
+      if (updates.visibility) backendPayload.visibility = updates.visibility === 'global' ? 'PUBLIC' : 'PRIVATE';
+      if (updates.startDate) backendPayload.startDate = updates.startDate;
+      if (updates.dueDate) backendPayload.endDate = updates.dueDate;
+
+      if (Object.keys(backendPayload).length > 0) {
+        updateProjectApi(projectId, backendPayload).catch((err) => {
+          console.warn('TaskFlow: Backend project update notice:', err.message);
+        });
+      }
+    }
+
     return true;
   }, [currentUser.role, projects, recordAudit, showToast]);
 
@@ -879,6 +1147,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     recordAudit('renamed', 'project', projectId, `Renamed project from "${previousName}" to "${trimmed}"`, { name: previousName }, { name: trimmed }, false, projectId);
     showToast(`Project renamed to "${trimmed}"`, 'success');
+
+    if (isBackendEntityId(projectId)) {
+      updateProjectApi(projectId, { name: trimmed }).catch((err) => {
+        console.warn('TaskFlow: Backend project rename notice:', err.message);
+      });
+    }
+
     return true;
   }, [currentUser.role, projects, recordAudit, showToast]);
 
@@ -913,6 +1188,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       projectId
     );
     showToast(`Project visibility set to ${visibility === 'private' ? 'Private' : 'Global'}`, 'success');
+
+    if (isBackendEntityId(projectId)) {
+      updateProjectApi(projectId, { visibility: visibility === 'global' ? 'PUBLIC' : 'PRIVATE' }).catch((err) => {
+        console.warn('TaskFlow: Backend visibility update notice:', err.message);
+      });
+    }
+
     return true;
   }, [currentUser.role, projects, recordAudit, showToast]);
 
@@ -997,6 +1279,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     showToast(`Project "${target.name}" and associated data deleted`, 'info');
     navigate('/projects');
+
+    if (isBackendEntityId(projectId)) {
+      deleteProjectApi(projectId).catch((err) => {
+        console.warn('TaskFlow: Backend project deletion notice:', err.message);
+      });
+    }
+
     return true;
   }, [currentUser.role, projects, tasks, currentProjectId, navigate, showToast]);
 
@@ -1028,10 +1317,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    const userObj = mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
     recordAudit('member_added', 'project', projectId, `Added ${userObj?.name || userId} (${role}) to project`, null, { userId, role }, false, projectId);
     showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
-  }, [projects, recordAudit, showToast]);
+
+    if (isBackendEntityId(projectId)) {
+      addProjectMemberApi(projectId, { memberId: userId, role: toBackendRole(role) }).catch((err) => {
+        console.warn('TaskFlow: Backend add member notice:', err.message);
+      });
+    }
+  }, [projects, allUsers, recordAudit, showToast]);
 
   const removeProjectMember = useCallback((projectId: string, userId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
@@ -1064,11 +1359,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    const userObj = mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
     recordAudit('member_removed', 'project', projectId, `Removed ${userObj?.name || userId} from project`, null, { userId }, false, projectId);
     showToast('Member removed from project', 'info');
+
+    if (typeof projectId === 'string' && projectId.includes('-')) {
+      removeProjectMemberApi(projectId, userId).catch((err) => {
+        console.warn('TaskFlow: Backend remove member notice:', err.message);
+      });
+    }
+
     return true;
-  }, [currentUser.role, projects, recordAudit, showToast]);
+  }, [currentUser.role, projects, allUsers, recordAudit, showToast]);
 
   const updateProjectMemberRole = useCallback((projectId: string, userId: string, newRole: Role) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
@@ -1097,11 +1399,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser((prev) => ({ ...prev, role: newRole }));
     }
 
-    const userObj = mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
     recordAudit('role_changed', 'project', projectId, `Changed role of ${userObj?.name || userId} to ${newRole}`, null, { userId, role: newRole }, false, projectId);
     showToast(`Role updated to ${newRole}`, 'success');
+
+    if (typeof projectId === 'string' && projectId.includes('-')) {
+      updateProjectMemberRoleApi(projectId, userId, toBackendRole(newRole)).catch((err) => {
+        console.warn('TaskFlow: Backend update member role notice:', err.message);
+      });
+    }
+
     return true;
-  }, [currentUser, recordAudit, showToast]);
+  }, [currentUser, projects, allUsers, recordAudit, showToast]);
 
   // Notifications
   const markNotificationRead = useCallback((notifId: string) => {
@@ -1113,14 +1422,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast('All notifications marked as read', 'info');
   }, [showToast]);
 
+  // Authentication & Session helpers
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+    try {
+      const res = await loginApi({ email, password });
+      if (res?.user) {
+        const u = res.user;
+        const org = res.organization;
+        const mappedUser: User = {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: normalizeRole(u.role),
+          companyId: org?.id,
+          companyName: org?.name,
+          onboardingCompleted: true,
+        };
+        setCurrentUser(mappedUser);
+        if (org) {
+          setCurrentCompany({
+            id: org.id,
+            name: org.name,
+            createdByUserId: org.createdByUserId || u.id,
+            createdAt: org.createdAt || new Date().toISOString(),
+          });
+        }
+        // Fetch projects from backend
+        const projs = await getProjectsApi().catch(() => null);
+        if (projs?.data && Array.isArray(projs.data) && projs.data.length > 0) {
+          const mapped = projs.data.map(backendProjectToFrontend);
+          setProjects(mapped);
+          setCurrentProjectId(mapped[0].id);
+        }
+        showToast(`Welcome back, ${u.name}!`, 'success');
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err.message || 'Login failed', 'error');
+      return false;
+    }
+  }, [showToast]);
+
+  const logout = useCallback(async () => {
+    await logoutApi().catch(() => null);
+    setCurrentUser(mockUsers[0]);
+    showToast('Signed out successfully', 'info');
+    navigate('/login');
+  }, [navigate, showToast]);
+
   // Role Switcher (Simulated user selector for prototype testing)
   const switchUser = useCallback((userId: string) => {
-    const target = mockUsers.find((u) => u.id === userId);
+    const target = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
     if (target) {
       setCurrentUser(target);
       showToast(`Switched active role to ${target.role} (${target.name})`, 'info');
+      // If demo user, authenticate with backend session as well
+      const roleEmailMap: Record<string, string> = {
+        Admin: 'admin@taskflow.pro',
+        Manager: 'manager@taskflow.pro',
+        Teammate: 'teammate@taskflow.pro',
+      };
+      const email = roleEmailMap[target.role];
+      if (email) {
+        loginApi({ email, password: 'Password123!' }).catch(() => null);
+      }
     }
-  }, [showToast]);
+  }, [allUsers, showToast]);
 
   const registerUser = useCallback((userData: { name: string; email: string }): User => {
     const initials = userData.name
@@ -1147,7 +1515,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return newUser;
   }, []);
 
-  const completeCompanyOnboarding = useCallback((companyName: string): boolean => {
+  const completeCompanyOnboarding = useCallback((companyName: string, markComplete = true): boolean => {
     const trimmed = companyName.trim();
     if (!trimmed) return false;
 
@@ -1163,7 +1531,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...currentUser,
         companyId: newCompany.id,
         companyName: newCompany.name,
-        onboardingCompleted: true,
+        onboardingCompleted: markComplete,
       };
 
       setCurrentCompany(newCompany);
@@ -1177,6 +1545,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   }, [currentUser, recordAudit]);
+
+  const finishOnboarding = useCallback(() => {
+    setCurrentUser((prev) => {
+      const updated = {
+        ...prev,
+        onboardingCompleted: true,
+      };
+      saveStateToStorage('CURRENT_USER', updated);
+      return updated;
+    });
+  }, []);
 
   // Sprint operations
   const createSprint = useCallback(async (sprintData: Partial<Sprint>) => {
@@ -1196,12 +1575,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      await createSprintApi(targetProjectId, {
+      const res = await createSprintApi(targetProjectId, {
         name: newSprint.name,
         goal: newSprint.goal,
         startDate: newSprint.startDate,
         endDate: newSprint.endDate,
       });
+      const serverSprintId = res?.data?.sprint?.id || res?.data?.id;
+      if (serverSprintId) {
+        newSprint.id = serverSprintId;
+      }
     } catch (err: any) {
       console.warn('TaskFlow: Backend createSprint notification:', err.message);
     }
@@ -1274,6 +1657,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     currentCompany,
     registerUser,
     completeCompanyOnboarding,
+    finishOnboarding,
     switchUser,
     projects,
     createProject,
@@ -1332,7 +1716,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast,
     crossTabIndicator,
     resetDemoState,
-    allUsers: mockUsers,
+    allUsers,
+    login,
+    logout,
+    isLoadingBackend,
     sprints,
     projectSprints,
     createSprint,
