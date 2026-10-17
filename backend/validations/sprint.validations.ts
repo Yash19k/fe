@@ -7,7 +7,9 @@ import {
 } from "../entities/work.item.entity";
 
 const isRealDate = (value: string): boolean => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
 
   const date = new Date(`${value}T00:00:00.000Z`);
 
@@ -22,6 +24,7 @@ const dateSchema = Joi.string()
     if (!isRealDate(value)) {
       return helpers.error("date.format");
     }
+
     return value;
   })
   .messages({
@@ -59,13 +62,7 @@ const workItemSchema = Joi.object({
     .valid(...Object.values(WorkItemStatus))
     .default(WorkItemStatus.BACKLOG),
 
-  dueDate: Joi.alternatives()
-    .try(
-      dateSchema,
-      Joi.string().isoDate(),
-    )
-    .allow(null)
-    .optional(),
+  dueDate: dateSchema.allow(null).optional(),
 
   parentWorkItemId: uuidSchema.allow(null).optional(),
 
@@ -86,15 +83,25 @@ const workItemSchema = Joi.object({
       return helpers.error("workItem.parentRequired");
     }
 
+    if (
+      item.type !== WorkItemType.SUBTASK &&
+      item.parentWorkItemId
+    ) {
+      return helpers.error("workItem.parentNotAllowed");
+    }
+
     return item;
   })
   .messages({
     "workItem.parentRequired":
       "A SUBTASK must have a parentWorkItemId.",
+    "workItem.parentNotAllowed":
+      "Only a SUBTASK may specify a parentWorkItemId.",
+    "object.unknown": "Unknown field: {{#label}}.",
   });
 
 export const createSprintSchema = Joi.object({
-  name: Joi.string().trim().min(1).max(150).required(),
+  name: Joi.string().trim().min(1).max(100).required(),
 
   goal: Joi.string().trim().max(1000).allow("", null).optional(),
 
