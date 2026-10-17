@@ -22,7 +22,6 @@ export interface RegisterOrganizationPayload {
   email: string;
   passwordHash: string;
   orgName: string;
-  slug: string;
   invitedMembers?: InvitedMember[];
 }
 
@@ -63,7 +62,6 @@ export async function registerOrganization(
 
       const org = await m.save(Organization, {
         name: organization.name,
-        slug: organization.slug.toLowerCase(),
       });
 
       // step 1 data: user, linked to the organization
@@ -128,11 +126,11 @@ export async function registerOrganization(
       },
     });
   } catch (err: any) {
-    // Postgres unique violation: email or slug already exists
+    // Postgres unique violation: email already exists
     if (err.code === "23505") {
       return res
         .status(409)
-        .json({ message: "Email or workspace URL already in use" });
+        .json({ message: "Email already in use" });
     }
     console.error(err);
     // return res.status(500).json({ message: "Something went wrong" });

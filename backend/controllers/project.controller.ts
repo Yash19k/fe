@@ -1,274 +1,340 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
+import { EntityManager } from "typeorm";
 import { AppDataSource } from "../config/data.source";
 import {
   Project,
   ProjectVisibility,
 } from "../entities/project.entity";
-import { User } from "../entities/user.entity";
+import { User, UserRole } from "../entities/user.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { AppError } from "../errors/app.error";
 
-export const createProject = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  const {
-    name,
-    key,
-    description,
-    startDate,
-    endDate,
-    visibility,
-  } = req.body;
+type Actor = {
+  id: string;
+  organizationId: string;
+  role: UserRole;
+};
 
+const getActor = async (req: Request): Promise<Actor> => {
   const userId = req.user?.id;
 
   if (!userId) {
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  }
+
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: { id: userId },
+    select: { id: true, organizationId: true, role: true },
+  });
+
+  if (!user) {
+    throw new AppError("Authenticated user not found.", 401, "USER_NOT_FOUND");
+  }
+
+  if (!user.organizationId) {
     throw new AppError(
-      "Authentication required.",
-      401,
-      "UNAUTHORIZED",
+      "User is not associated with an organization.",
+      403,
+      "ORGANIZATION_NOT_FOUND",
     );
   }
 
-  const result = await AppDataSource.transaction(async (manager) => {
-    const userRepository = manager.getRepository(User);
-    const projectRepository = manager.getRepository(Project);
-    const memberRepository = manager.getRepository(ProjectMember);
+  return {
+    id: user.id,
+    organizationId: user.organizationId,
+    role: user.role,
+  };
+};
 
-    const user = await userRepository.findOne({ where: { id: userId } });
+const getProject = async (
+  projectId: string,
+  organizationId: string,
+  manager = AppDataSource.manager,
+): Promise<Project> => {
+  const project = await manager.getRepository(Project).findOne({
+    where: { id: projectId, organizationId },
+  });
 
-    if (!user) {
-      throw new AppError("Authenticated user not found.", 401, "USER_NOT_FOUND");
+  if (!project) {
+    // Deliberately avoid revealing whether another organization's project exists.
+    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
+  }
+
+  return project;
+};
+
+const getMembership = async (
+  projectId: string,
+  userId: string,
+  manager = AppDataSource.manager,
+): Promise<ProjectMember | null> =>
+  manager.getRepository(ProjectMember).findOne({
+    where: { projectId, userId },
+  });
+
+const canViewProject = async (
+  actor: Actor,
+  project: Project,
+  manager = AppDataSource.manager,
+): Promise<boolean> => {
+  if (project.visibility === ProjectVisibility.PUBLIC) return true;
+  if (actor.role === UserRole.ADMIN) return true;
+  return Boolean(await getMembership(project.id, actor.id, manager));
+};
+
+const canManageProject = async (
+  actor: Actor,
+  project: Project,
+  manager = AppDataSource.manager,
+): Promise<boolean> => {
+  if (actor.role === UserRole.ADMIN) return true;
+
+  const membership = await getMembership(project.id, actor.id, manager);
+  return Boolean(
+    membership &&
+      (membership.role === ProjectRole.ADMIN ||
+        membership.role === ProjectRole.LEAD),
+  );
+};
+
+const requireViewAccess = async (
+  actor: Actor,
+  project: Project,
+): Promise<void> => {
+  if (!(await canViewProject(actor, project))) {
+    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
+  }
+};
+
+const requireManageAccess = async (
+  actor: Actor,
+  project: Project,
+): Promise<void> => {
+  if (!(await canManageProject(actor, project))) {
+    throw new AppError(
+      "You do not have permission to manage this project.",
+      403,
+      "FORBIDDEN",
+    );
+  }
+};
+
+const ensureNotLastProjectAdmin = async (
+  manager: EntityManager,
+  projectId: string,
+  member: ProjectMember,
+): Promise<void> => {
+  if (member.role !== ProjectRole.ADMIN) return;
+
+  const count = await manager.getRepository(ProjectMember).count({
+    where: { projectId, role: ProjectRole.ADMIN },
+  });
+
+  if (count <= 1) {
+    throw new AppError(
+      "A project must have at least one project administrator.",
+      409,
+      "LAST_PROJECT_ADMIN",
+    );
+  }
+};
+
+export const createProject = async (req: Request, res: Response) => {
+  const actor = await getActor(req);
+  const { name, key, description, startDate, endDate, visibility } = req.body;
+
+  const project = await AppDataSource.transaction(async (manager) => {
+    const projectRepo = manager.getRepository(Project);
+    const userRepo = manager.getRepository(User);
+    const memberRepo = manager.getRepository(ProjectMember);
+
+    // Re-read the user inside the transaction to use the current organization.
+    const user = await userRepo.findOne({
+      where: { id: actor.id },
+      select: { id: true, organizationId: true },
+    });
+
+    if (!user?.organizationId) {
+      throw new AppError(
+        "User is not associated with an organization.",
+        403,
+        "ORGANIZATION_NOT_FOUND",
+      );
     }
 
-    if (!user.organizationId) {
-      throw new AppError("You are not associated with an organization.", 403, "ORGANIZATION_NOT_FOUND");
-    }
-
-    const normalizedKey = key.toUpperCase();
-
-    const existingProject = await projectRepository.findOne({
+    const normalizedKey = String(key).trim().toUpperCase();
+    const existing = await projectRepo.findOne({
       where: { organizationId: user.organizationId, key: normalizedKey },
       select: { id: true },
     });
 
-    if (existingProject) {
-      throw new AppError("This project key is already used in your organization.", 409, "PROJECT_KEY_CONFLICT");
+    if (existing) {
+      throw new AppError(
+        "This project key is already used in your organization.",
+        409,
+        "PROJECT_KEY_CONFLICT",
+      );
     }
 
-    const project = await projectRepository.save(projectRepository.create({
-      name,
-      key: normalizedKey,
-      description: description?.trim() || null,
-      startDate: startDate ?? null,
-      endDate: endDate ?? null,
-      visibility: visibility ?? ProjectVisibility.PRIVATE,
-      organizationId: user.organizationId,
-      createdById: user.id,
-    }));
+    const savedProject = await projectRepo.save(
+      projectRepo.create({
+        name: String(name).trim(),
+        key: normalizedKey,
+        description: description?.trim() || null,
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+        visibility: visibility ?? ProjectVisibility.PRIVATE,
+        organizationId: user.organizationId,
+        createdById: user.id,
+      }),
+    );
 
-    await memberRepository.save(memberRepository.create({
-      projectId: project.id,
-      userId: user.id,
-      addedById: user.id,
-      role: ProjectRole.ADMIN,
-    }));
+    await memberRepo.save(
+      memberRepo.create({
+        projectId: savedProject.id,
+        userId: user.id,
+        addedById: user.id,
+        role: ProjectRole.ADMIN,
+      }),
+    );
 
-    return project;
+    return savedProject;
   });
 
   res.status(201).json({
     success: true,
     message: "Project created successfully.",
-    project: result,
-    data: result,
+    data: project,
   });
-}
+};
 
+export const viewProjects = async (req: Request, res: Response) => {
+  const actor = await getActor(req);
 
-export const viewProjects = 
-  async (req: Request, res: Response) => {
-    // 1. Get the authenticated user's ID.
-    const userId = req.user?.id;
+  const query = AppDataSource.getRepository(Project)
+    .createQueryBuilder("project")
+    .leftJoin(
+      "project.memberships",
+      "currentMembership",
+      "currentMembership.userId = :userId",
+      { userId: actor.id },
+    )
+    .where("project.organizationId = :organizationId", {
+      organizationId: actor.organizationId,
+    })
+    .andWhere(
+      `(
+        project.visibility = :publicVisibility
+        OR :isOrganizationAdmin = true
+        OR currentMembership.userId = :userId
+      )`,
+      {
+        publicVisibility: ProjectVisibility.PUBLIC,
+        isOrganizationAdmin: actor.role === UserRole.ADMIN,
+        userId: actor.id,
+      },
+    )
+    .orderBy("project.createdAt", "DESC");
 
-    if (!userId) {
-      throw new AppError(
-        "Authentication required",
-        401,
-        "UNAUTHORIZED"
-      );
-    }
+  const projects = await query.getMany();
 
-    const userRepository = AppDataSource.getRepository(User);
-
-const user = await userRepository.findOne({
-  where: { id: userId },
-  select: {
-    id: true,
-    organizationId: true,
-  },
-});
-
-
-    if (!user) {
-      throw new AppError(
-        "User not found",
-        404,
-        "USER_NOT_FOUND"
-      );
-    }
-
-    const projectRepository = AppDataSource.getRepository(Project);
-
-    const projects = await projectRepository
-      .createQueryBuilder("project")
-      .leftJoin(
-        "project.memberships",
-        "accessMembership",
-        "accessMembership.userId = :userId",
-        { userId: user.id }
-      )
-      .leftJoinAndSelect("project.memberships", "membership")
-      .where("project.organizationId = :organizationId", {
-        organizationId: user.organizationId,
-      })
-      .andWhere(
-        `(
-          project.visibility = :publicVisibility
-          OR accessMembership.userId = :userId
-        )`,
-        {
-          publicVisibility: ProjectVisibility.PUBLIC,
-          userId: user.id,
-        }
-      )
-      .orderBy("project.createdAt", "DESC")
-      .getMany();
-
-    res.status(200).json({
-      success: true,
-      message: "Projects retrieved successfully",
-      count: projects.length,
-      data: projects,
-    });
-  }
+  res.status(200).json({
+    success: true,
+    message: "Projects retrieved successfully.",
+    count: projects.length,
+    data: projects,
+  });
+};
 
 export const viewProject = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
-  const projectId = req.params.projectId;
+  const actor = await getActor(req);
+  const project = await getProject(
+    String(req.params.projectId),
+    actor.organizationId,
+  );
 
-  if (!userId || typeof projectId !== "string") {
-    throw new AppError("Invalid project request.", 400, "INVALID_PROJECT_ID");
-  }
-
-  const user = await AppDataSource.getRepository(User).findOne({
-    where: { id: userId },
-    select: { id: true, organizationId: true, role: true },
-  });
-
-  if (!user || !user.organizationId) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  const project = await AppDataSource.getRepository(Project).findOne({
-    where: { id: projectId, organizationId: user.organizationId },
-  });
-
-  if (!project) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  if (project.visibility === ProjectVisibility.PRIVATE && user.role !== "ADMIN") {
-    const membership = await AppDataSource.getRepository(ProjectMember).findOne({
-      where: { projectId, userId: user.id },
-      select: { projectId: true, userId: true },
-    });
-
-    if (!membership) {
-      throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-    }
-  }
+  await requireViewAccess(actor, project);
 
   res.status(200).json({
     success: true,
     message: "Project retrieved successfully.",
-    project,
     data: project,
   });
 };
 
 export const updateProject = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
-  const projectId = req.params.projectId;
-
-  if (!userId || typeof projectId !== "string") {
-    throw new AppError("Invalid project request.", 400, "INVALID_PROJECT_ID");
-  }
-
-  const user = await AppDataSource.getRepository(User).findOne({
-    where: { id: userId },
-    select: { id: true, organizationId: true, role: true },
-  });
-
-  if (!user || !user.organizationId) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  const projectRepo = AppDataSource.getRepository(Project);
-  const project = await projectRepo.findOne({
-    where: { id: projectId, organizationId: user.organizationId },
-  });
-
-  if (!project) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
+  const actor = await getActor(req);
+  const projectId = String(req.params.projectId);
   const { name, key, description, startDate, endDate, visibility } = req.body;
-  if (name !== undefined) project.name = name.trim();
-  if (key !== undefined) project.key = key.trim().toUpperCase();
-  if (description !== undefined) project.description = description ? description.trim() : null;
-  if (startDate !== undefined) project.startDate = startDate || null;
-  if (endDate !== undefined) project.endDate = endDate || null;
-  if (visibility !== undefined) project.visibility = visibility;
 
-  const saved = await projectRepo.save(project);
+  const saved = await AppDataSource.transaction(async (manager) => {
+    const project = await getProject(projectId, actor.organizationId, manager);
+    await requireManageAccess(actor, project, manager);
+
+    if (name !== undefined) project.name = name.trim();
+
+    if (key !== undefined) {
+      const normalizedKey = key.trim().toUpperCase();
+      const duplicate = await manager.getRepository(Project).findOne({
+        where: {
+          organizationId: actor.organizationId,
+          key: normalizedKey,
+        },
+        select: { id: true },
+      });
+
+      if (duplicate && duplicate.id !== project.id) {
+        throw new AppError(
+          "This project key is already used in your organization.",
+          409,
+          "PROJECT_KEY_CONFLICT",
+        );
+      }
+
+      project.key = normalizedKey;
+    }
+
+    if (description !== undefined) {
+      project.description = description ? description.trim() : null;
+    }
+    if (startDate !== undefined) project.startDate = startDate || null;
+    if (endDate !== undefined) project.endDate = endDate || null;
+    if (visibility !== undefined) project.visibility = visibility;
+
+    if (
+      project.startDate &&
+      project.endDate &&
+      project.endDate < project.startDate
+    ) {
+      throw new AppError(
+        "endDate must be on or after startDate.",
+        400,
+        "INVALID_PROJECT_DATE_RANGE",
+      );
+    }
+
+    return manager.getRepository(Project).save(project);
+  });
+
   res.status(200).json({
     success: true,
     message: "Project updated successfully.",
-    project: saved,
     data: saved,
   });
 };
 
 export const deleteProject = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
-  const projectId = req.params.projectId;
+  const actor = await getActor(req);
+  const projectId = String(req.params.projectId);
 
-  if (!userId || typeof projectId !== "string") {
-    throw new AppError("Invalid project request.", 400, "INVALID_PROJECT_ID");
-  }
+  await AppDataSource.transaction(async (manager) => {
+    const project = await getProject(projectId, actor.organizationId, manager);
+    await requireManageAccess(actor, project, manager);
 
-  const user = await AppDataSource.getRepository(User).findOne({
-    where: { id: userId },
-    select: { id: true, organizationId: true, role: true },
+    // FK/cascade behavior must match the product's retention policy.
+    await manager.getRepository(Project).remove(project);
   });
 
-  if (!user || !user.organizationId) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  const projectRepo = AppDataSource.getRepository(Project);
-  const project = await projectRepo.findOne({
-    where: { id: projectId, organizationId: user.organizationId },
-  });
-
-  if (!project) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  await projectRepo.remove(project);
   res.status(200).json({
     success: true,
     message: "Project deleted successfully.",
@@ -277,141 +343,200 @@ export const deleteProject = async (req: Request, res: Response) => {
 };
 
 export const getProjectMembers = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
-  const projectId = req.params.projectId;
+  const actor = await getActor(req);
+  const project = await getProject(
+    String(req.params.projectId),
+    actor.organizationId,
+  );
 
-  if (!userId || typeof projectId !== "string") {
-    throw new AppError("Invalid project request.", 400, "INVALID_PROJECT_ID");
-  }
+  await requireViewAccess(actor, project);
 
-  const user = await AppDataSource.getRepository(User).findOne({
-    where: { id: userId },
-    select: { id: true, organizationId: true },
-  });
-
-  if (!user || !user.organizationId) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-
-  const memberRepo = AppDataSource.getRepository(ProjectMember);
-  const members = await memberRepo.find({
-    where: { projectId },
+  const members = await AppDataSource.getRepository(ProjectMember).find({
+    where: { projectId: project.id },
     relations: { user: true },
     order: { joinedAt: "ASC" },
   });
 
   res.status(200).json({
     success: true,
-    data: members.map((m) => ({
-      userId: m.userId,
-      role: m.role,
-      joinedAt: m.joinedAt,
-      name: m.user?.fullName,
-      email: m.user?.email,
+    data: members.map((membership) => ({
+      userId: membership.userId,
+      role: membership.role,
+      joinedAt: membership.joinedAt,
+      name: membership.user?.fullName,
+      email: membership.user?.email,
     })),
   });
 };
 
 export const addProjectMember = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+  const actor = await getActor(req);
   const projectId = String(req.params.projectId);
   const { memberId, email, role = ProjectRole.MEMBER } = req.body;
 
-  if (!userId || !projectId) {
-    throw new AppError("Invalid request.", 400, "INVALID_REQUEST");
-  }
+  const result = await AppDataSource.transaction(async (manager) => {
+    const project = await getProject(projectId, actor.organizationId, manager);
+    await requireManageAccess(actor, project, manager);
 
-  const user = await AppDataSource.getRepository(User).findOne({
-    where: { id: userId },
-    select: { id: true, organizationId: true },
-  });
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      throw new AppError(
+        "Only an organization administrator can assign project administrator role.",
+        403,
+        "FORBIDDEN",
+      );
+    }
 
-  if (!user || !user.organizationId) {
-    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
-  }
+    const userRepo = manager.getRepository(User);
+    const targetUser = memberId
+      ? await userRepo.findOne({
+          where: { id: memberId, organizationId: actor.organizationId },
+        })
+      : await userRepo.findOne({
+          where: {
+            email: String(email).trim().toLowerCase(),
+            organizationId: actor.organizationId,
+          },
+        });
 
-  const userRepo = AppDataSource.getRepository(User);
-  let targetUser: User | null = null;
-  if (memberId) {
-    targetUser = await userRepo.findOne({ where: { id: String(memberId), organizationId: user.organizationId } });
-  } else if (email) {
-    targetUser = await userRepo.findOne({ where: { email: String(email).toLowerCase().trim(), organizationId: user.organizationId } });
-  }
+    if (!targetUser) {
+      throw new AppError(
+        "User not found in your organization.",
+        404,
+        "USER_NOT_FOUND",
+      );
+    }
 
-  if (!targetUser) {
-    throw new AppError("User not found in your organization.", 404, "USER_NOT_FOUND");
-  }
+    const memberRepo = manager.getRepository(ProjectMember);
+    const existing = await memberRepo.findOne({
+      where: { projectId: project.id, userId: targetUser.id },
+    });
 
-  const memberRepo = AppDataSource.getRepository(ProjectMember);
-  let member = await memberRepo.findOne({ where: { projectId, userId: targetUser.id } });
-  if (member) {
-    member.role = role as ProjectRole;
-    await memberRepo.save(member);
-  } else {
-    member = await memberRepo.save(memberRepo.create({
-      projectId,
-      userId: targetUser.id,
-      addedById: user.id,
-      role: role as ProjectRole,
-    }));
-  }
+    if (existing) {
+      throw new AppError(
+        "This user is already a member of the project.",
+        409,
+        "PROJECT_MEMBER_EXISTS",
+      );
+    }
 
-  res.status(201).json({
-    success: true,
-    data: {
+    const membership = await memberRepo.save(
+      memberRepo.create({
+        projectId: project.id,
+        userId: targetUser.id,
+        addedById: actor.id,
+        role: role as ProjectRole,
+      }),
+    );
+
+    return {
       userId: targetUser.id,
       name: targetUser.fullName,
       email: targetUser.email,
-      role: member.role,
-    },
+      role: membership.role,
+      joinedAt: membership.joinedAt,
+    };
+  });
+
+  res.status(201).json({
+    success: true,
+    message: "Project member added successfully.",
+    data: result,
   });
 };
 
 export const removeProjectMember = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+  const actor = await getActor(req);
   const projectId = String(req.params.projectId);
   const memberId = String(req.params.memberId);
 
-  if (!userId || !projectId || !memberId) {
-    throw new AppError("Invalid request.", 400, "INVALID_REQUEST");
-  }
+  await AppDataSource.transaction(async (manager) => {
+    const project = await getProject(projectId, actor.organizationId, manager);
+    await requireManageAccess(actor, project, manager);
 
-  const memberRepo = AppDataSource.getRepository(ProjectMember);
-  const member = await memberRepo.findOne({ where: { projectId, userId: memberId } });
-  if (!member) {
-    throw new AppError("Member not found in project.", 404, "MEMBER_NOT_FOUND");
-  }
+    if (memberId === actor.id && actor.role !== UserRole.ADMIN) {
+      throw new AppError(
+        "You cannot remove yourself from the project using this endpoint.",
+        403,
+        "FORBIDDEN",
+      );
+    }
 
-  await memberRepo.remove(member);
+    const memberRepo = manager.getRepository(ProjectMember);
+    const member = await memberRepo.findOne({
+      where: { projectId: project.id, userId: memberId },
+    });
+
+    if (!member) {
+      throw new AppError(
+        "Member not found in project.",
+        404,
+        "MEMBER_NOT_FOUND",
+      );
+    }
+
+    await ensureNotLastProjectAdmin(manager, project.id, member);
+    await memberRepo.remove(member);
+  });
+
   res.status(200).json({
     success: true,
+    message: "Project member removed successfully.",
     data: { projectId, userId: memberId },
   });
 };
 
-export const updateProjectMemberRole = async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+export const updateProjectMemberRole = async (
+  req: Request,
+  res: Response,
+) => {
+  const actor = await getActor(req);
   const projectId = String(req.params.projectId);
   const memberId = String(req.params.memberId);
   const { role } = req.body;
 
-  if (!userId || !projectId || !memberId || !role) {
-    throw new AppError("Invalid request.", 400, "INVALID_REQUEST");
-  }
+  const result = await AppDataSource.transaction(async (manager) => {
+    const project = await getProject(projectId, actor.organizationId, manager);
+    await requireManageAccess(actor, project, manager);
 
-  const memberRepo = AppDataSource.getRepository(ProjectMember);
-  const member = await memberRepo.findOne({ where: { projectId, userId: memberId } });
-  if (!member) {
-    throw new AppError("Member not found in project.", 404, "MEMBER_NOT_FOUND");
-  }
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      throw new AppError(
+        "Only an organization administrator can assign project administrator role.",
+        403,
+        "FORBIDDEN",
+      );
+    }
 
-  member.role = role as ProjectRole;
-  const saved = await memberRepo.save(member);
+    const memberRepo = manager.getRepository(ProjectMember);
+    const member = await memberRepo.findOne({
+      where: { projectId: project.id, userId: memberId },
+    });
+
+    if (!member) {
+      throw new AppError(
+        "Member not found in project.",
+        404,
+        "MEMBER_NOT_FOUND",
+      );
+    }
+
+    if (member.role === ProjectRole.ADMIN && role !== ProjectRole.ADMIN) {
+      await ensureNotLastProjectAdmin(manager, project.id, member);
+    }
+
+    member.role = role as ProjectRole;
+    const saved = await memberRepo.save(member);
+
+    return {
+      userId: saved.userId,
+      projectId: saved.projectId,
+      role: saved.role,
+      joinedAt: saved.joinedAt,
+    };
+  });
 
   res.status(200).json({
     success: true,
-    data: saved,
+    message: "Project member role updated successfully.",
+    data: result,
   });
 };
-
-

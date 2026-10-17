@@ -72,7 +72,6 @@ async function registerOrganization(req, res, next) {
             }
             const org = await m.save(organization_entity_1.Organization, {
                 name: organization.name,
-                slug: organization.slug.toLowerCase(),
             });
             // step 1 data: user, linked to the organization
             const newUser = await m.save(user_entity_1.User, {
@@ -128,11 +127,11 @@ async function registerOrganization(req, res, next) {
         });
     }
     catch (err) {
-        // Postgres unique violation: email or slug already exists
+        // Postgres unique violation: email already exists
         if (err.code === "23505") {
             return res
                 .status(409)
-                .json({ message: "Email or workspace URL already in use" });
+                .json({ message: "Email already in use" });
         }
         console.error(err);
         // return res.status(500).json({ message: "Something went wrong" });

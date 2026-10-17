@@ -34,12 +34,6 @@ exports.onboardingSchema = joi_1.default.object({
     }).required(),
     organization: joi_1.default.object({
         name: joi_1.default.string().trim().min(2).max(150).required(),
-        slug: joi_1.default.string()
-            .trim()
-            .lowercase()
-            .min(3)
-            .max(100)
-            .required(),
     }).required(),
 });
 exports.loginSchema = joi_1.default.object({

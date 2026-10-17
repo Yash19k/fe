@@ -1,14 +1,19 @@
 import { Request, Response, NextFunction } from "express";
-import { ProjectVisibility } from "../entities/project.entity";
-import { AppError } from "../errors/app.error";
 import Joi from "joi";
-import { UserRole } from "../entities/user.entity";
+import { AppError } from "../errors/app.error";
+import { ProjectVisibility } from "../entities/project.entity";
+import { ProjectRole } from "../entities/project.member.entity";
+
+const uuidV4 = Joi.string().guid({ version: ["uuidv4"] });
 
 const projectIdSchema = Joi.object({
-  projectId: Joi.string()
-    .guid({ version: ["uuidv4"] })
-    .required(),
-}).unknown(true);
+  projectId: uuidV4.required(),
+}).unknown(false);
+
+const projectMemberParamsSchema = Joi.object({
+  projectId: uuidV4.required(),
+  memberId: uuidV4.required(),
+}).unknown(false);
 
 const createProjectSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150).required(),
@@ -34,15 +39,52 @@ const createProjectSchema = Joi.object({
   })
   .unknown(false);
 
-export const validateCreateProject = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void => {
-  const { error, value } = createProjectSchema.validate(req.body, {
+const updateProjectSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(150),
+  key: Joi.string()
+    .trim()
+    .pattern(/^[A-Za-z][A-Za-z0-9_-]{1,19}$/),
+  description: Joi.string().allow("", null).max(10000),
+  startDate: Joi.string().isoDate().allow(null),
+  endDate: Joi.string().isoDate().allow(null),
+  visibility: Joi.string().valid(...Object.values(ProjectVisibility)),
+})
+  .min(1)
+  .unknown(false);
+
+const addProjectMemberSchema = Joi.object({
+  memberId: uuidV4,
+  email: Joi.string().email({ tlds: { allow: false } }).trim().lowercase(),
+  role: Joi.string()
+    .valid(...Object.values(ProjectRole))
+    .default(ProjectRole.MEMBER),
+})
+  .custom((value, helpers) => {
+    const hasMemberId = Boolean(value.memberId);
+    const hasEmail = Boolean(value.email);
+    if (hasMemberId === hasEmail) {
+      return helpers.error("member.lookup");
+    }
+    return value;
+  })
+  .messages({
+    "member.lookup": "Provide exactly one of memberId or email.",
+  })
+  .unknown(false);
+
+const updateProjectMemberRoleSchema = Joi.object({
+  role: Joi.string().valid(...Object.values(ProjectRole)).required(),
+}).unknown(false);
+
+const validate = (
+  schema: Joi.ObjectSchema,
+  source: "body" | "params",
+) => (req: Request, _res: Response, next: NextFunction): void => {
+  const { error, value } = schema.validate(req[source], {
     abortEarly: false,
     convert: true,
   });
+
   if (error) {
     throw new AppError(
       error.details.map((detail) => detail.message).join(", "),
@@ -50,79 +92,37 @@ export const validateCreateProject = (
       "VALIDATION_ERROR",
     );
   }
-  req.body = value;
+
+  req[source] = value;
   next();
 };
 
-export const validateProjectId = (
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-): void => {
-  const { error } = projectIdSchema.validate(req.params);
-  if (error) {
-    throw new AppError("Invalid project ID.", 400, "INVALID_PROJECT_ID");
-  }
-  next();
-};
-export const invitedMembers = Joi.array()
-  .items(
-    Joi.object({
-      email: Joi.string().email().lowercase().trim().required(),
-      role: Joi.string()
-        .valid(...Object.values(UserRole)) // Uses your TypeScript Enum values dynamically
-        .required(),
-    }),
-  )
-  .optional() // Allows empty or missing array
-  .default([]); // Defaults to empty array if omitted
+export const validateCreateProject = validate(
+  createProjectSchema,
+  "body",
+);
 
-// import Joi from "joi";
+export const validateUpdateProject = validate(
+  updateProjectSchema,
+  "body",
+);
 
-export const acceptInvitationSchema = Joi.object({
-  token: Joi.string().trim().required().messages({
-    "string.empty": "Invitation token is required",
-    "any.required": "Invitation token is required",
-  }),
+export const validateProjectId = validate(
+  projectIdSchema,
+  "params",
+);
 
-  fullName: Joi.string().trim().min(2).max(100).required().messages({
-    "string.empty": "Full name is required",
-    "string.min": "Full name must be at least 2 characters long",
-    "string.max": "Full name cannot exceed 100 characters",
-    "any.required": "Full name is required",
-  }),
+export const validateProjectMemberParams = validate(
+  projectMemberParamsSchema,
+  "params",
+);
 
-  password: Joi.string()
-    .min(8)
-    .max(128)
-    // Optional regex: Requires at least one uppercase letter, one lowercase letter, and one number
-    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .required()
-    .messages({
-      "string.empty": "Password is required",
-      "string.min": "Password must be at least 8 characters long",
-      "string.pattern.base":
-        "Password must contain at least one uppercase letter, one lowercase letter, and one number",
-      "any.required": "Password is required",
-    }),
-});
+export const validateAddProjectMember = validate(
+  addProjectMemberSchema,
+  "body",
+);
 
-export const invitedMemberSchema = Joi.object({
-  email: Joi.string()
-    .email({ tlds: { allow: false } }) // Valid email format
-    .lowercase()
-    .trim()
-    .required()
-    .messages({
-      "string.email": "Each member must have a valid email address",
-      "any.required": "Member email is required",
-    }),
-
-  role: Joi.string()
-    .valid("ADMIN", "MEMBER", "GUEST") // Replace with your allowed role values or Object.values(UserRole)
-    .required()
-    .messages({
-      "any.only": "Role must be one of: ADMIN, MEMBER, GUEST",
-      "any.required": "Member role is required",
-    }),
-});
+export const validateUpdateProjectMemberRole = validate(
+  updateProjectMemberRoleSchema,
+  "body",
+);
