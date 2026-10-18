@@ -63,62 +63,6 @@ const getProject = async (
   return project;
 };
 
-const getMembership = async (
-  projectId: string,
-  userId: string,
-  manager = AppDataSource.manager,
-): Promise<ProjectMember | null> =>
-  manager.getRepository(ProjectMember).findOne({
-    where: { projectId, userId },
-  });
-
-const canViewProject = async (
-  actor: Actor,
-  project: Project,
-  manager = AppDataSource.manager,
-): Promise<boolean> => {
-  if (project.visibility === ProjectVisibility.PUBLIC) return true;
-  if (actor.role === UserRole.ADMIN) return true;
-  return Boolean(await getMembership(project.id, actor.id, manager));
-};
-
-const canManageProject = async (
-  actor: Actor,
-  project: Project,
-  manager = AppDataSource.manager,
-): Promise<boolean> => {
-  if (actor.role === UserRole.ADMIN) return true;
-
-  const membership = await getMembership(project.id, actor.id, manager);
-  return Boolean(
-    membership &&
-      (membership.role === ProjectRole.ADMIN ||
-        membership.role === ProjectRole.LEAD),
-  );
-};
-
-const requireViewAccess = async (
-  actor: Actor,
-  project: Project,
-): Promise<void> => {
-  if (!(await canViewProject(actor, project))) {
-    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-  }
-};
-
-const requireManageAccess = async (
-  actor: Actor,
-  project: Project,
-): Promise<void> => {
-  if (!(await canManageProject(actor, project))) {
-    throw new AppError(
-      "You do not have permission to manage this project.",
-      403,
-      "FORBIDDEN",
-    );
-  }
-};
-
 const ensureNotLastProjectAdmin = async (
   manager: EntityManager,
   projectId: string,
@@ -253,7 +197,6 @@ export const viewProject = async (req: Request, res: Response) => {
     actor.organizationId,
   );
 
-  await requireViewAccess(actor, project);
 
   res.status(200).json({
     success: true,
@@ -269,7 +212,6 @@ export const updateProject = async (req: Request, res: Response) => {
 
   const saved = await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
-    await requireManageAccess(actor, project, manager);
 
     if (name !== undefined) project.name = name.trim();
 
@@ -329,7 +271,6 @@ export const deleteProject = async (req: Request, res: Response) => {
 
   await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
-    await requireManageAccess(actor, project, manager);
 
     // FK/cascade behavior must match the product's retention policy.
     await manager.getRepository(Project).remove(project);
@@ -349,7 +290,6 @@ export const getProjectMembers = async (req: Request, res: Response) => {
     actor.organizationId,
   );
 
-  await requireViewAccess(actor, project);
 
   const members = await AppDataSource.getRepository(ProjectMember).find({
     where: { projectId: project.id },
@@ -376,15 +316,6 @@ export const addProjectMember = async (req: Request, res: Response) => {
 
   const result = await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
-    await requireManageAccess(actor, project, manager);
-
-    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
-      throw new AppError(
-        "Only an organization administrator can assign project administrator role.",
-        403,
-        "FORBIDDEN",
-      );
-    }
 
     const userRepo = manager.getRepository(User);
     const targetUser = memberId
@@ -451,7 +382,6 @@ export const removeProjectMember = async (req: Request, res: Response) => {
 
   await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
-    await requireManageAccess(actor, project, manager);
 
     if (memberId === actor.id && actor.role !== UserRole.ADMIN) {
       throw new AppError(
@@ -496,15 +426,6 @@ export const updateProjectMemberRole = async (
 
   const result = await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
-    await requireManageAccess(actor, project, manager);
-
-    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
-      throw new AppError(
-        "Only an organization administrator can assign project administrator role.",
-        403,
-        "FORBIDDEN",
-      );
-    }
 
     const memberRepo = manager.getRepository(ProjectMember);
     const member = await memberRepo.findOne({
