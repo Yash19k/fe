@@ -47,24 +47,32 @@ __decorate([
     __metadata("design:type", String)
 ], ProjectMember.prototype, "role", void 0);
 __decorate([
-    (0, typeorm_1.CreateDateColumn)({ name: "joined_at" }),
+    (0, typeorm_1.CreateDateColumn)({ name: "joined_at", type: "timestamptz" }),
     __metadata("design:type", Date)
 ], ProjectMember.prototype, "joinedAt", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => project_entity_1.Project, (project) => project.memberships, { onDelete: "CASCADE" }),
+    (0, typeorm_1.ManyToOne)(() => project_entity_1.Project, (project) => project.memberships, {
+        onDelete: "CASCADE",
+    }),
     (0, typeorm_1.JoinColumn)({ name: "project_id" }),
     __metadata("design:type", project_entity_1.Project)
 ], ProjectMember.prototype, "project", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.projectMemberships, { onDelete: "CASCADE" }),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.projectMemberships, {
+        onDelete: "CASCADE",
+    }),
     (0, typeorm_1.JoinColumn)({ name: "user_id" }),
     __metadata("design:type", user_entity_1.User)
 ], ProjectMember.prototype, "user", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { nullable: true, onDelete: "SET NULL" }),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, {
+        nullable: true,
+        onDelete: "SET NULL",
+    }),
     (0, typeorm_1.JoinColumn)({ name: "added_by_id" }),
     __metadata("design:type", Object)
 ], ProjectMember.prototype, "addedBy", void 0);
 exports.ProjectMember = ProjectMember = __decorate([
-    (0, typeorm_1.Entity)("project_members")
+    (0, typeorm_1.Entity)("project_members"),
+    (0, typeorm_1.Index)("IDX_project_members_user_id", ["userId"])
 ], ProjectMember);

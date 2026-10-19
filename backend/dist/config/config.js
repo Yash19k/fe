@@ -6,6 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET;
+if (!accessTokenSecret || accessTokenSecret.length < 32) {
+    throw new Error("ACCESS_TOKEN_SECRET (or JWT_SECRET) must be configured with a strong secret of at least 32 characters.");
+}
 exports.config = {
     host: process.env.HOST ?? "127.0.0.1",
     port: Number(process.env.PORT ?? 3000),
@@ -22,4 +26,5 @@ exports.config = {
         synchronize: process.env.DB_SYNCHRONIZE === "true",
         logging: process.env.DB_LOGGING === "true",
     },
+    accessTokenSecret,
 };

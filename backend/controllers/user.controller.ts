@@ -90,7 +90,7 @@ async function createAuthSession(
     organizationId: string;
   },
   res: Response,
-): Promise<void> {
+): Promise<string> {
   const accessToken = createAccessToken(user);
   const refreshToken = randomBytes(32).toString("hex");
 
@@ -106,6 +106,7 @@ async function createAuthSession(
 
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken);
+  return accessToken;
 }
 
 export async function registerOrganization(req: Request, res: Response) {
@@ -142,7 +143,7 @@ export async function registerOrganization(req: Request, res: Response) {
     return { org, newUser };
   });
 
-  await createAuthSession(
+  const token = await createAuthSession(
     {
       id: result.newUser.id,
       role: result.newUser.role,
@@ -153,11 +154,13 @@ export async function registerOrganization(req: Request, res: Response) {
 
   return res.status(201).json({
     success: true,
+    token,
     organizationId: result.org.id,
     userId: result.newUser.id,
     data: {
       organizationId: result.org.id,
       userId: result.newUser.id,
+      token,
     },
     user: {
       id: result.newUser.id,
@@ -230,7 +233,7 @@ export async function login(req: Request, res: Response) {
     );
   }
 
-  await createAuthSession(
+  const token = await createAuthSession(
     {
       id: user.id,
       role: user.role,
@@ -241,6 +244,7 @@ export async function login(req: Request, res: Response) {
 
   return res.json({
     success: true,
+    token,
     user: {
       id: user.id,
       name: user.fullName,
@@ -428,3 +432,36 @@ export async function logout(req: Request, res: Response) {
 
   return res.json({ success: true });
 }
+
+export async function getOrganizationUsers(req: Request, res: Response) {
+  const organizationId = req.user?.organizationId;
+  if (!organizationId) {
+    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
+  }
+
+  const users = await userRepository.find({
+    where: { organizationId, status: UserStatus.ACTIVE },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      status: true,
+      createdAt: true,
+    },
+    order: { fullName: "ASC" },
+  });
+
+  return res.json({
+    success: true,
+    data: users.map((u) => ({
+      id: u.id,
+      name: u.fullName || u.email.split("@")[0],
+      email: u.email,
+      role: u.role,
+      status: u.status,
+      initials: (u.fullName || u.email).slice(0, 2).toUpperCase(),
+    })),
+  });
+}
+

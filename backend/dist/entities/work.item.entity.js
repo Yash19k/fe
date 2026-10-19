@@ -170,6 +170,18 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => work_item_attachment_entity_1.WorkItemAttachment, (attachment) => attachment.workItem),
     __metadata("design:type", Array)
 ], WorkItem.prototype, "attachments", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)("WorkItemComment", "workItem"),
+    __metadata("design:type", Array)
+], WorkItem.prototype, "comments", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)("WorkItemTimeEntry", "workItem"),
+    __metadata("design:type", Array)
+], WorkItem.prototype, "timeEntries", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)("WorkItemDependency", "workItem"),
+    __metadata("design:type", Array)
+], WorkItem.prototype, "dependencies", void 0);
 exports.WorkItem = WorkItem = __decorate([
     (0, typeorm_1.Entity)({ name: "work_items" }),
     (0, typeorm_1.Index)("IDX_work_items_organization_id", ["organizationId"]),

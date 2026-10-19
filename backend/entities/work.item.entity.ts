@@ -165,4 +165,13 @@ sprint: Sprint | null;
     (attachment) => attachment.workItem,
   )
   attachments: WorkItemAttachment[];
+
+  @OneToMany("WorkItemComment", "workItem")
+  comments: any[];
+
+  @OneToMany("WorkItemTimeEntry", "workItem")
+  timeEntries: any[];
+
+  @OneToMany("WorkItemDependency", "workItem")
+  dependencies: any[];
 }

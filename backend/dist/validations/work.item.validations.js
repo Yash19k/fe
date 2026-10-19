@@ -106,6 +106,7 @@ exports.validateCreateWorkItem = validateCreateWorkItem;
 const updateWorkItemSchema = joi_1.default.object({
     title: joi_1.default.string().trim().min(1).max(255).optional(),
     description: joi_1.default.string().allow("", null).optional(),
+    type: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemType)).optional(),
     priority: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemPriority)).optional(),
     status: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemStatus)).optional(),
     dueDate: joi_1.default.date().iso().allow(null).optional(),

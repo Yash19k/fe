@@ -171,6 +171,7 @@ export const validateCreateWorkItem = (
 const updateWorkItemSchema = Joi.object({
   title: Joi.string().trim().min(1).max(255).optional(),
   description: Joi.string().allow("", null).optional(),
+  type: Joi.string().valid(...Object.values(WorkItemType)).optional(),
   priority: Joi.string().valid(...Object.values(WorkItemPriority)).optional(),
   status: Joi.string().valid(...Object.values(WorkItemStatus)).optional(),
   dueDate: Joi.date().iso().allow(null).optional(),

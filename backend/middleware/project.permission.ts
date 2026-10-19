@@ -2,7 +2,8 @@
 import { Request, Response, NextFunction } from "express";
 import { AppDataSource } from "../config/data.source";
 import { Project } from "../entities/project.entity";
-import { User } from "../entities/user.entity";
+import { User, UserRole } from "../entities/user.entity";
+import { WorkItem } from "../entities/work.item.entity";
 import {
   ProjectMember,
   ProjectRole,
@@ -35,6 +36,7 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
     "member:remove",
     "member:role:update",
     "task:create",
+    "task:read",
     "task:assign",
     "task:update",
     "task:delete",
@@ -50,6 +52,7 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
     "member:add",
     "member:role:update",
     "task:create",
+    "task:read",
     "task:assign",
     "task:update",
     "task:delete",
@@ -62,6 +65,7 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
   [ProjectRole.MEMBER]: [
     "project:view",
     "task:create",
+    "task:read",
     "task:assign",
     "task:update",
     "sprint:view",
@@ -75,9 +79,27 @@ export const requireProjectPermission = (action: ProjectAction) => {
     next: NextFunction,
   ): Promise<void> => {
     const userId = req.user?.id;
-   const projectId = Array.isArray(req.params.projectId)
-  ? req.params.projectId[0]
-  : req.params.projectId;
+    let projectId = Array.isArray(req.params.projectId)
+      ? req.params.projectId[0]
+      : req.params.projectId;
+
+    if (!projectId && req.body && req.body.projectId) {
+      projectId = req.body.projectId;
+    }
+
+    if (!projectId && req.query && typeof req.query.projectId === 'string') {
+      projectId = req.query.projectId;
+    }
+
+    if (!projectId && req.params.workItemId) {
+      const workItem = await AppDataSource.getRepository(WorkItem).findOne({
+        where: { id: String(req.params.workItemId) },
+        select: { projectId: true },
+      });
+      if (workItem) {
+        projectId = workItem.projectId;
+      }
+    }
 
     if (!userId) {
       throw new AppError(
@@ -102,6 +124,7 @@ export const requireProjectPermission = (action: ProjectAction) => {
       select: {
         id: true,
         organizationId: true,
+        role: true,
       },
     });
 
@@ -150,9 +173,15 @@ export const requireProjectPermission = (action: ProjectAction) => {
         },
       });
 
+    // Organization ADMINs have full management over projects in their organization
+    if (user.role === UserRole.ADMIN) {
+      next();
+      return;
+    }
+
     // Public projects may be viewed without membership.
     if (
-      action === "project:view" &&
+      (action === "project:view" || action === "task:read") &&
       project.visibility === "PUBLIC" &&
       !membership
     ) {

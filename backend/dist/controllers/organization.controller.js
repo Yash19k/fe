@@ -32,6 +32,9 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerOrganization = registerOrganization;
 exports.addOrganizationMembers = addOrganizationMembers;
@@ -41,8 +44,14 @@ const user_entity_1 = require("../entities/user.entity");
 const organization_entity_1 = require("../entities/organization.entity");
 const user_validator_1 = require("../validations/user.validator");
 const auth_token_1 = require("../utils/auth.token");
+const joi_1 = __importDefault(require("joi"));
 const user_session_entity_1 = require("../entities/user.session.entity");
-const project_validations_1 = require("../validations/project.validations");
+const invitedMemberSchema = joi_1.default.array().items(joi_1.default.object({
+    email: joi_1.default.string().email().required(),
+    role: joi_1.default.string()
+        .valid(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE)
+        .default(user_entity_1.UserRole.TEAMMATE),
+}));
 const userRepository = data_source_1.AppDataSource.getRepository(user_entity_1.User);
 async function registerOrganization(req, res, next) {
     const { error, value } = user_validator_1.onboardingSchema.validate(req.body, {
@@ -141,7 +150,7 @@ async function registerOrganization(req, res, next) {
 // import { Request, Response, NextFunction } from "express";
 const typeorm_1 = require("typeorm");
 async function addOrganizationMembers(req, res, next) {
-    const { error, value } = project_validations_1.invitedMemberSchema.validate(req.body, {
+    const { error, value } = invitedMemberSchema.validate(req.body, {
         abortEarly: false,
         stripUnknown: true,
     });

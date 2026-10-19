@@ -11,6 +11,15 @@ import {
   updateProjectMemberRole,
 } from "../controllers/project.controller";
 import {
+  getProjectLabels,
+  createProjectLabel,
+  deleteProjectLabel,
+  getProjectWorkflow,
+  saveProjectWorkflow,
+  getProjectAuditLogs,
+  createAuditLog,
+} from "../controllers/feature-persistence.controller";
+import {
   validateCreateProject,
   validateUpdateProject,
   validateProjectId,
@@ -96,6 +105,57 @@ router.patch(
   validateProjectMemberParams,
   validateUpdateProjectMemberRole,
   asyncHandler(updateProjectMemberRole),
+);
+
+// Labels
+router.get(
+  "/:projectId/labels",
+  isLoggedIn,
+  asyncHandler(getProjectLabels),
+);
+router.post(
+  "/:projectId/labels",
+  isLoggedIn,
+  asyncHandler(createProjectLabel),
+);
+router.delete(
+  "/:projectId/labels/:labelId",
+  isLoggedIn,
+  asyncHandler(deleteProjectLabel),
+);
+
+// Workflows
+router.get(
+  "/:projectId/workflow",
+  isLoggedIn,
+  asyncHandler(getProjectWorkflow),
+);
+router.post(
+  "/:projectId/workflow",
+  isLoggedIn,
+  asyncHandler(saveProjectWorkflow),
+);
+router.put(
+  "/:projectId/workflow",
+  isLoggedIn,
+  asyncHandler(saveProjectWorkflow),
+);
+
+// Audit Logs
+router.post(
+  "/audit-logs",
+  isLoggedIn,
+  asyncHandler(createAuditLog),
+);
+router.get(
+  "/:projectId/audit-logs",
+  isLoggedIn,
+  asyncHandler(getProjectAuditLogs),
+);
+router.post(
+  "/:projectId/audit-logs",
+  isLoggedIn,
+  asyncHandler(createAuditLog),
 );
 
 export default router;
