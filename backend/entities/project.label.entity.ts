@@ -2,17 +2,20 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  CreateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
+  CreateDateColumn,
   Index,
   Unique,
 } from "typeorm";
-import { Project } from "./project.entity";
 
-@Entity({ name: "project_labels" })
+import { Project } from "./project.entity";
+import { WorkItem } from "./work.item.entity";
+
+@Entity("project_labels")
 @Unique("UQ_project_labels_project_name", ["projectId", "name"])
-@Index("IDX_project_labels_project", ["projectId"])
+@Index("IDX_project_labels_project_id", ["projectId"])
 export class ProjectLabel {
   @PrimaryGeneratedColumn("uuid")
   id: string;
@@ -20,19 +23,22 @@ export class ProjectLabel {
   @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ type: "varchar", length: 100 })
+  @ManyToOne(() => Project, { onDelete: "CASCADE" })
+  @JoinColumn({ name: "project_id" })
+  project: Project;
+
+  @Column({ type: "varchar", length: 50 })
   name: string;
 
-  @Column({ type: "varchar", length: 30, default: "#3B82F6" })
-  color: string;
+  @Column({ type: "varchar", length: 7 })
+  color: string; // Example: #3B82F6
 
   @Column({ type: "text", nullable: true })
   description: string | null;
 
-  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
-  createdAt: Date;
+  @OneToMany(() => WorkItem, (workItem) => workItem.label)
+  workItems: WorkItem[];
 
-  @ManyToOne(() => Project, { onDelete: "CASCADE" })
-  @JoinColumn({ name: "project_id" })
-  project: Project;
+  @CreateDateColumn({ name: "created_at" })
+  createdAt: Date;
 }
