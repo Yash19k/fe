@@ -4,28 +4,15 @@ import { In } from "typeorm";
 
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
-import {
-  Project,
-  ProjectVisibility,
-} from "../entities/project.entity";
+import {Project,  ProjectVisibility,} from "../entities/project.entity";
 import { ProjectMember } from "../entities/project.member.entity";
-import {
-  WorkItem,
-  WorkItemType,
-  WorkItemStatus,
-  WorkItemPriority,
-} from "../entities/work.item.entity";
+import { WorkItem, WorkItemType, WorkItemStatus, WorkItemPriority,} from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
-import {
-  WorkItemRecurrence,
-  RecurrenceFrequency,
-  MonthlyPattern,
-} from "../entities/work.item.recurrence.entity";
+import { WorkItemAttachment, AttachmentType } from "../entities/work.item.attachment.entity";
+import { uploadToCloudinary } from "../services/cloudinary.service";
+import { WorkItemRecurrence, RecurrenceFrequency, MonthlyPattern,} from "../entities/work.item.recurrence.entity";
 import { AppError } from "../errors/app.error";
-import {
-  getPagination,
-  getPaginationMeta,
-} from "../utils/pagination";
+import { getPagination, getPaginationMeta,} from "../utils/pagination";
 
 interface AssigneeInput {
   userId: string;
@@ -198,11 +185,13 @@ function validateRecurrence(input: RecurrenceInput): void {
     );
   }
 
-  try {
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: input.timezone ?? "UTC",
-    });
-  } catch {
+  const timezone = input.timezone ?? "UTC";
+  const intlWithTimeZones = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  const supportedTimeZones = intlWithTimeZones.supportedValuesOf?.("timeZone") ?? [];
+
+  if (timezone !== "UTC" && !supportedTimeZones.includes(timezone)) {
     throw new AppError(
       "Invalid IANA timezone",
       400,
@@ -549,13 +538,14 @@ async function validateAssignees(
   }
 }
 
-// CREATE WORK ITEM
+// CREATE WORK ITEM WITH OPTIONAL ATTACHMENTS
 export const createWorkItem = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   const actor = await getActiveActor(requireUserId(req));
   const body = req.body as CreateWorkItemBody;
+  const files = (req.files ?? []) as Express.Multer.File[];
 
   const {
     projectId,
@@ -570,11 +560,49 @@ export const createWorkItem = async (
     recurrence,
   } = body;
 
-  if (recurrence) {
-    validateRecurrence(recurrence);
+  if (recurrence) validateRecurrence(recurrence);
+
+  // Check access before sending files to Cloudinary.
+  const accessibleProject = await assertAccessibleProject(projectId, actor);
+
+  if (parentWorkItemId) {
+    const parent = await AppDataSource.getRepository(WorkItem).findOne({
+      where: {
+        id: parentWorkItemId,
+        projectId: accessibleProject.id,
+        organizationId: actor.organizationId,
+      },
+      select: { id: true },
+    });
+
+    if (!parent) {
+      throw new AppError(
+        "Parent work item not found in this project",
+        404,
+        "PARENT_WORK_ITEM_NOT_FOUND",
+      );
+    }
   }
 
+  await validateAssignees(
+    assignees,
+    accessibleProject.id,
+    actor.organizationId,
+  );
+
+  // Uploads happen before the DB transaction because Cloudinary is external
+  // to PostgreSQL. The service returns publicId and secureUrl for each file.
+  const uploadedAssets = await Promise.all(
+    files.map((file) =>
+      uploadToCloudinary(
+        file,
+        `taskflow/${actor.organizationId}/projects/${accessibleProject.id}/work-items`,
+      ),
+    ),
+  );
+
   const result = await AppDataSource.transaction(async (manager) => {
+    // Re-check access and eligibility inside the transaction to reduce race windows.
     const project = await assertAccessibleProject(
       projectId,
       actor,
@@ -608,7 +636,6 @@ export const createWorkItem = async (
     );
 
     const workItemRepository = manager.getRepository(WorkItem);
-
     const workItem = workItemRepository.create({
       organizationId: actor.organizationId,
       projectId: project.id,
@@ -637,52 +664,72 @@ export const createWorkItem = async (
               : String(assignee.estimatedHours),
         }),
       );
-
       await manager.getRepository(WorkItemAssignee).save(assignments);
     }
 
     let savedRecurrence: WorkItemRecurrence | null = null;
-
     if (recurrence) {
-      const timezone = recurrence.timezone ?? "UTC";
-
-      savedRecurrence = await manager
-        .getRepository(WorkItemRecurrence)
-        .save(
-          manager.getRepository(WorkItemRecurrence).create({
-            workItem: savedWorkItem,
-            frequency: recurrence.frequency,
-            interval: recurrence.interval ?? 1,
-            daysOfWeek:
-              recurrence.frequency === RecurrenceFrequency.WEEKLY
-                ? recurrence.daysOfWeek ?? []
-                : null,
-            monthlyPattern:
-              recurrence.frequency === RecurrenceFrequency.MONTHLY
-                ? recurrence.monthlyPattern ?? null
-                : null,
-            dayOfMonth:
-              recurrence.frequency === RecurrenceFrequency.MONTHLY &&
-              recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
-                ? recurrence.dayOfMonth ?? null
-                : null,
-            startsOn: recurrence.startsOn,
-            endsOn: recurrence.endsOn ?? null,
-
-            // This is a UTC marker, not a timezone-aware local-midnight
-            // calculation. The recurrence worker must interpret startsOn
-            // using the stored timezone when calculating actual runs.
-            nextRunAt: new Date(`${recurrence.startsOn}T00:00:00.000Z`),
-            timezone,
-            isActive: true,
-          }),
-        );
+      const recurrenceRepository = manager.getRepository(WorkItemRecurrence);
+      savedRecurrence = await recurrenceRepository.save(
+        recurrenceRepository.create({
+          workItem: savedWorkItem,
+          frequency: recurrence.frequency,
+          interval: recurrence.interval ?? 1,
+          daysOfWeek:
+            recurrence.frequency === RecurrenceFrequency.WEEKLY
+              ? recurrence.daysOfWeek ?? []
+              : null,
+          monthlyPattern:
+            recurrence.frequency === RecurrenceFrequency.MONTHLY
+              ? recurrence.monthlyPattern ?? null
+              : null,
+          dayOfMonth:
+            recurrence.frequency === RecurrenceFrequency.MONTHLY &&
+            recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
+              ? recurrence.dayOfMonth ?? null
+              : null,
+          startsOn: recurrence.startsOn,
+          endsOn: recurrence.endsOn ?? null,
+          nextRunAt: new Date(`${recurrence.startsOn}T00:00:00.000Z`),
+          timezone: recurrence.timezone ?? "UTC",
+          isActive: true,
+        }),
+      );
     }
+
+    const attachmentRepository = manager.getRepository(WorkItemAttachment);
+    const attachments = uploadedAssets.map((asset, index) => {
+      const mimeType = files[index].mimetype;
+      const attachmentType = mimeType.startsWith("image/")
+        ? AttachmentType.IMAGE
+        : mimeType.startsWith("video/")
+          ? AttachmentType.VIDEO
+          : mimeType === "application/pdf"
+            ? AttachmentType.DOCUMENT
+            : AttachmentType.OTHER;
+
+      return attachmentRepository.create({
+        workItemId: savedWorkItem.id,
+        uploadedById: actor.id,
+        originalName: files[index].originalname,
+        type: attachmentType,
+        mimeType,
+        size: String(files[index].size),
+        storageKey: asset.publicId,
+        secureUrl: asset.secureUrl,
+        resourceType: asset.resourceType,
+      });
+    });
+
+    const savedAttachments = attachments.length
+      ? await attachmentRepository.save(attachments)
+      : [];
 
     return {
       workItem: savedWorkItem,
       assigneeIds: assignees.map((assignee) => assignee.userId),
       recurrence: savedRecurrence,
+      attachments: savedAttachments,
     };
   });
 
@@ -693,6 +740,7 @@ export const createWorkItem = async (
       ...result.workItem,
       assigneeIds: result.assigneeIds,
       recurrence: result.recurrence,
+      attachments: result.attachments,
     },
   });
 };
