@@ -42,13 +42,15 @@ export function ProjectBoardView({ onOpenCreateTask }: ProjectBoardViewProps) {
       const existingStatuses = currentWorkflow?.statuses || [];
       const statusMap = new Map<string, WorkflowStatus>();
       DEFAULT_STANDARD_STATUSES.forEach((s) => statusMap.set(s.name, s));
-      existingStatuses.forEach((s) => statusMap.set(s.name, s));
+      existingStatuses.forEach((s) => {
+        if (s && s.name) statusMap.set(s.name, s);
+      });
 
-      return STANDARD_STATUS_ORDER.map((name) => statusMap.get(name)!);
+      return STANDARD_STATUS_ORDER.map((name) => statusMap.get(name)).filter((s): s is WorkflowStatus => Boolean(s));
     }
 
     // Preserve custom workflows
-    return currentWorkflow.statuses && currentWorkflow.statuses.length > 0
+    return currentWorkflow?.statuses && currentWorkflow.statuses.length > 0
       ? currentWorkflow.statuses
       : DEFAULT_STANDARD_STATUSES;
   }, [currentWorkflow]);
@@ -88,7 +90,7 @@ export function ProjectBoardView({ onOpenCreateTask }: ProjectBoardViewProps) {
 
           return (
             <div
-              key={status.id}
+              key={status.id || status.name}
               onDragOver={(e) => handleDragOver(e, status.name)}
               onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, status.name)}

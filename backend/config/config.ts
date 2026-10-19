@@ -3,10 +3,10 @@ import dotenv from "dotenv";
 
 
 dotenv.config();
-const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
+const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET;
 if (!accessTokenSecret || accessTokenSecret.length < 32) {
   throw new Error(
-    "ACCESS_TOKEN_SECRET must be configured with a strong secret of at least 32 characters."
+    "ACCESS_TOKEN_SECRET (or JWT_SECRET) must be configured with a strong secret of at least 32 characters."
   );
 }
 export const config = {

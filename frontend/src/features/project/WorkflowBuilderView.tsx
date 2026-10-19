@@ -4,9 +4,10 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Plus, Trash2, ArrowRight, Shield, GripVertical, Info, RotateCcw, Save } from 'lucide-react';
 import type { WorkflowStatus, Workflow, Task } from '../../types';
+import { saveProjectWorkflowApi } from '../../services/api';
 
 export function WorkflowBuilderView() {
-  const { currentWorkflow, setWorkflows, projectTasks, showToast, currentUser } = useApp();
+  const { currentProject, currentWorkflow, setWorkflows, projectTasks, showToast, currentUser } = useApp();
 
   // Local draft state for workflow customization
   const [draftStatuses, setDraftStatuses] = useState<WorkflowStatus[]>(() =>
@@ -236,6 +237,11 @@ export function WorkflowBuilderView() {
         w.id === currentWorkflow.id ? { ...w, statuses: draftStatuses } : w
       )
     );
+    if (currentProject?.id && currentProject.id.includes('-')) {
+      saveProjectWorkflowApi(currentProject.id, { stages: draftStatuses }).catch((err) => {
+        console.warn('TaskFlow: Failed to persist workflow to backend:', err.message);
+      });
+    }
     showToast('Workflow draft saved successfully', 'success');
   }
 

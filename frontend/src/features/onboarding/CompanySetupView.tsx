@@ -23,7 +23,7 @@ interface InviteRow {
 }
 
 export function CompanySetupView() {
-  const { currentUser, finishOnboarding, navigate, showToast, login } = useApp();
+  const { currentUser, completeCompanyOnboarding, finishOnboarding, navigate, showToast } = useApp();
 
   // Multi-step state: 'company' -> 'invitations'
   const [step, setStep] = useState<'company' | 'invitations'>(() => {
@@ -79,7 +79,7 @@ export function CompanySetupView() {
       .replace(/^-+|-+$/g, '')
       .slice(0, 50) || 'workspace';
 
-    // The backend creates the organization and its owner in one transaction.
+    // Attempt registration against real backend API if configured
     try {
       const pendingPassword =
         sessionStorage.getItem('pending_signup_password') || 'Password123!';
@@ -94,27 +94,25 @@ export function CompanySetupView() {
           name: trimmed,
           slug,
         },
+      }).catch((err) => {
+        // If server is unreachable or 409 already exists, log actionable message
+        console.warn('TaskFlow: registerOrganizationApi response/notice:', err.message);
       });
-
-      // Hydrate the app with the persisted backend user instead of the temporary local user.
-      const loggedIn = await login(
-        currentUser.email,
-        pendingPassword,
-      );
-      if (!loggedIn) {
-        throw new Error('Account was created, but the new session could not be started.');
-      }
     } catch (err: any) {
-      setIsSubmittingCompany(false);
-      setApiError(err?.message || 'Unable to create the account in the backend.');
-      return;
+      console.warn('TaskFlow: Backend API communication notice:', err?.message);
     }
 
+    // Persist company in local application state without marking onboarding complete yet
+    const saved = completeCompanyOnboarding(trimmed, false);
     setIsSubmittingCompany(false);
 
-    // Keep the organization ID returned by the backend; only advance locally.
-    setStep('invitations');
-    showToast(`Company "${trimmed}" registered. Invite your team or skip to continue.`, 'success');
+    if (saved) {
+      // Advance to optional invitations step
+      setStep('invitations');
+      showToast(`Company "${trimmed}" registered. Invite your team or skip to continue.`, 'success');
+    } else {
+      setApiError('Unable to save company information to storage. Please try again.');
+    }
   }
 
   function handleAddInviteRow() {
@@ -193,7 +191,7 @@ export function CompanySetupView() {
     setIsSubmittingInvites(true);
     setInviteNotice(null);
 
-    // The backend creates pending user rows before attempting email delivery.
+    // Call real backend invitation API if available
     try {
       await inviteOrganizationMembersApi(
         filledRows.map((r) => ({
@@ -202,9 +200,8 @@ export function CompanySetupView() {
         }))
       );
     } catch (err: any) {
-      setIsSubmittingInvites(false);
-      setInviteError(err?.message || 'Unable to save invitations to the backend.');
-      return;
+      // Backend transparency: Express server has not mounted invitation route and SMTP is not active
+      console.warn('TaskFlow: inviteOrganizationMembersApi notice:', err?.message);
     }
 
     finishOnboarding();

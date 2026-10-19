@@ -67,6 +67,7 @@ interface ViewWorkItemsQuery {
 interface UpdateWorkItemBody {
   title?: string;
   description?: string | null;
+  type?: WorkItemType;
   priority?: WorkItemPriority;
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
@@ -721,6 +722,10 @@ export const getProjectWorkItems = async (
 
   const query = AppDataSource.getRepository(WorkItem)
     .createQueryBuilder("workItem")
+    .leftJoinAndSelect("workItem.assignments", "assignments")
+    .leftJoinAndSelect("workItem.comments", "comments")
+    .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
+    .leftJoinAndSelect("workItem.children", "children")
     .where("workItem.projectId = :projectId", {
       projectId: project.id,
     })
@@ -781,6 +786,10 @@ export const updateWorkItem = async (
   // Explicit allow-list: do not mass-assign req.body onto the entity.
   if (body.title !== undefined) {
     workItem.title = body.title.trim();
+  }
+
+  if (body.type !== undefined) {
+    workItem.type = body.type;
   }
 
   if (body.description !== undefined) {

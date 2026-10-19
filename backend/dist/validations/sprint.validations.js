@@ -7,8 +7,9 @@ exports.createSprintSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const work_item_entity_1 = require("../entities/work.item.entity");
 const isRealDate = (value) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         return false;
+    }
     const date = new Date(`${value}T00:00:00.000Z`);
     return (!Number.isNaN(date.getTime()) &&
         date.toISOString().slice(0, 10) === value);
@@ -42,10 +43,7 @@ const workItemSchema = joi_1.default.object({
     status: joi_1.default.string()
         .valid(...Object.values(work_item_entity_1.WorkItemStatus))
         .default(work_item_entity_1.WorkItemStatus.BACKLOG),
-    dueDate: joi_1.default.alternatives()
-        .try(dateSchema, joi_1.default.string().isoDate())
-        .allow(null)
-        .optional(),
+    dueDate: dateSchema.allow(null).optional(),
     parentWorkItemId: uuidSchema.allow(null).optional(),
     assigneeIds: joi_1.default.array()
         .items(uuidSchema.required())
@@ -61,13 +59,19 @@ const workItemSchema = joi_1.default.object({
         !item.parentWorkItemId) {
         return helpers.error("workItem.parentRequired");
     }
+    if (item.type !== work_item_entity_1.WorkItemType.SUBTASK &&
+        item.parentWorkItemId) {
+        return helpers.error("workItem.parentNotAllowed");
+    }
     return item;
 })
     .messages({
     "workItem.parentRequired": "A SUBTASK must have a parentWorkItemId.",
+    "workItem.parentNotAllowed": "Only a SUBTASK may specify a parentWorkItemId.",
+    "object.unknown": "Unknown field: {{#label}}.",
 });
 exports.createSprintSchema = joi_1.default.object({
-    name: joi_1.default.string().trim().min(1).max(150).required(),
+    name: joi_1.default.string().trim().min(1).max(100).required(),
     goal: joi_1.default.string().trim().max(1000).allow("", null).optional(),
     startDate: dateSchema.required(),
     endDate: dateSchema.required(),

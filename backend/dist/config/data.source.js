@@ -13,10 +13,10 @@ exports.AppDataSource = new typeorm_1.DataSource({
     password: (config_1.config.database.password),
     database: config_1.config.database.name,
     entities: [
-        (0, path_1.join)(__dirname, "../entities/**/*{.ts,.js}"),
+        (0, path_1.join)(__dirname, "../entities/**/*{.ts,.js}").replace(/\\/g, "/"),
     ],
     migrations: [
-        (0, path_1.join)(__dirname, "../migrations/**/*{.ts,.js}"),
+        (0, path_1.join)(__dirname, "../migrations/**/*{.ts,.js}").replace(/\\/g, "/"),
     ],
     synchronize: config_1.config.database.synchronize,
     logging: config_1.config.database.logging,

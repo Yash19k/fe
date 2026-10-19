@@ -45,19 +45,11 @@ __decorate([
     __metadata("design:type", Object)
 ], Project.prototype, "description", void 0);
 __decorate([
-    (0, typeorm_1.Column)({
-        name: "start_date",
-        type: "date",
-        nullable: true,
-    }),
+    (0, typeorm_1.Column)({ name: "start_date", type: "date", nullable: true }),
     __metadata("design:type", Object)
 ], Project.prototype, "startDate", void 0);
 __decorate([
-    (0, typeorm_1.Column)({
-        name: "end_date",
-        type: "date",
-        nullable: true,
-    }),
+    (0, typeorm_1.Column)({ name: "end_date", type: "date", nullable: true }),
     __metadata("design:type", Object)
 ], Project.prototype, "endDate", void 0);
 __decorate([
@@ -65,19 +57,22 @@ __decorate([
     __metadata("design:type", String)
 ], Project.prototype, "createdById", void 0);
 __decorate([
-    (0, typeorm_1.CreateDateColumn)({
-        name: "created_at",
-        type: "timestamptz",
-    }),
+    (0, typeorm_1.CreateDateColumn)({ name: "created_at", type: "timestamptz" }),
     __metadata("design:type", Date)
 ], Project.prototype, "createdAt", void 0);
 __decorate([
-    (0, typeorm_1.UpdateDateColumn)({
-        name: "updated_at",
-        type: "timestamptz",
-    }),
+    (0, typeorm_1.UpdateDateColumn)({ name: "updated_at", type: "timestamptz" }),
     __metadata("design:type", Date)
 ], Project.prototype, "updatedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        type: "enum",
+        enum: ProjectVisibility,
+        enumName: "projects_visibility_enum",
+        default: ProjectVisibility.PRIVATE,
+    }),
+    __metadata("design:type", String)
+], Project.prototype, "visibility", void 0);
 __decorate([
     (0, typeorm_1.ManyToOne)(() => organization_entity_1.Organization, (organization) => organization.projects, {
         nullable: false,
@@ -103,20 +98,21 @@ __decorate([
     __metadata("design:type", Array)
 ], Project.prototype, "memberships", void 0);
 __decorate([
-    (0, typeorm_1.Column)({
-        type: "enum",
-        enum: ProjectVisibility,
-        default: ProjectVisibility.PRIVATE,
-    }),
-    __metadata("design:type", String)
-], Project.prototype, "visibility", void 0);
-__decorate([
     (0, typeorm_1.OneToMany)(() => sprint_entities_1.Sprint, (sprint) => sprint.project),
     __metadata("design:type", Array)
 ], Project.prototype, "sprints", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)("ProjectLabel", "project"),
+    __metadata("design:type", Array)
+], Project.prototype, "labels", void 0);
+__decorate([
+    (0, typeorm_1.OneToOne)("ProjectWorkflow", "project"),
+    __metadata("design:type", Object)
+], Project.prototype, "workflow", void 0);
 exports.Project = Project = __decorate([
     (0, typeorm_1.Entity)({ name: "projects" }),
     (0, typeorm_1.Unique)("UQ_projects_organization_key", ["organizationId", "key"]),
     (0, typeorm_1.Index)("IDX_projects_organization_id", ["organizationId"]),
-    (0, typeorm_1.Index)("IDX_projects_created_by_id", ["createdById"])
+    (0, typeorm_1.Index)("IDX_projects_created_by_id", ["createdById"]),
+    (0, typeorm_1.Check)("CHK_projects_date_order", `"start_date" IS NULL OR "end_date" IS NULL OR "end_date" >= "start_date"`)
 ], Project);

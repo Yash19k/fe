@@ -6,6 +6,7 @@ import {
   UpdateDateColumn,
   ManyToOne,
   OneToMany,
+  OneToOne,
   JoinColumn,
   Index,
   Unique,
@@ -91,4 +92,10 @@ export class Project {
 
   @OneToMany(() => Sprint, (sprint) => sprint.project)
   sprints!: Sprint[];
+
+  @OneToMany("ProjectLabel", "project")
+  labels: any[];
+
+  @OneToOne("ProjectWorkflow", "project")
+  workflow: any;
 }

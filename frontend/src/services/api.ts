@@ -14,15 +14,9 @@ import type {
 } from '../types';
 
 export const API_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://127.0.0.1:3001';
+  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
-
-const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function isBackendEntityId(value: string | null | undefined): value is string {
-  return typeof value === 'string' && UUID_V4_PATTERN.test(value);
-}
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -426,6 +420,222 @@ export async function getProjectDashboardApi(projectId: string): Promise<any> {
 }
 
 // ==========================================
+// Organization Users
+// ==========================================
+
+export async function getOrganizationUsersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>('/api/users', {
+    method: 'GET',
+  });
+}
+
+// ==========================================
+// Work Item Comments
+// ==========================================
+
+export async function getWorkItemCommentsApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/comments`,
+    { method: 'GET' }
+  );
+}
+
+export async function addWorkItemCommentApi(
+  workItemId: string,
+  content: string
+): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/comments`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }
+  );
+}
+
+// ==========================================
+// Work Item Time Tracking
+// ==========================================
+
+export async function getWorkItemTimeEntriesApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/time-entries`,
+    { method: 'GET' }
+  );
+}
+
+export async function addWorkItemTimeEntryApi(
+  workItemId: string,
+  payload: { hours?: number; durationMinutes?: number; note?: string; date?: string }
+): Promise<{ success: boolean; data: any }> {
+  const hours = payload.hours !== undefined ? payload.hours : (payload.durationMinutes ? payload.durationMinutes / 60 : 1);
+  return request<{ success: boolean; data: any }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/time-entries`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        hours: Number(hours),
+        note: payload.note || '',
+        date: payload.date || new Date().toISOString().split('T')[0],
+      }),
+    }
+  );
+}
+
+// ==========================================
+// Work Item Dependencies
+// ==========================================
+
+export async function getWorkItemDependenciesApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies`,
+    { method: 'GET' }
+  );
+}
+
+export async function addWorkItemDependencyApi(
+  workItemId: string,
+  dependsOnWorkItemId: string
+): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ dependsOnWorkItemId }),
+    }
+  );
+}
+
+export async function deleteWorkItemDependencyApi(
+  workItemId: string,
+  dependsOnWorkItemId: string
+): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependsOnWorkItemId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+// ==========================================
+// Project Labels
+// ==========================================
+
+export async function getProjectLabelsApi(projectId: string): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    { method: 'GET' }
+  );
+}
+
+export async function createProjectLabelApi(
+  projectId: string,
+  payload: { name: string; color?: string; description?: string }
+): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function deleteProjectLabelApi(
+  projectId: string,
+  labelId: string
+): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels/${encodeURIComponent(labelId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+// ==========================================
+// Project Workflow
+// ==========================================
+
+export async function getProjectWorkflowApi(projectId: string): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/projects/${encodeURIComponent(projectId)}/workflow`,
+    { method: 'GET' }
+  );
+}
+
+export async function saveProjectWorkflowApi(
+  projectId: string,
+  payload: { stages: any[]; transitions?: any; rules?: any }
+): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/projects/${encodeURIComponent(projectId)}/workflow`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+// ==========================================
+// Audit Logs
+// ==========================================
+
+export async function getProjectAuditLogsApi(projectId: string): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/audit-logs`,
+    { method: 'GET' }
+  );
+}
+
+export async function createAuditLogApi(payload: {
+  projectId?: string;
+  workItemId?: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  details?: any;
+}): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>('/api/projects/audit-logs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ==========================================
+// Notifications
+// ==========================================
+
+export async function getUserNotificationsApi(): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>('/api/notifications', {
+    method: 'GET',
+  });
+}
+
+export async function markNotificationReadApi(notificationId: string): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>(
+    `/api/notifications/${encodeURIComponent(notificationId)}/read`,
+    { method: 'PATCH' }
+  );
+}
+
+export async function markAllNotificationsReadApi(): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>('/api/notifications/read-all', {
+    method: 'PATCH',
+  });
+}
+
+export async function createNotificationApi(payload: {
+  userId?: string;
+  title: string;
+  message: string;
+  type?: string;
+  link?: string;
+}): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>('/api/notifications', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ==========================================
 // Domain Transformation Helpers
 // ==========================================
 
@@ -553,8 +763,15 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     assigneeIds,
     sprintId: item.sprintId || null,
     creatorId: item.createdById || item.creatorId,
-    labels: Array.isArray(item.labels) ? item.labels : [],
-    dependencyIds: Array.isArray(item.dependencyIds) ? item.dependencyIds : [],
+    labels: Array.isArray(item.labels)
+      ? item.labels.map((l: any) => (typeof l === 'string' ? l : l.name || l.id))
+      : [],
+    dependencies: Array.isArray(item.dependencies)
+      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id || d)
+      : (Array.isArray(item.dependencyIds) ? item.dependencyIds : []),
+    dependencyIds: Array.isArray(item.dependencies)
+      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id || d)
+      : (Array.isArray(item.dependencyIds) ? item.dependencyIds : []),
     subtasks: Array.isArray(item.children)
       ? item.children.map((c: any) => ({
           id: c.id,
@@ -563,8 +780,28 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
           assigneeId: c.assigneeId || null,
         }))
       : (item.subtasks || []),
-    comments: item.comments || [],
-    timeEntries: item.timeEntries || [],
+    comments: Array.isArray(item.comments)
+      ? item.comments.map((c: any) => ({
+          id: c.id,
+          userId: c.userId,
+          authorId: c.userId,
+          text: c.content || c.text || c.body || '',
+          body: c.content || c.text || c.body || '',
+          createdAt: c.createdAt || new Date().toISOString(),
+        }))
+      : (item.comments || []),
+    timeEntries: Array.isArray(item.timeEntries)
+      ? item.timeEntries.map((te: any) => ({
+          id: te.id,
+          userId: te.userId,
+          hours: te.hours !== undefined ? Number(te.hours) : (te.durationMinutes ? te.durationMinutes / 60 : 0),
+          durationMinutes: te.durationMinutes !== undefined ? te.durationMinutes : (te.hours ? Math.round(Number(te.hours) * 60) : 0),
+          date: te.date,
+          startTime: te.date || te.createdAt,
+          note: te.note || te.description || '',
+          description: te.note || te.description || '',
+        }))
+      : (item.timeEntries || []),
     recurrenceRule: item.recurrence
       ? {
           frequency: item.recurrence.frequency?.toLowerCase() || 'none',

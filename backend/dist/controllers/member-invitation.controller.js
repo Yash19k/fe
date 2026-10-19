@@ -1,12 +1,34 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.inviteMembersController = inviteMembersController;
 exports.acceptInvitationController = acceptInvitationController;
+const joi_1 = __importDefault(require("joi"));
 const member_invitation_service_1 = require("../services/member-invitation.service");
-const project_validations_1 = require("../validations/project.validations");
+const user_entity_1 = require("../entities/user.entity");
+const invitedMembersSchema = joi_1.default.alternatives().try(joi_1.default.array().items(joi_1.default.object({
+    email: joi_1.default.string().email().required(),
+    role: joi_1.default.string()
+        .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+        .default(user_entity_1.UserRole.TEAMMATE),
+})), joi_1.default.object({
+    members: joi_1.default.array().items(joi_1.default.object({
+        email: joi_1.default.string().email().required(),
+        role: joi_1.default.string()
+            .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+            .default(user_entity_1.UserRole.TEAMMATE),
+    })).required(),
+}));
+const acceptInvitationSchema = joi_1.default.object({
+    token: joi_1.default.string().required(),
+    fullName: joi_1.default.string().trim().min(1).max(100).required(),
+    password: joi_1.default.string().min(6).max(100).required(),
+});
 async function inviteMembersController(req, res, next) {
     try {
-        const { error, value } = project_validations_1.invitedMembers.validate(req.body, {
+        const { error, value } = invitedMembersSchema.validate(req.body, {
             abortEarly: false,
             stripUnknown: true,
         });
@@ -22,7 +44,7 @@ async function inviteMembersController(req, res, next) {
                 message: "Authentication required",
             });
         }
-        if (authenticatedUser.role !== "ADMIN") {
+        if (authenticatedUser.role !== user_entity_1.UserRole.ADMIN) {
             return res.status(403).json({
                 message: "Only organization admins can invite members",
             });
@@ -32,7 +54,8 @@ async function inviteMembersController(req, res, next) {
                 message: "Your account is not associated with an organization",
             });
         }
-        const result = await (0, member_invitation_service_1.inviteOrganizationMembers)(authenticatedUser.organizationId, value);
+        const membersList = Array.isArray(value) ? value : value.members;
+        const result = await (0, member_invitation_service_1.inviteOrganizationMembers)(authenticatedUser.organizationId, membersList);
         return res.status(200).json(result);
     }
     catch (error) {
@@ -54,7 +77,7 @@ async function inviteMembersController(req, res, next) {
 }
 async function acceptInvitationController(req, res, next) {
     try {
-        const { error, value } = project_validations_1.acceptInvitationSchema.validate(req.body, {
+        const { error, value } = acceptInvitationSchema.validate(req.body, {
             abortEarly: false,
             stripUnknown: true,
         });

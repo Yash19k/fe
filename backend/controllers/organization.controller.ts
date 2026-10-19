@@ -7,8 +7,18 @@ import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { Organization } from "../entities/organization.entity";
 import { onboardingSchema } from "../validations/user.validator";
 import { generateAccessToken, generateRefreshToken } from "../utils/auth.token";
+import Joi from "joi";
 import { UserSession } from "../entities/user.session.entity";
-import { invitedMemberSchema } from "../validations/project.validations";
+
+const invitedMemberSchema = Joi.array().items(
+  Joi.object({
+    email: Joi.string().email().required(),
+    role: Joi.string()
+      .valid(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAMMATE)
+      .default(UserRole.TEAMMATE),
+  })
+);
+
 
 const userRepository = AppDataSource.getRepository(User);
 
