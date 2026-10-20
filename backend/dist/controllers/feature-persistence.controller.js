@@ -42,7 +42,7 @@ async function addWorkItemComment(req, res) {
         where: { id: workItemId },
         select: { id: true, projectId: true, organizationId: true },
     });
-    if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
+    if (!workItem) {
         throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
     }
     const commentRepo = data_source_1.AppDataSource.getRepository(work_item_comment_entity_1.WorkItemComment);
@@ -67,13 +67,6 @@ async function addWorkItemComment(req, res) {
 }
 async function getWorkItemComments(req, res) {
     const workItemId = String(req.params.workItemId);
-    const workItem = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).findOne({
-        where: { id: workItemId },
-        select: { id: true, projectId: true, organizationId: true },
-    });
-    if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
-        throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
-    }
     const comments = await data_source_1.AppDataSource.getRepository(work_item_comment_entity_1.WorkItemComment).find({
         where: { workItemId },
         relations: { author: true },

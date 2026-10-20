@@ -54,8 +54,15 @@ export class WorkItemAttachment {
   @Column({ type: "bigint" })
   size: string;
 
+  // Cloudinary public_id. Used to delete the remote asset later.
   @Column({ type: "text", unique: true })
   storageKey: string;
+
+  @Column({ type: "text", name: "secure_url" })
+  secureUrl: string;
+
+  @Column({ type: "varchar", length: 20, name: "resource_type" })
+  resourceType: string;
 
   @CreateDateColumn()
   createdAt: Date;

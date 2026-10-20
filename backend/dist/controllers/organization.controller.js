@@ -38,20 +38,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerOrganization = registerOrganization;
 exports.addOrganizationMembers = addOrganizationMembers;
-exports.getOrganizationMembers = getOrganizationMembers;
-exports.updateOrganizationMemberRole = updateOrganizationMemberRole;
-exports.removeOrganizationMember = removeOrganizationMember;
 const bcrypt = __importStar(require("bcrypt"));
 const data_source_1 = require("../config/data.source");
 const user_entity_1 = require("../entities/user.entity");
 const organization_entity_1 = require("../entities/organization.entity");
-const project_member_entity_1 = require("../entities/project.member.entity");
-const project_entity_1 = require("../entities/project.entity");
 const user_validator_1 = require("../validations/user.validator");
 const auth_token_1 = require("../utils/auth.token");
 const joi_1 = __importDefault(require("joi"));
 const user_session_entity_1 = require("../entities/user.session.entity");
-const app_error_1 = require("../errors/app.error");
 const invitedMemberSchema = joi_1.default.array().items(joi_1.default.object({
     email: joi_1.default.string().email().required(),
     role: joi_1.default.string()
@@ -258,147 +252,4 @@ async function addOrganizationMembers(req, res, next) {
         }
         return next(err);
     }
-}
-async function getOrganizationMembers(req, res) {
-    const organizationId = req.user?.organizationId;
-    if (!organizationId) {
-        throw new app_error_1.AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
-    }
-    const users = await userRepository.find({
-        where: { organizationId },
-        select: {
-            id: true,
-            fullName: true,
-            email: true,
-            role: true,
-            status: true,
-            createdAt: true,
-        },
-        order: { fullName: "ASC" },
-    });
-    return res.json({
-        success: true,
-        data: users.map((u) => ({
-            id: u.id,
-            name: u.fullName || u.email.split("@")[0],
-            email: u.email,
-            role: u.role,
-            status: u.status,
-            initials: (u.fullName || u.email).slice(0, 2).toUpperCase(),
-            createdAt: u.createdAt,
-        })),
-    });
-}
-async function updateOrganizationMemberRole(req, res) {
-    const authUser = req.user;
-    if (!authUser || !authUser.organizationId) {
-        throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
-    }
-    if (authUser.role !== user_entity_1.UserRole.ADMIN) {
-        throw new app_error_1.AppError("Only organization administrators can update member roles.", 403, "ADMIN_REQUIRED");
-    }
-    const targetUserId = String(req.params.userId);
-    const { role: newRole } = req.body;
-    if (!newRole || !Object.values(user_entity_1.UserRole).includes(newRole)) {
-        throw new app_error_1.AppError(`Invalid role. Must be one of: ${Object.values(user_entity_1.UserRole).join(", ")}`, 400, "INVALID_ROLE");
-    }
-    const targetUser = await userRepository.findOne({
-        where: { id: targetUserId, organizationId: authUser.organizationId },
-    });
-    if (!targetUser) {
-        throw new app_error_1.AppError("Member not found in this organization.", 404, "MEMBER_NOT_FOUND");
-    }
-    // Prevent demoting the last organization administrator
-    if (targetUser.role === user_entity_1.UserRole.ADMIN && newRole !== user_entity_1.UserRole.ADMIN) {
-        const adminCount = await userRepository.count({
-            where: {
-                organizationId: authUser.organizationId,
-                role: user_entity_1.UserRole.ADMIN,
-                status: user_entity_1.UserStatus.ACTIVE,
-            },
-        });
-        if (adminCount <= 1) {
-            throw new app_error_1.AppError("Cannot demote the last organization administrator.", 400, "LAST_ADMIN_PROTECTED");
-        }
-    }
-    targetUser.role = newRole;
-    const saved = await userRepository.save(targetUser);
-    return res.json({
-        success: true,
-        message: `Member role updated to ${saved.role}.`,
-        data: {
-            id: saved.id,
-            name: saved.fullName,
-            email: saved.email,
-            role: saved.role,
-            status: saved.status,
-        },
-    });
-}
-async function removeOrganizationMember(req, res) {
-    const authUser = req.user;
-    if (!authUser || !authUser.organizationId) {
-        throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
-    }
-    if (authUser.role !== user_entity_1.UserRole.ADMIN) {
-        throw new app_error_1.AppError("Only organization administrators can remove members.", 403, "ADMIN_REQUIRED");
-    }
-    const targetUserId = String(req.params.userId);
-    if (targetUserId === authUser.id) {
-        throw new app_error_1.AppError("You cannot remove yourself from the organization.", 400, "CANNOT_REMOVE_SELF");
-    }
-    const targetUser = await userRepository.findOne({
-        where: { id: targetUserId, organizationId: authUser.organizationId },
-    });
-    if (!targetUser) {
-        throw new app_error_1.AppError("Member not found in this organization.", 404, "MEMBER_NOT_FOUND");
-    }
-    // Check last admin protection
-    if (targetUser.role === user_entity_1.UserRole.ADMIN) {
-        const adminCount = await userRepository.count({
-            where: {
-                organizationId: authUser.organizationId,
-                role: user_entity_1.UserRole.ADMIN,
-                status: user_entity_1.UserStatus.ACTIVE,
-            },
-        });
-        if (adminCount <= 1) {
-            throw new app_error_1.AppError("Cannot remove the last organization administrator.", 400, "LAST_ADMIN_PROTECTED");
-        }
-    }
-    // Check organization owner protection
-    const org = await data_source_1.AppDataSource.getRepository(organization_entity_1.Organization).findOne({
-        where: { id: authUser.organizationId },
-    });
-    if (org && org.createdByUserId === targetUserId) {
-        throw new app_error_1.AppError("Cannot remove the organization owner.", 400, "CANNOT_REMOVE_OWNER");
-    }
-    // Transactionally remove project memberships and detach user from organization
-    await data_source_1.AppDataSource.transaction(async (manager) => {
-        // Find all projects belonging to this organization
-        const orgProjects = await manager.find(project_entity_1.Project, {
-            where: { organizationId: authUser.organizationId },
-            select: { id: true },
-        });
-        const projectIds = orgProjects.map((p) => p.id);
-        if (projectIds.length > 0) {
-            await manager
-                .createQueryBuilder()
-                .delete()
-                .from(project_member_entity_1.ProjectMember)
-                .where("userId = :userId AND projectId IN (:...projectIds)", {
-                userId: targetUserId,
-                projectIds,
-            })
-                .execute();
-        }
-        // Detach user from organization without deleting global account
-        targetUser.organizationId = null;
-        targetUser.role = user_entity_1.UserRole.TEAMMATE;
-        await manager.save(user_entity_1.User, targetUser);
-    });
-    return res.json({
-        success: true,
-        message: "Member removed from organization successfully.",
-    });
 }

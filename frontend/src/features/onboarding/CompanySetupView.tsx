@@ -23,7 +23,7 @@ interface InviteRow {
 }
 
 export function CompanySetupView() {
-  const { currentUser, completeCompanyOnboarding, finishOnboarding, navigate, showToast, pendingSignupPassword } = useApp();
+  const { currentUser, completeCompanyOnboarding, finishOnboarding, navigate, showToast } = useApp();
 
   // Multi-step state: 'company' -> 'invitations'
   const [step, setStep] = useState<'company' | 'invitations'>(() => {
@@ -79,39 +79,38 @@ export function CompanySetupView() {
       .replace(/^-+|-+$/g, '')
       .slice(0, 50) || 'workspace';
 
-    // Attempt registration against real backend API if configured
-    try {
-      const pendingPassword = pendingSignupPassword || 'Password123!';
+    const pendingPassword = sessionStorage.getItem('pending_signup_password');
+    if (!pendingPassword) {
+      setApiError('Your signup session has expired. Please sign in again and retry.');
+      setIsSubmittingCompany(false);
+      return;
+    }
 
-      await registerOrganizationApi({
-        user: {
-          fullName: currentUser.name || 'Workspace Admin',
-          email: currentUser.email,
-          password: pendingPassword,
-        },
-        organization: {
-          name: trimmed,
-          slug,
-        },
-      }).catch((err) => {
-        // If server is unreachable or 409 already exists, log actionable message
-        console.warn('TaskFlow: registerOrganizationApi response/notice:', err.message);
+    registerOrganizationApi({
+      user: {
+        fullName: currentUser.name || 'Workspace Admin',
+        email: currentUser.email,
+        password: pendingPassword,
+      },
+      organization: {
+        name: trimmed,
+        slug,
+      },
+    })
+      .then(() => {
+        const saved = completeCompanyOnboarding(trimmed, false);
+        setIsSubmittingCompany(false);
+
+        if (saved) {
+          setStep('invitations');
+          showToast(`Company "${trimmed}" registered. Invite your team or skip to continue.`, 'success');
+        } else {
+          setApiError('Unable to save company information to storage. Please try again.');
+        }
+      }, (err: unknown) => {
+        setIsSubmittingCompany(false);
+        setApiError(err instanceof Error ? err.message : 'Unable to register the company. Please try again.');
       });
-    } catch (err: any) {
-      console.warn('TaskFlow: Backend API communication notice:', err?.message);
-    }
-
-    // Persist company in local application state without marking onboarding complete yet
-    const saved = completeCompanyOnboarding(trimmed, false);
-    setIsSubmittingCompany(false);
-
-    if (saved) {
-      // Advance to optional invitations step
-      setStep('invitations');
-      showToast(`Company "${trimmed}" registered. Invite your team or skip to continue.`, 'success');
-    } else {
-      setApiError('Unable to save company information to storage. Please try again.');
-    }
   }
 
   function handleAddInviteRow() {
@@ -190,23 +189,21 @@ export function CompanySetupView() {
     setIsSubmittingInvites(true);
     setInviteNotice(null);
 
-    // Call real backend invitation API if available
-    try {
-      await inviteOrganizationMembersApi(
+    inviteOrganizationMembersApi(
         filledRows.map((r) => ({
           email: r.email.trim().toLowerCase(),
           role: r.role.toUpperCase(),
         }))
-      );
-    } catch (err: any) {
-      // Backend transparency: Express server has not mounted invitation route and SMTP is not active
-      console.warn('TaskFlow: inviteOrganizationMembersApi notice:', err?.message);
-    }
-
-    finishOnboarding();
-    setIsSubmittingInvites(false);
-    showToast(`Workspace ready with ${filledRows.length} team member invitation${filledRows.length > 1 ? 's' : ''} staged.`, 'success');
-    navigate('/');
+      )
+      .then(() => {
+        setIsSubmittingInvites(false);
+        finishOnboarding();
+        showToast(`Invitation request submitted for ${filledRows.length} team member${filledRows.length > 1 ? 's' : ''}.`, 'success');
+        navigate('/');
+      }, (err: unknown) => {
+        setIsSubmittingInvites(false);
+        setInviteError(err instanceof Error ? err.message : 'Unable to send invitations. Please try again.');
+      });
   }
 
   function handleSkipInvitations() {

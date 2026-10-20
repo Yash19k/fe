@@ -74,7 +74,7 @@ export function ProjectDashboardView() {
   }, [backendDashboard, projectTasks]);
 
   // Work-Item Type Breakdown
-  const tasksByType = useMemo<Array<{ type: WorkItemType; count: number }>>(() => {
+  const tasksByType = useMemo(() => {
     if (Array.isArray(backendDashboard?.workItemTypes) && backendDashboard.workItemTypes.length > 0) {
       return backendDashboard.workItemTypes.map((item: any) => ({
         type: item.type as WorkItemType,
