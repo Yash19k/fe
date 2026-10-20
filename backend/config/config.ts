@@ -27,4 +27,13 @@ export const config = {
     logging: process.env.DB_LOGGING === "true",
   },
   accessTokenSecret,
+  email: {
+    smtpHost: process.env.SMTP_HOST,
+    smtpPort: Number(process.env.SMTP_PORT ?? 587),
+    smtpSecure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
+    smtpUser: process.env.SMTP_USER,
+    smtpPassword: process.env.SMTP_PASS,
+    smtpFrom: process.env.SMTP_FROM,
+    frontendUrl: process.env.FRONTEND_URL,
+  },
 };
