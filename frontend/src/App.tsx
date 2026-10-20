@@ -26,6 +26,7 @@ import { ProjectBoardView } from './features/project/ProjectBoardView';
 import { ProjectTimelineView } from './features/project/ProjectTimelineView';
 import { ProjectCalendarView } from './features/project/ProjectCalendarView';
 import { ProjectDashboardView } from './features/project/ProjectDashboardView';
+import { SprintDashboardView } from './features/project/SprintDashboardView';
 import { WorkflowBuilderView } from './features/project/WorkflowBuilderView';
 import { DependenciesView } from './features/project/DependenciesView';
 import { ProjectSettingsView } from './features/project/ProjectSettingsView';
@@ -158,6 +159,9 @@ function MainAppShell() {
                   />
                 )}
                 {projectTab === 'dashboard' && <ProjectDashboardView />}
+                {projectTab === 'sprint' && (
+                  <SprintDashboardView onOpenCreateSprint={() => setCreateSprintOpen(true)} />
+                )}
                 {projectTab === 'workflow' && <WorkflowBuilderView key={currentWorkflow?.id} />}
                 {projectTab === 'dependencies' && <DependenciesView />}
                 {/* Direct-link backwards compatibility for /members and /activity URLs to Settings sections */}

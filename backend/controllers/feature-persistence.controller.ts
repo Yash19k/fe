@@ -28,7 +28,7 @@ export async function addWorkItemComment(req: Request, res: Response) {
     select: { id: true, projectId: true, organizationId: true },
   });
 
-  if (!workItem) {
+  if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
     throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
   }
 
@@ -58,6 +58,15 @@ export async function addWorkItemComment(req: Request, res: Response) {
 
 export async function getWorkItemComments(req: Request, res: Response) {
   const workItemId = String(req.params.workItemId);
+
+  const workItem = await AppDataSource.getRepository(WorkItem).findOne({
+    where: { id: workItemId },
+    select: { id: true, projectId: true, organizationId: true },
+  });
+
+  if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
+    throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+  }
 
   const comments = await AppDataSource.getRepository(WorkItemComment).find({
     where: { workItemId },

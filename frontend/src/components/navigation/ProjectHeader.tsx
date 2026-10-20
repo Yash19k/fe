@@ -15,6 +15,7 @@ import {
   Settings,
   Plus,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { AvatarGroup } from '../ui/Avatar';
@@ -38,6 +39,7 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     setProjectTab,
     allUsers,
     navigate,
+    currentUser,
   } = useApp();
 
   if (!currentProject) return null;
@@ -46,8 +48,10 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     (currentProject.memberIds || []).includes(u.id)
   );
 
-  // Primary project navigation sections:
-  // Members and Activity & Audit are moved into Project Settings
+  const canManageWorkflows = currentUser.role !== 'Teammate';
+  const canViewSettings = currentUser.role !== 'Teammate';
+
+  // Primary project navigation sections
   const tabs: TabItem[] = [
     { id: 'overview', label: 'Overview', icon: LayoutGrid },
     { id: 'list', label: 'List', icon: ListFilter },
@@ -55,9 +59,10 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     { id: 'timeline', label: 'Timeline', icon: GitCommit },
     { id: 'calendar', label: 'Calendar', icon: CalendarDays },
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'sprint', label: 'Sprint', icon: Zap },
     { id: 'dependencies', label: 'Dependencies', icon: Network },
-    { id: 'workflow', label: 'Workflow', icon: Workflow },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    ...(canManageWorkflows ? [{ id: 'workflow', label: 'Workflow', icon: Workflow }] : []),
+    ...(canViewSettings ? [{ id: 'settings', label: 'Settings', icon: Settings }] : []),
   ];
 
   function handleTabClick(tabId: string) {
@@ -173,16 +178,18 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
               <span>Add Work Item</span>
             </Button>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={Sparkles}
-              onClick={onOpenCreateSprint}
-              className="font-medium h-7 px-2.5 text-xs border-border bg-surface-elevated hover:bg-surface hover:border-border-strong text-text-primary"
-              title="Create a new sprint"
-            >
-              <span>Add Sprint</span>
-            </Button>
+            {currentUser.role !== 'Teammate' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={Sparkles}
+                onClick={onOpenCreateSprint}
+                className="font-medium h-7 px-2.5 text-xs border-border bg-surface-elevated hover:bg-surface hover:border-border-strong text-text-primary"
+                title="Create a new sprint"
+              >
+                <span>Add Sprint</span>
+              </Button>
+            )}
           </div>
         </div>
       </div>

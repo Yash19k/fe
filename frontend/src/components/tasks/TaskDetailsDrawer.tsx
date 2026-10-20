@@ -33,6 +33,7 @@ import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../doma
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
+import { getWorkItemCommentsApi } from '../../services/api';
 
 interface TaskDetailsContentProps {
   task: Task;
@@ -109,6 +110,40 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [backendComments, setBackendComments] = useState<any[] | null>(null);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+
+  // Fetch comments from backend when task opens or comments tab is active
+  useEffect(() => {
+    let isCancelled = false;
+    if (task?.id && task.id.includes('-') && (activeTab === 'comments' || !task.comments)) {
+      getWorkItemCommentsApi(task.id)
+        .then((res) => {
+          if (res?.data && Array.isArray(res.data) && !isCancelled) {
+            setBackendComments(res.data);
+          }
+        })
+        .catch(() => null);
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, [task?.id, activeTab]);
+
+  const displayedComments = useMemo(() => {
+    if (backendComments !== null) {
+      return backendComments.map((c: any) => ({
+        id: c.id,
+        userId: c.authorId || c.userId,
+        authorId: c.authorId || c.userId,
+        body: c.body || c.content || c.text || '',
+        text: c.body || c.content || c.text || '',
+        createdAt: c.createdAt,
+      }));
+    }
+    return task.comments || [];
+  }, [backendComments, task.comments]);
 
 
   // Determine dirty state
@@ -273,11 +308,29 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     setNewSubtaskTitle('');
   }
 
-  function handleAddCommentSubmit(e: React.FormEvent) {
+  async function handleAddCommentSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!newCommentText.trim()) return;
-    addComment(task.id, newCommentText.trim());
-    setNewCommentText('');
+    const text = newCommentText.trim();
+    if (!text) {
+      setCommentError('Comment text cannot be empty');
+      return;
+    }
+    setCommentError(null);
+    setIsSubmittingComment(true);
+    try {
+      await addComment(task.id, text);
+      setNewCommentText('');
+      if (task.id && task.id.includes('-')) {
+        const res = await getWorkItemCommentsApi(task.id).catch(() => null);
+        if (res?.data && Array.isArray(res.data)) {
+          setBackendComments(res.data);
+        }
+      }
+    } catch (err: any) {
+      setCommentError(err?.message || 'Failed to post comment to server');
+    } finally {
+      setIsSubmittingComment(false);
+    }
   }
 
   function handleAddDependencyLink() {
@@ -1140,10 +1193,10 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
           {activeTab === 'comments' && (
             <div className="pt-3 space-y-3 text-xs">
               <div className="space-y-2 max-h-52 overflow-y-auto">
-                {(task.comments || []).length === 0 ? (
+                {displayedComments.length === 0 ? (
                   <p className="text-text-muted italic py-2">No comments posted yet.</p>
                 ) : (
-                  (task.comments || []).map((c) => {
+                  displayedComments.map((c) => {
                     const authorId = c.authorId || c.userId;
                     const author = allUsers.find((u) => u.id === authorId);
                     return (
@@ -1161,17 +1214,24 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 )}
               </div>
 
+              {commentError && (
+                <div className="p-2 rounded bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
+                  {commentError}
+                </div>
+              )}
+
               <form onSubmit={handleAddCommentSubmit} className="space-y-2 pt-2 border-t border-border">
                 <textarea
                   value={newCommentText}
                   onChange={(e) => setNewCommentText(e.target.value)}
                   placeholder="Write a comment..."
                   rows={2}
-                  className="w-full rounded-lg bg-surface border border-border p-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                  disabled={isSubmittingComment}
+                  className="w-full rounded-lg bg-surface border border-border p-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60"
                 />
                 <div className="flex justify-end">
-                  <Button variant="primary" size="sm" type="submit">
-                    Post Comment
+                  <Button variant="primary" size="sm" type="submit" disabled={isSubmittingComment}>
+                    {isSubmittingComment ? 'Posting...' : 'Post Comment'}
                   </Button>
                 </div>
               </form>

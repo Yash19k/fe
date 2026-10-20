@@ -236,33 +236,37 @@ export interface InitialAppState {
   labels: Label[];
 }
 
+export const fallbackUser: User = {
+  id: '',
+  name: 'Workspace Member',
+  email: 'admin@taskflow.pro',
+  role: 'Admin',
+  initials: 'AD',
+  avatarColor: '#4F46E5',
+  onboardingCompleted: true,
+};
+
 export function loadInitialState(): InitialAppState {
-  const fallbackUser: User = {
-    id: '',
-    name: 'Workspace Member',
-    email: 'admin@taskflow.pro',
-    role: 'Admin',
-    initials: 'AD',
-    avatarColor: '#4F46E5',
-    onboardingCompleted: true,
-  };
 
   try {
     const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     const savedCompany = localStorage.getItem(STORAGE_KEYS.COMPANY);
-    const savedProjects = localStorage.getItem(STORAGE_KEYS.PROJECTS);
-    const savedTasks = localStorage.getItem(STORAGE_KEYS.TASKS);
-    const savedWorkflows = localStorage.getItem(STORAGE_KEYS.WORKFLOWS);
-    const savedNotifications = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const savedAuditLog = localStorage.getItem(STORAGE_KEYS.AUDIT_LOG);
-    const savedSprints = localStorage.getItem(STORAGE_KEYS.SPRINTS);
-    const savedLabels = localStorage.getItem(STORAGE_KEYS.LABELS);
 
-    const initialProjects = savedProjects ? JSON.parse(savedProjects) : [];
-    const initialTasks = savedTasks ? JSON.parse(savedTasks) : [];
-    const initialWorkflows = savedWorkflows ? JSON.parse(savedWorkflows) : [DEFAULT_STANDARD_WORKFLOW];
-    const initialSprints = savedSprints ? JSON.parse(savedSprints) : [];
-    const initialLabels = savedLabels ? JSON.parse(savedLabels) : [];
+    // Clean up any legacy business records previously mirrored to localStorage
+    const businessKeys = [
+      STORAGE_KEYS.PROJECTS,
+      STORAGE_KEYS.TASKS,
+      STORAGE_KEYS.WORKFLOWS,
+      STORAGE_KEYS.NOTIFICATIONS,
+      STORAGE_KEYS.AUDIT_LOG,
+      STORAGE_KEYS.SPRINTS,
+      STORAGE_KEYS.LABELS,
+    ];
+    for (const bk of businessKeys) {
+      if (localStorage.getItem(bk)) {
+        localStorage.removeItem(bk);
+      }
+    }
 
     let initialUser: User = savedUser ? JSON.parse(savedUser) : fallbackUser;
     if (initialUser && initialUser.onboardingCompleted === undefined) {
@@ -277,16 +281,16 @@ export function loadInitialState(): InitialAppState {
     return {
       currentUser: initialUser,
       currentCompany: initialCompany,
-      projects: migrateProjects(initialProjects),
-      tasks: migrateTasks(initialTasks),
-      workflows: migrateWorkflows(initialWorkflows),
-      notifications: savedNotifications ? JSON.parse(savedNotifications) : [],
-      auditLog: savedAuditLog ? JSON.parse(savedAuditLog) : [],
-      sprints: initialSprints,
-      labels: initialLabels,
+      projects: [],
+      tasks: [],
+      workflows: [DEFAULT_STANDARD_WORKFLOW],
+      notifications: [],
+      auditLog: [],
+      sprints: [],
+      labels: [],
     };
   } catch (err) {
-    console.warn('TaskFlow: Error loading localStorage:', err);
+    console.warn('TaskFlow: Error loading initial storage:', err);
     return {
       currentUser: fallbackUser,
       currentCompany: null,
@@ -302,6 +306,10 @@ export function loadInitialState(): InitialAppState {
 }
 
 export function saveStateToStorage(key: StorageKeyName, data: any): void {
+  // Only persist UI/session preferences, NOT persistent business records
+  if (key !== 'CURRENT_USER' && key !== 'COMPANY') {
+    return;
+  }
   try {
     const storageKey = STORAGE_KEYS[key];
     if (storageKey) {

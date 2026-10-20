@@ -55,12 +55,12 @@ export function validateProjectId(
 ): { isValid: boolean; error?: string } {
   const normalized = id.trim().toUpperCase();
   if (!normalized) {
-    return { isValid: false, error: 'Project ID cannot be empty' };
+    return { isValid: false, error: 'Project key cannot be empty' };
   }
-  if (!/^[A-Z0-9_-]+$/.test(normalized)) {
+  if (!/^[A-Z][A-Z0-9_-]{1,19}$/.test(normalized)) {
     return {
       isValid: false,
-      error: 'Project ID can only contain letters, numbers, hyphens, and underscores',
+      error: 'Project key must start with a letter and be 2-20 characters long (letters, numbers, hyphens, and underscores)',
     };
   }
 
@@ -72,7 +72,7 @@ export function validateProjectId(
   if (isDuplicate) {
     return {
       isValid: false,
-      error: 'Project ID already exists. Choose a unique ID.',
+      error: 'Project key already exists. Choose a unique key.',
     };
   }
 

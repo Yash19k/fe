@@ -77,12 +77,21 @@ async function request<T>(
     }
 
     if (!res.ok) {
-      let errorMessage =
-        data?.message ||
-        (Array.isArray(data?.errors)
-          ? data.errors.map((e: any) => e.message || e).join(', ')
-          : null) ||
-        `Request failed with status ${res.status}`;
+      let errorMessage = data?.message || data?.error;
+      if (Array.isArray(data?.errors) && data.errors.length > 0) {
+        const details = data.errors
+          .map((e: any) => {
+            if (typeof e === 'object' && e !== null) {
+              return e.message ? `${e.field ? e.field + ': ' : ''}${e.message}` : JSON.stringify(e);
+            }
+            return String(e);
+          })
+          .join(', ');
+        errorMessage = errorMessage ? `${errorMessage}: ${details}` : details;
+      }
+      if (!errorMessage) {
+        errorMessage = `Request failed with status ${res.status}`;
+      }
 
       throw new ApiError(errorMessage, res.status, data?.code, data?.errors);
     }
@@ -419,14 +428,61 @@ export async function getProjectDashboardApi(projectId: string): Promise<any> {
   });
 }
 
+export async function getPersonalDashboardApi(): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>('/api/dashboard/personal', {
+    method: 'GET',
+  });
+}
+
 // ==========================================
-// Organization Users
+// Organization Users & Member Management
 // ==========================================
 
 export async function getOrganizationUsersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
   return request<{ success: boolean; count: number; data: any[] }>('/api/users', {
     method: 'GET',
   });
+}
+
+export async function getOrganizationMembersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>('/api/organizations/members', {
+    method: 'GET',
+  });
+}
+
+export async function addOrganizationMemberApi(payload: {
+  email: string;
+  fullName?: string;
+  role?: string;
+}): Promise<{ success: boolean; data: any; message?: string }> {
+  return request<{ success: boolean; data: any; message?: string }>('/api/organizations/members', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationMemberRoleApi(
+  userId: string,
+  role: string
+): Promise<{ success: boolean; data: any; message?: string }> {
+  return request<{ success: boolean; data: any; message?: string }>(
+    `/api/organizations/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }
+  );
+}
+
+export async function removeOrganizationMemberApi(
+  userId: string
+): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    `/api/organizations/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
 }
 
 // ==========================================
@@ -783,10 +839,10 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     comments: Array.isArray(item.comments)
       ? item.comments.map((c: any) => ({
           id: c.id,
-          userId: c.userId,
-          authorId: c.userId,
-          text: c.content || c.text || c.body || '',
-          body: c.content || c.text || c.body || '',
+          userId: c.authorId || c.userId,
+          authorId: c.authorId || c.userId,
+          text: c.body || c.content || c.text || '',
+          body: c.body || c.content || c.text || '',
           createdAt: c.createdAt || new Date().toISOString(),
         }))
       : (item.comments || []),

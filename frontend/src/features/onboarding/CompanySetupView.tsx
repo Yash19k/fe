@@ -23,7 +23,7 @@ interface InviteRow {
 }
 
 export function CompanySetupView() {
-  const { currentUser, completeCompanyOnboarding, finishOnboarding, navigate, showToast } = useApp();
+  const { currentUser, completeCompanyOnboarding, finishOnboarding, navigate, showToast, pendingSignupPassword } = useApp();
 
   // Multi-step state: 'company' -> 'invitations'
   const [step, setStep] = useState<'company' | 'invitations'>(() => {
@@ -81,8 +81,7 @@ export function CompanySetupView() {
 
     // Attempt registration against real backend API if configured
     try {
-      const pendingPassword =
-        sessionStorage.getItem('pending_signup_password') || 'Password123!';
+      const pendingPassword = pendingSignupPassword || 'Password123!';
 
       await registerOrganizationApi({
         user: {

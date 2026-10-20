@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useApp } from '../../hooks/useApp';
 import { TaskRow } from '../../components/tasks/TaskRow';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -11,14 +11,50 @@ import {
   ShieldAlert,
   Ban,
   Activity,
+  RefreshCw,
 } from 'lucide-react';
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { isTaskBlocked } from '../../domain/dependencyGraph';
 import { evaluateTaskSla } from '../../domain/sla';
 import { canUserAccessProject } from '../../domain/permissions';
+import { getPersonalDashboardApi, backendWorkItemToTask } from '../../services/api';
 
 export function HomeView() {
   const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer } = useApp();
+
+  const [personalData, setPersonalData] = useState<{
+    metrics: {
+      total: number;
+      completed: number;
+      active: number;
+      overdue: number;
+      dueSoon: number;
+      blocked: number;
+    };
+    attentionTasks: any[];
+    userTasks: any[];
+  } | null>(null);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(true);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  const fetchPersonalDashboard = async () => {
+    setIsLoadingDashboard(true);
+    setDashboardError(null);
+    try {
+      const res = await getPersonalDashboardApi();
+      if (res?.data) {
+        setPersonalData(res.data);
+      }
+    } catch (err: any) {
+      setDashboardError(err?.message || 'Failed to retrieve personal dashboard metrics');
+    } finally {
+      setIsLoadingDashboard(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPersonalDashboard();
+  }, [currentUser?.id, tasks.length]);
 
   const accessibleProjects = useMemo(() => {
     return projects.filter((p) => canUserAccessProject(p, currentUser.id));
@@ -29,8 +65,11 @@ export function HomeView() {
     return tasks.filter((t) => t.assigneeId === currentUser.id);
   }, [tasks, currentUser.id]);
 
-  // Personal metrics
+  // Personal metrics from backend or local fallback
   const personalMetrics = useMemo(() => {
+    if (personalData?.metrics) {
+      return personalData.metrics;
+    }
     const total = userTasks.length;
     const completed = userTasks.filter((t) => t.status === 'Done').length;
     const active = userTasks.filter((t) => t.status !== 'Done');
@@ -38,11 +77,16 @@ export function HomeView() {
     const dueSoon = active.filter((t) => getRelativeDateLabel(t.dueDate).isDueSoon).length;
     const blocked = active.filter((t) => isTaskBlocked(t, tasks)).length;
 
-    return { total, completed, overdue, dueSoon, blocked };
-  }, [userTasks, tasks]);
+    return { total, completed, active: total - completed, overdue, dueSoon, blocked };
+  }, [personalData, userTasks, tasks]);
 
   // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
   const attentionTasks = useMemo(() => {
+    if (personalData?.attentionTasks && Array.isArray(personalData.attentionTasks)) {
+      return personalData.attentionTasks.map((item: any) =>
+        backendWorkItemToTask(item, item.projectId)
+      );
+    }
     return userTasks
       .filter((t) => {
         if (t.status === 'Done') return false;
@@ -52,7 +96,7 @@ export function HomeView() {
         return date.isOverdue || date.isDueSoon || blocked || sla.isBreached || sla.isApproaching;
       })
       .slice(0, 6);
-  }, [userTasks, tasks]);
+  }, [personalData, userTasks, tasks]);
 
   // SLA Warnings across all projects
   const atRiskTasks = useMemo(() => {
@@ -78,9 +122,26 @@ export function HomeView() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-text-muted">October 2026 Sprint Cycle</span>
+          <button
+            onClick={fetchPersonalDashboard}
+            disabled={isLoadingDashboard}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface border border-border text-xs text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors cursor-pointer"
+            title="Refresh personal metrics from server"
+          >
+            <RefreshCw size={12} className={isLoadingDashboard ? 'animate-spin' : ''} />
+            <span>{isLoadingDashboard ? 'Refreshing...' : 'Refresh Overview'}</span>
+          </button>
         </div>
       </div>
+
+      {dashboardError && (
+        <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-xs text-rose-300">
+          <span>Notice: {dashboardError}</span>
+          <button onClick={fetchPersonalDashboard} className="font-semibold underline cursor-pointer">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* KPI Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

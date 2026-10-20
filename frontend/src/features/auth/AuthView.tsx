@@ -9,7 +9,7 @@ export interface AuthViewProps {
 }
 
 export function AuthView({ isSignup = false }: AuthViewProps) {
-  const { switchUser, registerUser, navigate, showToast, login } = useApp();
+  const { switchUser, registerUser, navigate, showToast, login, setPendingSignupPassword } = useApp();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('admin@taskflow.pro');
@@ -33,7 +33,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
     }
 
     if (isSignup) {
-      sessionStorage.setItem('pending_signup_password', password);
+      setPendingSignupPassword?.(password);
       registerUser({ name, email });
       showToast('Account created! Please set up your company workspace.', 'success');
       navigate('/onboarding/company');
