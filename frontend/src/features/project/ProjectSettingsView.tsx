@@ -259,7 +259,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     setIsEditingKey(true);
   }
 
-  function handleSaveKey(e: React.FormEvent) {
+  async function handleSaveKey(e: React.FormEvent) {
     e.preventDefault();
     if (!currentProject || !canEdit) return;
 
@@ -270,7 +270,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       return;
     }
 
-    const res = updateProjectKey(currentProject.id, val);
+    const res = await updateProjectKey(currentProject.id, val);
     if (res.success) {
       setIsEditingKey(false);
       setKeyError('');
@@ -658,42 +658,44 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
             </form>
           </section>
 
-          {/* Danger Zone: Delete Project with typed confirmation */}
-          <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
-            <div className="border-b border-rose-500/20 pb-3">
-              <div className="flex items-center gap-2 text-rose-400">
-                <ShieldAlert size={18} />
-                <h2 className="text-sm font-bold tracking-tight text-rose-300">
-                  Danger Zone
-                </h2>
-              </div>
-              <p className="text-xs text-rose-300/80 mt-1">
-                Destructive actions that cannot be undone. Please proceed with caution.
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-              <div className="space-y-1">
-                <h3 className="text-xs font-semibold text-rose-200">
-                  Delete Project
-                </h3>
-                <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
-                  Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
-                  sprints, dependencies, sections, and attachments.
+          {/* Danger Zone: Delete Project with typed confirmation (Manager / Admin only) */}
+          {canDelete && (
+            <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
+              <div className="border-b border-rose-500/20 pb-3">
+                <div className="flex items-center gap-2 text-rose-400">
+                  <ShieldAlert size={18} />
+                  <h2 className="text-sm font-bold tracking-tight text-rose-300">
+                    Danger Zone
+                  </h2>
+                </div>
+                <p className="text-xs text-rose-300/80 mt-1">
+                  Destructive actions that cannot be undone. Please proceed with caution.
                 </p>
               </div>
-              <Button
-                variant="danger"
-                size="sm"
-                icon={Trash2}
-                disabled={!canDelete}
-                onClick={() => setDeleteModalOpen(true)}
-                className="shrink-0"
-              >
-                Delete Project
-              </Button>
-            </div>
-          </section>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+                <div className="space-y-1">
+                  <h3 className="text-xs font-semibold text-rose-200">
+                    Delete Project
+                  </h3>
+                  <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
+                    Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
+                    sprints, dependencies, sections, and attachments.
+                  </p>
+                </div>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  icon={Trash2}
+                  disabled={!canDelete}
+                  onClick={() => setDeleteModalOpen(true)}
+                  className="shrink-0"
+                >
+                  Delete Project
+                </Button>
+              </div>
+            </section>
+          )}
         </div>
       )}
 

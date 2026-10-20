@@ -283,7 +283,7 @@ export interface AppContextValue {
   updateProject: (projectId: string, updates: Partial<Project>) => boolean;
   renameProject: (projectId: string, name: string) => boolean;
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
-  updateProjectKey: (projectId: string, key: string) => { success: boolean; error?: string };
+  updateProjectKey: (projectId: string, key: string) => Promise<{ success: boolean; error?: string }>;
   deleteProject: (projectId: string) => boolean;
   addProjectMember: (projectId: string, userId: string, role?: Role) => void;
   removeProjectMember: (projectId: string, userId: string) => boolean;
@@ -310,7 +310,9 @@ export interface AppContextValue {
   addSubtask: (taskId: string, title: string) => void;
   toggleSubtask: (taskId: string, subtaskId: string) => void;
   deleteSubtask: (taskId: string, subtaskId: string) => void;
-  addComment: (taskId: string, text: string) => void;
+  addComment: (taskId: string, text: string) => Promise<void>;
+  pendingSignupPassword?: string;
+  setPendingSignupPassword?: (pwd: string) => void;
   logTimeEntry: (taskId: string, hours: number, note?: string) => void;
   escalateTask: (taskId: string) => void;
   simulateExternalTaskEdit: (taskId: string) => void;
