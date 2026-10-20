@@ -1,185 +1,128 @@
 import { Request, Response, NextFunction } from "express";
-import { AppDataSource } from "../config/data.source";
-import {
-  Project,
-  ProjectVisibility,
-} from "../entities/project.entity";
-import { User } from "../entities/user.entity";
+import Joi from "joi";
 import { AppError } from "../errors/app.error";
-import { ProjectMember } from "../entities/project.member.entity";
+import { ProjectVisibility } from "../entities/project.entity";
+import { ProjectRole } from "../entities/project.member.entity";
 
-export const createProject = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  const { name, key, description, startDate, endDate, visibility  } = req.body;
+const uuidV4 = Joi.string().guid({ version: ["uuidv4"] });
 
-  const userId = req.user?.id;
+const projectIdSchema = Joi.object({
+  projectId: uuidV4.required(),
+}).unknown(false);
 
-  const userRepository = AppDataSource.getRepository(User);
-  const projectRepository = AppDataSource.getRepository(Project);
+const projectMemberParamsSchema = Joi.object({
+  projectId: uuidV4.required(),
+  memberId: uuidV4.required(),
+}).unknown(false);
 
-  const user = await userRepository.findOne({
-    where: { id: userId },
+const createProjectSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(150).required(),
+  key: Joi.string()
+    .trim()
+    .pattern(/^[A-Za-z][A-Za-z0-9_-]{1,19}$/)
+    .required(),
+  description: Joi.string().allow("", null).max(10000).optional(),
+  startDate: Joi.string().isoDate().allow(null).optional(),
+  endDate: Joi.string().isoDate().allow(null).optional(),
+  visibility: Joi.string()
+    .valid(...Object.values(ProjectVisibility))
+    .default(ProjectVisibility.PRIVATE),
+})
+  .custom((value, helpers) => {
+    if (value.startDate && value.endDate && value.endDate < value.startDate) {
+      return helpers.error("date.order");
+    }
+    return value;
+  })
+  .messages({
+    "date.order": "endDate must be on or after startDate",
+  })
+  .unknown(false);
+
+const updateProjectSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(150),
+  key: Joi.string()
+    .trim()
+    .pattern(/^[A-Za-z][A-Za-z0-9_-]{1,19}$/),
+  description: Joi.string().allow("", null).max(10000),
+  startDate: Joi.string().isoDate().allow(null),
+  endDate: Joi.string().isoDate().allow(null),
+  visibility: Joi.string().valid(...Object.values(ProjectVisibility)),
+})
+  .min(1)
+  .unknown(false);
+
+const addProjectMemberSchema = Joi.object({
+  memberId: uuidV4,
+  email: Joi.string().email({ tlds: { allow: false } }).trim().lowercase(),
+  role: Joi.string()
+    .valid(...Object.values(ProjectRole))
+    .default(ProjectRole.MEMBER),
+})
+  .custom((value, helpers) => {
+    const hasMemberId = Boolean(value.memberId);
+    const hasEmail = Boolean(value.email);
+    if (hasMemberId === hasEmail) {
+      return helpers.error("member.lookup");
+    }
+    return value;
+  })
+  .messages({
+    "member.lookup": "Provide exactly one of memberId or email.",
+  })
+  .unknown(false);
+
+const updateProjectMemberRoleSchema = Joi.object({
+  role: Joi.string().valid(...Object.values(ProjectRole)).required(),
+}).unknown(false);
+
+const validate = (
+  schema: Joi.ObjectSchema,
+  source: "body" | "params",
+) => (req: Request, _res: Response, next: NextFunction): void => {
+  const { error, value } = schema.validate(req[source], {
+    abortEarly: false,
+    convert: true,
   });
 
-  if (!user) {
+  if (error) {
     throw new AppError(
-      "Authenticated user not found.",
-      401,
-      "USER_NOT_FOUND",
+      error.details.map((detail) => detail.message).join(", "),
+      400,
+      "VALIDATION_ERROR",
     );
   }
 
-  if (!user.organizationId) {
-    throw new AppError(
-      "You are not associated with an organization.",
-      403,
-      "ORGANIZATION_NOT_FOUND",
-    );
-  }
-
-  const normalizedKey = key.toUpperCase();
-
-  const existingProject = await projectRepository.findOne({
-    where: {
-      organizationId: user.organizationId,
-      key: normalizedKey,
-    },
-    select: {
-      id: true,
-    },
-  });
-
-  if (existingProject) {
-    throw new AppError(
-      "This project key is already used in your organization.",
-      409,
-      "PROJECT_KEY_CONFLICT",
-    );
-  }
-
-  const project = projectRepository.create({
-    name,
-    key: normalizedKey,
-    description: description?.trim() || null,
-    startDate: startDate ?? null,
-    endDate: endDate ?? null,
-    visibility: visibility ?? ProjectVisibility.PRIVATE,
-    organizationId: user.organizationId,
-    createdById: user.id,
-  });
-
-  const savedProject = await projectRepository.save(project);
-
-  res.status(201).json({
-    message: "Project created successfully.",
-    project: savedProject,
-  });
+  req[source] = value;
+  next();
 };
-export const viewProject = async (
-req: Request,
-res: Response,
-next: NextFunction,
-) => {
-const userId = req.user?.id;
-const projectId = req.params.projectId;
 
-if (!userId) {
-throw new AppError(
-"Authentication required.",
-401,
-"UNAUTHORIZED",
+export const validateCreateProject = validate(
+  createProjectSchema,
+  "body",
 );
-}
 
-const userRepository = AppDataSource.getRepository(User);
-const projectRepository = AppDataSource.getRepository(Project);
-const projectMemberRepository =
-AppDataSource.getRepository(ProjectMember);
-
-const user = await userRepository.findOne({
-where: { id: userId },
-select: {
-id: true,
-organizationId: true,
-role: true,
-},
-});
-
-if (!user) {
-throw new AppError(
-"Authenticated user not found.",
-401,
-"USER_NOT_FOUND",
+export const validateUpdateProject = validate(
+  updateProjectSchema,
+  "body",
 );
-}
 
-
-if (typeof projectId !== "string") {
-  throw new AppError(
-    "Invalid project ID.",
-    400,
-    "INVALID_PROJECT_ID",
-  );
-}
-
-const project = await projectRepository.findOne({
-where: { id: projectId },
-});
-
-if (!project) {
-throw new AppError(
-"Project not found.",
-404,
-"PROJECT_NOT_FOUND",
+export const validateProjectId = validate(
+  projectIdSchema,
+  "params",
 );
-}
-if (project.visibility === ProjectVisibility.PUBLIC) {
-res.status(200).json({
-message: "Project retrieved successfully.",
-project,
-});
-return;
-}
-const belongsToSameOrganization =
-user.organizationId === project.organizationId;
-if (!belongsToSameOrganization) {
-throw new AppError(
-"You do not have permission to view this project.",
-404,
-"PROJECT_NOT_FOUND",
-);
-}
-if (user.role === "ADMIN") {
-res.status(200).json({
-message: "Project retrieved successfully.",
-project,
-});
-return;
-}
-const membership = await projectMemberRepository.findOne({
-where: {
-projectId: project.id,
-userId: user.id,
-},
-select: {
-projectId: true,
-userId: true,
-},
-});
 
-if (!membership) {
-throw new AppError(
-"You do not have permission to view this project.",
-404,
-"PROJECT_NOT_FOUND",
+export const validateProjectMemberParams = validate(
+  projectMemberParamsSchema,
+  "params",
 );
-}
 
-res.status(200).json({
-message: "Project retrieved successfully.",
-project,
-});
-};
+export const validateAddProjectMember = validate(
+  addProjectMemberSchema,
+  "body",
+);
+
+export const validateUpdateProjectMemberRole = validate(
+  updateProjectMemberRoleSchema,
+  "body",
+);

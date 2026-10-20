@@ -13,11 +13,11 @@ export const AppDataSource = new DataSource({
   database: config.database.name,
 
   entities: [
-    join(__dirname, "../entities/**/*{.ts,.js}"),
+    join(__dirname, "../entities/**/*{.ts,.js}").replace(/\\/g, "/"),
   ],
 
   migrations: [
-    join(__dirname, "../migrations/**/*{.ts,.js}"),
+    join(__dirname, "../migrations/**/*{.ts,.js}").replace(/\\/g, "/"),
   ],
 
   synchronize: config.database.synchronize,

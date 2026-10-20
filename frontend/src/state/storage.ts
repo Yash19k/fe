@@ -4,17 +4,7 @@
  * non-destructive schema migration, and a complete Reset Demo Data capability.
  */
 
-import {
-  mockUsers,
-  mockProjects,
-  mockTasks,
-  mockWorkflows,
-  mockNotifications,
-  mockAuditLog,
-  defaultCompany,
-  mockSprints,
-  mockLabels,
-} from '../data/seedData';
+
 import {
   User,
   Project,
@@ -50,7 +40,7 @@ export type StorageKeyName = keyof typeof STORAGE_KEYS;
  * - Preserves existing user IDs, data, time entries, comments, etc.
  */
 export function migrateTasks(rawTasks: any[]): Task[] {
-  if (!Array.isArray(rawTasks)) return mockTasks;
+  if (!Array.isArray(rawTasks)) return [];
 
   const migratedTasks: Task[] = [];
   const existingIds = new Set(rawTasks.map((t) => t?.id));
@@ -77,14 +67,14 @@ export function migrateTasks(rawTasks: any[]): Task[] {
             id: sub.id,
             type: 'Subtask',
             parentId: t.id,
-            projectId: t.projectId || 'proj-1',
+            projectId: t.projectId || '',
             sectionId: t.sectionId || 'sec-1',
             title: sub.title || 'Untitled Subtask',
             description: '',
             status: sub.completed ? 'Done' : 'Backlog',
             priority: t.priority || 'Medium',
             assigneeId: sub.assigneeId || t.assigneeId,
-            creatorId: t.creatorId || 'user-1',
+            creatorId: t.creatorId || '',
             startDate: t.startDate || null,
             dueDate: t.dueDate || null,
             estimatedHours: 2,
@@ -117,7 +107,7 @@ export function migrateTasks(rawTasks: any[]): Task[] {
 }
 
 export function migrateProjects(rawProjects: any[]): Project[] {
-  if (!Array.isArray(rawProjects)) return mockProjects;
+  if (!Array.isArray(rawProjects)) return [];
 
   return rawProjects.map((p) => {
     if (!p || typeof p !== 'object') return p;
@@ -129,10 +119,24 @@ export function migrateProjects(rawProjects: any[]): Project[] {
       ...p,
       visibility: p.visibility || 'global',
       projectKey: p.projectKey || defaultKey,
-      memberIds: Array.isArray(p.memberIds) ? p.memberIds : [p.ownerId || 'user-1'],
+      memberIds: Array.isArray(p.memberIds) ? p.memberIds : (p.ownerId ? [p.ownerId] : []),
     };
   });
 }
+
+export const DEFAULT_STANDARD_WORKFLOW: Workflow = {
+  id: 'wf-1',
+  name: 'Standard Engineering Flow',
+  statuses: [
+    { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280', allowedTransitions: ['In Progress'] },
+    { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Blocked', 'On Hold'] },
+    { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7', allowedTransitions: ['Testing / QA', 'In Progress', 'Blocked', 'On Hold'] },
+    { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4', allowedTransitions: ['Done', 'In Progress', 'Blocked', 'On Hold'], roleRestrictions: { Done: ['Manager', 'Admin'] } },
+    { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
+    { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
+    { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
+  ],
+};
 
 /**
  * Migrates workflows from localStorage safely:
@@ -141,7 +145,7 @@ export function migrateProjects(rawProjects: any[]): Project[] {
  * - Preserves custom workflows and user statuses
  */
 export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
-  if (!Array.isArray(rawWorkflows)) return mockWorkflows;
+  if (!Array.isArray(rawWorkflows)) return [DEFAULT_STANDARD_WORKFLOW];
 
   return rawWorkflows.map((wf) => {
     if (!wf || !Array.isArray(wf.statuses)) return wf;
@@ -233,6 +237,16 @@ export interface InitialAppState {
 }
 
 export function loadInitialState(): InitialAppState {
+  const fallbackUser: User = {
+    id: '',
+    name: 'Workspace Member',
+    email: 'admin@taskflow.pro',
+    role: 'Admin',
+    initials: 'AD',
+    avatarColor: '#4F46E5',
+    onboardingCompleted: true,
+  };
+
   try {
     const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     const savedCompany = localStorage.getItem(STORAGE_KEYS.COMPANY);
@@ -244,23 +258,21 @@ export function loadInitialState(): InitialAppState {
     const savedSprints = localStorage.getItem(STORAGE_KEYS.SPRINTS);
     const savedLabels = localStorage.getItem(STORAGE_KEYS.LABELS);
 
-    const initialProjects = savedProjects ? JSON.parse(savedProjects) : mockProjects;
-    const initialTasks = savedTasks ? JSON.parse(savedTasks) : mockTasks;
-    const initialWorkflows = savedWorkflows ? JSON.parse(savedWorkflows) : mockWorkflows;
-    const initialSprints = savedSprints ? JSON.parse(savedSprints) : mockSprints;
-    const initialLabels = savedLabels ? JSON.parse(savedLabels) : mockLabels;
+    const initialProjects = savedProjects ? JSON.parse(savedProjects) : [];
+    const initialTasks = savedTasks ? JSON.parse(savedTasks) : [];
+    const initialWorkflows = savedWorkflows ? JSON.parse(savedWorkflows) : [DEFAULT_STANDARD_WORKFLOW];
+    const initialSprints = savedSprints ? JSON.parse(savedSprints) : [];
+    const initialLabels = savedLabels ? JSON.parse(savedLabels) : [];
 
-    let initialUser: User = savedUser ? JSON.parse(savedUser) : mockUsers[0];
+    let initialUser: User = savedUser ? JSON.parse(savedUser) : fallbackUser;
     if (initialUser && initialUser.onboardingCompleted === undefined) {
       initialUser = {
         ...initialUser,
-        companyId: initialUser.companyId || defaultCompany.id,
-        companyName: initialUser.companyName || defaultCompany.name,
         onboardingCompleted: true,
       };
     }
 
-    const initialCompany: Company = savedCompany ? JSON.parse(savedCompany) : defaultCompany;
+    const initialCompany: Company | null = savedCompany ? JSON.parse(savedCompany) : null;
 
     return {
       currentUser: initialUser,
@@ -268,23 +280,23 @@ export function loadInitialState(): InitialAppState {
       projects: migrateProjects(initialProjects),
       tasks: migrateTasks(initialTasks),
       workflows: migrateWorkflows(initialWorkflows),
-      notifications: savedNotifications ? JSON.parse(savedNotifications) : mockNotifications,
-      auditLog: savedAuditLog ? JSON.parse(savedAuditLog) : mockAuditLog,
+      notifications: savedNotifications ? JSON.parse(savedNotifications) : [],
+      auditLog: savedAuditLog ? JSON.parse(savedAuditLog) : [],
       sprints: initialSprints,
       labels: initialLabels,
     };
   } catch (err) {
-    console.warn('TaskFlow: Error loading localStorage, falling back to seed data:', err);
+    console.warn('TaskFlow: Error loading localStorage:', err);
     return {
-      currentUser: mockUsers[0],
-      currentCompany: defaultCompany,
-      projects: migrateProjects(mockProjects),
-      tasks: migrateTasks(mockTasks),
-      workflows: migrateWorkflows(mockWorkflows),
-      notifications: mockNotifications,
-      auditLog: mockAuditLog,
-      sprints: mockSprints,
-      labels: mockLabels,
+      currentUser: fallbackUser,
+      currentCompany: null,
+      projects: [],
+      tasks: [],
+      workflows: [DEFAULT_STANDARD_WORKFLOW],
+      notifications: [],
+      auditLog: [],
+      sprints: [],
+      labels: [],
     };
   }
 }

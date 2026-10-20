@@ -161,10 +161,10 @@ function MainAppShell() {
                 {projectTab === 'workflow' && <WorkflowBuilderView key={currentWorkflow?.id} />}
                 {projectTab === 'dependencies' && <DependenciesView />}
                 {/* Direct-link backwards compatibility for /members and /activity URLs to Settings sections */}
-                {projectTab === 'members' && (
+                {(projectTab === 'members' || projectTab === 'settings#members') && (
                   <ProjectSettingsView key={`${currentProject.id}-members`} initialSection="members" />
                 )}
-                {projectTab === 'activity' && (
+                {(projectTab === 'activity' || projectTab === 'settings#activity') && (
                   <ProjectSettingsView key={`${currentProject.id}-activity`} initialSection="activity" />
                 )}
                 {projectTab === 'settings' && (

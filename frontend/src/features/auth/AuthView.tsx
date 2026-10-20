@@ -9,16 +9,16 @@ export interface AuthViewProps {
 }
 
 export function AuthView({ isSignup = false }: AuthViewProps) {
-  const { switchUser, registerUser, navigate, showToast } = useApp();
+  const { switchUser, registerUser, navigate, showToast, login } = useApp();
 
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('yash@taskflow.pro');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('admin@taskflow.pro');
+  const [password, setPassword] = useState('Password123!');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
 
-  function handleAuthSubmit(e: React.FormEvent) {
+  async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
 
@@ -38,12 +38,32 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
       showToast('Account created! Please set up your company workspace.', 'success');
       navigate('/onboarding/company');
     } else {
-      showToast('Welcome back!', 'success');
-      navigate('/');
+      if (login) {
+        const ok = await login(email, password);
+        if (ok) {
+          navigate('/');
+        }
+      } else {
+        showToast('Welcome back!', 'success');
+        navigate('/');
+      }
     }
   }
 
-  function handleQuickDemoLogin(userId: string) {
+  async function handleQuickDemoLogin(userId: string) {
+    const roleEmailMap: Record<string, string> = {
+      'user-1': 'admin@taskflow.pro',
+      'user-2': 'manager@taskflow.pro',
+      'user-3': 'teammate@taskflow.pro',
+    };
+    const demoEmail = roleEmailMap[userId];
+    if (demoEmail && login) {
+      const ok = await login(demoEmail, 'Password123!');
+      if (ok) {
+        navigate('/');
+        return;
+      }
+    }
     switchUser(userId);
     navigate('/');
   }

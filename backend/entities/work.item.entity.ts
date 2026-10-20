@@ -14,6 +14,8 @@ import { Project } from "./project.entity";
 import { User } from "./user.entity";
 import { WorkItemAssignee } from "./work.item-assignee.entity";
 import { Sprint } from "./sprint.entities";
+import { WorkItemAttachment } from "./work.item.attachment.entity";
+import { ProjectLabel } from "./project.label.entity";
 
 
 export enum WorkItemType {
@@ -136,7 +138,6 @@ status: WorkItemStatus;
   @OneToMany(() => WorkItem, (workItem) => workItem.parentWorkItem)
   children: WorkItem[];
 
-  
   @OneToMany(
     () => WorkItemAssignee,
     (assignment) => assignment.workItem,
@@ -159,4 +160,32 @@ sprintId: string | null;
 )
 @JoinColumn({ name: "sprint_id" })
 sprint: Sprint | null;
+
+  @OneToMany(
+    () => WorkItemAttachment,
+    (attachment) => attachment.workItem,
+  )
+  attachments: WorkItemAttachment[];
+
+  @OneToMany("WorkItemComment", "workItem")
+  comments: any[];
+
+  @OneToMany("WorkItemTimeEntry", "workItem")
+  timeEntries: any[];
+
+  @OneToMany("WorkItemDependency", "workItem")
+  dependencies: any[];
+  @Column({ name: "label_id", type: "uuid", nullable: true })
+labelId: string | null;
+
+@ManyToOne(
+  () => ProjectLabel,
+  (label) => label.workItems,
+  {
+    nullable: true,
+    onDelete: "SET NULL",
+  },
+)
+@JoinColumn({ name: "label_id" })
+label: ProjectLabel | null;
 }

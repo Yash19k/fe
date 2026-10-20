@@ -1,15 +1,102 @@
-import { checkPermission } from './../middleware/check.permissions';
-
 import { Router } from "express";
-import {validateCreateWorkItem,} from "../validations/work.item.validations";
+import {
+  validateCreateWorkItem,
+  validateUpdateWorkItem,
+  validateViewProjectWorkItems,
+} from "../validations/work.item.validations";
+
 import { isLoggedIn } from "../middleware/is.loggedin";
-import { createWorkItem, getProjectWorkItems } from "../controllers/task.controller";
+
+import {
+  createWorkItem,
+  deleteWorkItem,
+  getProjectWorkItems,
+  updateWorkItem,
+} from "../controllers/task.controller";
+import {
+  addWorkItemComment,
+  getWorkItemComments,
+  addWorkItemTimeEntry,
+  getWorkItemTimeEntries,
+  addWorkItemDependency,
+  getWorkItemDependencies,
+  deleteWorkItemDependency,
+} from "../controllers/feature-persistence.controller";
 import { asyncHandler } from "../middleware/async.handler";
+import { requireProjectPermission } from "../middleware/project.permission";
 
 const router = Router();
 
+router.post(
+  "/",
+  isLoggedIn,
+  requireProjectPermission("task:create"),
+  validateCreateWorkItem,
+  asyncHandler(createWorkItem)
+);
 
-router.post("/", isLoggedIn,checkPermission ,validateCreateWorkItem, asyncHandler(createWorkItem));
-router.get( "/project/:projectId",isLoggedIn , checkPermission,asyncHandler(getProjectWorkItems));
+router.patch(
+  "/:workItemId",
+  isLoggedIn,
+  requireProjectPermission("task:update"),
+  validateUpdateWorkItem,
+  asyncHandler(updateWorkItem)
+);
+
+router.delete(
+  "/:workItemId",
+  isLoggedIn,
+  requireProjectPermission("task:delete"),
+  asyncHandler(deleteWorkItem)
+);
+
+router.get(
+  "/project/:projectId",
+  isLoggedIn,
+  requireProjectPermission("task:read"),
+  validateViewProjectWorkItems,
+  asyncHandler(getProjectWorkItems)
+);
+
+// Comments
+router.post(
+  "/:workItemId/comments",
+  isLoggedIn,
+  asyncHandler(addWorkItemComment)
+);
+router.get(
+  "/:workItemId/comments",
+  isLoggedIn,
+  asyncHandler(getWorkItemComments)
+);
+
+// Time Entries
+router.post(
+  "/:workItemId/time-entries",
+  isLoggedIn,
+  asyncHandler(addWorkItemTimeEntry)
+);
+router.get(
+  "/:workItemId/time-entries",
+  isLoggedIn,
+  asyncHandler(getWorkItemTimeEntries)
+);
+
+// Dependencies
+router.post(
+  "/:workItemId/dependencies",
+  isLoggedIn,
+  asyncHandler(addWorkItemDependency)
+);
+router.get(
+  "/:workItemId/dependencies",
+  isLoggedIn,
+  asyncHandler(getWorkItemDependencies)
+);
+router.delete(
+  "/:workItemId/dependencies/:depId",
+  isLoggedIn,
+  asyncHandler(deleteWorkItemDependency)
+);
 
 export default router;

@@ -14,7 +14,7 @@ import {
 import { Organization } from "./organization.entity";
 import { Project } from "./project.entity";
 import { WorkItem } from "./work.item.entity";
-import { WorkItemAssignee } from "./work.item-assignee.entity"
+import { WorkItemAssignee } from "./work.item-assignee.entity";
 import { ProjectMember } from "./project.member.entity";
 import { UserSession } from "./user.session.entity";
 import { Sprint } from "./sprint.entities";
@@ -33,21 +33,38 @@ export enum UserStatus {
 
 @Entity({ name: "users" })
 @Index("IDX_users_organization_id", ["organizationId"])
-export class User  {
+export class User {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Column({ name: "organization_id", type: "uuid" })
-  organizationId: string;
+  @Column({ name: "organization_id", type: "uuid", nullable: true })
+  organizationId: string | null;
 
-  @Column({ name: "full_name", type: "varchar", length: 100 })
-  fullName: string;
+  @Column({ name: "full_name", type: "varchar", length: 100, nullable: true })
+  fullName: string | null;
 
   @Column({ type: "varchar", length: 255, unique: true })
   email: string;
 
-  @Column({ name: "password_hash", type: "varchar", length: 255 })
+  @Column({
+    name: "password_hash",
+    type: "varchar",
+    length: 255,
+    nullable: true,
+  })
   passwordHash: string;
+  @Column({
+    name: "invite_token_hash",
+    type: "varchar",
+    nullable: true,
+  })
+  inviteTokenHash: string | null;
+  @Column({
+    name: "invite_expires_at",
+    type: "timestamptz",
+    nullable: true,
+  })
+  inviteExpiresAt: Date | null;
 
   @Column({
     type: "enum",
@@ -78,30 +95,18 @@ export class User  {
   @JoinColumn({ name: "organization_id" })
   organization: Organization;
 
-  
   @OneToMany(() => Project, (project) => project.createdBy)
   createdProjects: Project[];
 
- 
   @OneToMany(() => WorkItem, (workItem) => workItem.createdBy)
   createdWorkItems: WorkItem[];
 
-
-  @OneToMany(
-    () => WorkItemAssignee,
-    (assignment) => assignment.user,
-  )
+  @OneToMany(() => WorkItemAssignee, (assignment) => assignment.user)
   workItemAssignments: WorkItemAssignee[];
-  @OneToMany(
-  () => ProjectMember,
-  (membership) => membership.user,
-)
-projectMemberships!: ProjectMember[];
-@OneToMany(() => UserSession, (session) => session.user)
-sessions!: UserSession[];
-@OneToMany(
-  () => Sprint,
-  (sprint) => sprint.createdBy,
-)
-createdSprints: Sprint[];
+  @OneToMany(() => ProjectMember, (membership) => membership.user)
+  projectMemberships!: ProjectMember[];
+  @OneToMany(() => UserSession, (session) => session.user)
+  sessions!: UserSession[];
+  @OneToMany(() => Sprint, (sprint) => sprint.createdBy)
+  createdSprints: Sprint[];
 }

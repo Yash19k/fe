@@ -18,9 +18,6 @@ export class Organization {
   @Column({ type: "varchar", length: 150 })
   name: string;
 
-  @Column({ type: "varchar", length: 100, unique: true })
-  slug: string;
-
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 

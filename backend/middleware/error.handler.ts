@@ -22,6 +22,7 @@ export const errorHandler: ErrorRequestHandler = (
 
   res.status(statusCode).json({
     success: false,
+    code: typeof err.code === "string" ? err.code : "INTERNAL_SERVER_ERROR",
     message:
       statusCode >= 500
         ? "Internal Server Error"

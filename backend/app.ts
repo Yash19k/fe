@@ -1,18 +1,53 @@
+import express, {type NextFunction, type Request ,type Response } from "express";
+import organizationRoutes from "./routes/organization.routes";
 
-import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
 import userRoutes from "./routes/user.routes";
+import projectRoutes from "./routes/project.routes";
+import workItemRoutes from "./routes/work.item.routes";
+import sprintRoutes from "./routes/sprint.routes";
+import dashboardRoutes from "./routes/dashboard.route";
+import notificationRoutes from "./routes/notification.routes";
+import { errorHandler } from "./middleware/error.handler";
+import { config } from "./config/config";
 
 export const app = express();
 
 console.log("App.ts executed");
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || config.corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Origin is not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }),
+);
+app.use(cookieParser());
 app.use("/api/users", userRoutes);
+app.use("/api/projects", projectRoutes);
+app.use("/api/work-items", workItemRoutes);
+
+app.use("/api/organizations", organizationRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api", sprintRoutes);
+app.use("/api", dashboardRoutes);
 
 app.get("/", (_req, res) => {
+  console.log("GET / request received");
   res.json({
     success: true,
     message: "TaskFlow API is running",
   });
 });
+
+app.use(errorHandler);

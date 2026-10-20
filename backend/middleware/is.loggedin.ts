@@ -1,93 +1,97 @@
 
 import { Request, Response, NextFunction } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
-
-
-import { User } from "../entities/user.entity";
+import { User, UserStatus } from "../entities/user.entity";
 import { AppDataSource } from "../config/data.source";
+import { config } from "../config/config";
+import { AppError } from "../errors/app.error";
 
 interface AuthTokenPayload extends JwtPayload {
   userId: string;
+  type: "ACCESS";
 }
 
 export const isLoggedIn = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    // 1. Read the JWT from the cookie
-    const token = req.cookies?.token;
+    const authHeader = req.headers.authorization;
+    const bearerToken =
+      authHeader?.startsWith("Bearer ")
+        ? authHeader.slice(7).trim()
+        : undefined;
+
+    const token = req.cookies?.token || bearerToken;
 
     if (!token || typeof token !== "string") {
-      res.status(401).json({
-        success: false,
-        message: "Authentication required. Please log in.",
-      });
-      return;
+      throw new AppError(
+        "Authentication required. Please log in.",
+        401,
+        "UNAUTHORIZED",
+      );
     }
 
-    // 2. Ensure the JWT secret is configured
-    const secret = process.env.JWT_SECRET;
+    const decoded = jwt.verify(
+      token,
+      config.accessTokenSecret,
+      { algorithms: ["HS256"] },
+    );
 
-    if (!secret) {
-      console.error("JWT_SECRET is not configured.");
-
-      res.status(500).json({
-        success: false,
-        message: "Internal server error.",
-      });
-      return;
-    }
-
-    // 3. Verify the JWT signature and expiration
-    const decoded = jwt.verify(token, secret);
-
-    // 4. Validate the payload structure
     if (
       typeof decoded === "string" ||
       typeof decoded.userId !== "string" ||
-      decoded.userId.length === 0
+      decoded.userId.length === 0 ||
+      decoded.type !== "ACCESS"
     ) {
-      res.status(401).json({
-        success: false,
-        message: "Invalid authentication token.",
-      });
-      return;
+      throw new AppError(
+        "Invalid authentication token.",
+        401,
+        "INVALID_TOKEN",
+      );
     }
 
     const payload = decoded as AuthTokenPayload;
-
-    // 5. Find the user in the database
     const userRepository = AppDataSource.getRepository(User);
 
-    // 6. Attach the authenticated identity to the request
+    const user = await userRepository.findOne({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        role: true,
+        organizationId: true,
+        status: true,
+      },
+    });
+
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new AppError(
+        "Invalid authentication token.",
+        401,
+        "INVALID_TOKEN",
+      );
+    }
+
     req.user = {
-      id: decoded.id,
-      role:decoded.role,
+      id: user.id,
+      role: user.role,
+      organizationId: user.organizationId ?? undefined,
     };
 
-    
     next();
   } catch (error: unknown) {
-  
-    if (
-      error instanceof jwt.JsonWebTokenError ||
-      error instanceof jwt.TokenExpiredError
-    ) {
-      res.status(401).json({
-        success: false,
-        message: "Invalid or expired authentication token.",
-      });
+    if (error instanceof jwt.JsonWebTokenError) {
+      next(
+        new AppError(
+          "Invalid or expired authentication token.",
+          401,
+          "INVALID_TOKEN",
+        ),
+      );
       return;
     }
 
-    // Unexpected errors, such as database failures
-    console.error("Authentication middleware error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Internal server error.",
-    });
+    next(error);
   }
 };

@@ -1,16 +1,55 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { CheckCircle2, Clock, AlertTriangle, ListTodo } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, ListTodo, Loader2 } from 'lucide-react';
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { WorkItemTypeBadge } from '../../components/ui/Badge';
 import { WORK_ITEM_TYPES } from '../../domain/workItems';
+import { getProjectDashboardApi } from '../../services/api';
 import type { Task, WorkItemType } from '../../types';
 
 export function ProjectDashboardView() {
   const { currentProject, projectTasks, allUsers } = useApp();
+  const [backendDashboard, setBackendDashboard] = useState<any>(null);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!currentProject?.id || !currentProject.id.includes('-')) return;
+    let isCancelled = false;
+    setIsLoadingDashboard(true);
+
+    getProjectDashboardApi(currentProject.id)
+      .then((res) => {
+        if (!isCancelled && res?.data) {
+          setBackendDashboard(res.data);
+        }
+      })
+      .catch((err) => {
+        console.warn('TaskFlow: Failed to load project dashboard from server:', err.message);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingDashboard(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentProject?.id]);
 
   const metrics = useMemo(() => {
-    // Deliverables (Epic, Story, Task, Bug) to avoid double-counting parent & child in completion progress
+    if (backendDashboard?.summary) {
+      const s = backendDashboard.summary;
+      return {
+        total: s.totalItems ?? 0,
+        completed: s.completedItems ?? 0,
+        incomplete: s.incompleteItems ?? 0,
+        overdue: s.overdueItems ?? 0,
+        deliverableTotal: s.totalItems ?? 0,
+        deliverableCompleted: s.completedItems ?? 0,
+        deliverableProgress: s.completionPercentage ?? 0,
+      };
+    }
+
+    // Fallback to local project tasks when offline or pending
     const deliverableTasks = projectTasks.filter((t: Task) => t.type !== WORK_ITEM_TYPES.SUBTASK);
     const deliverableTotal = deliverableTasks.length;
     const deliverableCompleted = deliverableTasks.filter((t: Task) => t.status === 'Done').length;
@@ -32,10 +71,17 @@ export function ProjectDashboardView() {
       deliverableCompleted,
       deliverableProgress,
     };
-  }, [projectTasks]);
+  }, [backendDashboard, projectTasks]);
 
   // Work-Item Type Breakdown
   const tasksByType = useMemo(() => {
+    if (Array.isArray(backendDashboard?.workItemTypes) && backendDashboard.workItemTypes.length > 0) {
+      return backendDashboard.workItemTypes.map((item: any) => ({
+        type: item.type as WorkItemType,
+        count: item.count || 0,
+      }));
+    }
+
     const counts: Record<string, number> = {
       [WORK_ITEM_TYPES.EPIC]: 0,
       [WORK_ITEM_TYPES.STORY]: 0,
@@ -54,7 +100,7 @@ export function ProjectDashboardView() {
       { type: WORK_ITEM_TYPES.SUBTASK as WorkItemType, count: counts[WORK_ITEM_TYPES.SUBTASK] || 0 },
       { type: WORK_ITEM_TYPES.BUG as WorkItemType, count: counts[WORK_ITEM_TYPES.BUG] || 0 },
     ];
-  }, [projectTasks]);
+  }, [backendDashboard, projectTasks]);
 
   // Chart 1: Incomplete tasks by Section
   const tasksBySection = useMemo(() => {
@@ -294,22 +340,29 @@ export function ProjectDashboardView() {
           </div>
 
           <div className="h-36 flex items-end gap-3 pt-4 border-b border-border/80">
-            {['Week 1', 'Week 2', 'Week 3', 'Week 4'].map((week, idx) => {
-              // Cumulative velocity bars based on October progress
-              const heights = [25, 45, 68, 85];
-              const h = heights[idx];
-
-              return (
-                <div key={week} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
-                  <span className="text-[10px] font-mono text-text-muted">{h}%</span>
-                  <div
-                    className="w-full bg-brand-primary/80 hover:bg-brand-primary transition-colors rounded-t-sm"
-                    style={{ height: `${h}%` }}
-                  />
-                  <span className="text-[10px] text-text-muted">{week}</span>
-                </div>
-              );
-            })}
+            {Array.isArray(backendDashboard?.sprintDeliveryVelocity) && backendDashboard.sprintDeliveryVelocity.length > 0 ? (
+              backendDashboard.sprintDeliveryVelocity.map((sprintItem: any) => {
+                const pct = sprintItem.completionPercentage ?? 0;
+                const h = Math.min(100, Math.max(8, pct));
+                return (
+                  <div key={sprintItem.sprintId || sprintItem.name} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                    <span className="text-[10px] font-mono text-text-muted">{pct}%</span>
+                    <div
+                      className="w-full bg-brand-primary/80 hover:bg-brand-primary transition-colors rounded-t-sm"
+                      style={{ height: `${h}%` }}
+                      title={`${sprintItem.completedItems || 0} of ${sprintItem.totalItems || 0} items completed`}
+                    />
+                    <span className="text-[10px] text-text-muted truncate max-w-[80px]" title={sprintItem.name}>
+                      {sprintItem.name}
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xs text-text-muted">
+                No active or completed sprints recorded for this project yet.
+              </div>
+            )}
           </div>
         </div>
       </div>

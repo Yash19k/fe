@@ -9,7 +9,6 @@ import {
   Lock,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
-import { canUserAccessProject } from '../../domain/permissions';
 
 export interface WorkspaceSidebarProps {
   isOpen: boolean;
@@ -29,7 +28,9 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
     crossTabIndicator,
   } = useApp();
 
-  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
+  const visibleProjects = projects.filter(
+    (proj) => proj.ownerId === currentUser.id || proj.memberIds?.includes(currentUser.id),
+  );
 
   const isHome = activeRoute === '/' || activeRoute === '';
   const isMyTasks = activeRoute.startsWith('/my-tasks');

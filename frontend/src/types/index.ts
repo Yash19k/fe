@@ -275,7 +275,8 @@ export interface AppContextValue {
   currentUser: User;
   currentCompany: Company | null;
   registerUser: (userData: { name: string; email: string }) => User;
-  completeCompanyOnboarding: (companyName: string) => boolean;
+  completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
+  finishOnboarding: () => void;
   switchUser: (userId: string) => void;
   projects: Project[];
   createProject: (projectData: Partial<Project>) => Project | null;
@@ -342,6 +343,9 @@ export interface AppContextValue {
   projectLabels: Label[];
   createLabel: (labelData: Partial<Label>) => Label;
   deleteLabel: (labelId: string) => void;
+  login?: (email: string, password: string) => Promise<boolean>;
+  logout?: () => Promise<void>;
+  isLoadingBackend?: boolean;
   [key: string]: any;
 }
 
