@@ -3,18 +3,15 @@ import { Dialog } from '../ui/Dialog';
 import { Input, Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useApp } from '../../hooks/useApp';
+import { isPersistedWorkItemId } from '../../services/api';
 import { WorkItemTypeBadge, StatusBadge } from '../ui/Badge';
 import { Avatar } from '../ui/Avatar';
 import {
   Search,
-  Plus,
   Loader2,
-  ChevronDown,
-  ChevronRight,
   AlertCircle,
 } from 'lucide-react';
-import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST } from '../../domain/workItems';
-import type { Task, WorkItemType, Priority } from '../../types';
+import type { Task } from '../../types';
 
 export interface CreateSprintModalProps {
   isOpen: boolean;
@@ -22,7 +19,7 @@ export interface CreateSprintModalProps {
 }
 
 export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
-  const { currentProject, projectTasks, allUsers, createSprint, createTask } = useApp();
+  const { currentProject, projectTasks, allUsers, createSprint } = useApp();
 
   // Form State
   const [sprintName, setSprintName] = useState('');
@@ -34,14 +31,6 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [taskSearch, setTaskSearch] = useState('');
 
-  // Expandable Create New Task Section
-  const [isNewTaskExpanded, setIsNewTaskExpanded] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newType, setNewType] = useState<WorkItemType>(WORK_ITEM_TYPES.TASK);
-  const [newPriority, setNewPriority] = useState<Priority>('Medium');
-  const [newAssigneeId, setNewAssigneeId] = useState('');
-  const [newTaskError, setNewTaskError] = useState('');
-
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -50,8 +39,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
   // Eligible Backlog Tasks for current project (not already assigned to active sprint or in backlog)
   const eligibleTasks = useMemo(() => {
     return projectTasks.filter((t: Task) => {
-      // Eligible if not completed and either in Backlog or unassigned to a sprint
-      return t.status !== 'Done' && (!t.sprintId || t.status === 'Backlog');
+      return t.status === 'Backlog' && !t.sprintId && isPersistedWorkItemId(t.id);
     });
   }, [projectTasks]);
 
@@ -84,33 +72,6 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
       setSelectedTaskIds(new Set());
     } else {
       setSelectedTaskIds(new Set(filteredTasks.map((t) => t.id)));
-    }
-  }
-
-  function handleCreateInlineWorkItem(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newTitle.trim()) {
-      setNewTaskError('Task title is required');
-      return;
-    }
-    setNewTaskError('');
-
-    const res = createTask({
-      title: newTitle.trim(),
-      type: newType,
-      priority: newPriority,
-      assigneeId: newAssigneeId || null,
-      status: 'Backlog',
-      projectId: currentProject?.id,
-    });
-
-    if (res.success && res.task) {
-      // Automatically select this newly created task for the sprint
-      setSelectedTaskIds((prev) => new Set(prev).add(res.task!.id));
-      setNewTitle('');
-      setIsNewTaskExpanded(false);
-    } else if (res.reason) {
-      setNewTaskError(res.reason);
     }
   }
 
@@ -147,6 +108,11 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
     setServerError(null);
 
     try {
+      const workItemIds = Array.from(selectedTaskIds);
+      if (workItemIds.some((id) => !isPersistedWorkItemId(id))) {
+        throw new Error('Only persisted database work items can be added to a sprint.');
+      }
+
       const res = await createSprint({
         projectId: currentProject?.id,
         name: sprintName.trim(),
@@ -154,7 +120,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
         startDate,
         endDate,
         status: 'PLANNED',
-        workItemIds: Array.from(selectedTaskIds),
+        workItemIds,
       });
 
       if (res.success) {
@@ -366,114 +332,6 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
               })
             )}
           </div>
-        </div>
-
-        {/* SECTION 2: Create New Work Item Inline */}
-        <div className="p-4 rounded-xl bg-surface-elevated border border-border space-y-3">
-          <button
-            type="button"
-            onClick={() => setIsNewTaskExpanded(!isNewTaskExpanded)}
-            className="w-full flex items-center justify-between text-left cursor-pointer"
-          >
-            <div>
-              <h3 className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
-                {isNewTaskExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span>Create new work item</span>
-              </h3>
-              <p className="text-[11px] text-text-muted pl-5">
-                Add a work item that does not exist yet.
-              </p>
-            </div>
-            <span className="text-[11px] font-medium text-brand-primary hover:underline">
-              {isNewTaskExpanded ? 'Collapse' : '+ Expand'}
-            </span>
-          </button>
-
-          {isNewTaskExpanded && (
-            <div className="pt-2 border-t border-border space-y-3">
-              {newTaskError && (
-                <p className="text-xs text-rose-400 font-medium">{newTaskError}</p>
-              )}
-
-              <div>
-                <Input
-                  label="Work Item Title *"
-                  placeholder="e.g. Implement refresh token rotation handler"
-                  value={newTitle}
-                  onChange={(e) => {
-                    setNewTitle(e.target.value);
-                    if (newTaskError) setNewTaskError('');
-                  }}
-                  autoFocus
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">
-                    Type
-                  </label>
-                  <select
-                    value={newType}
-                    onChange={(e) => setNewType(e.target.value as WorkItemType)}
-                    className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
-                  >
-                    {WORK_ITEM_TYPE_LIST.filter((t) => t !== WORK_ITEM_TYPES.EPIC).map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">
-                    Priority
-                  </label>
-                  <select
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as Priority)}
-                    className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
-                  >
-                    <option value="High">High</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Low">Low</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">
-                    Assignee
-                  </label>
-                  <select
-                    value={newAssigneeId}
-                    onChange={(e) => setNewAssigneeId(e.target.value)}
-                    className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
-                  >
-                    <option value="">-- Unassigned --</option>
-                    {allUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  icon={Plus}
-                  onClick={handleCreateInlineWorkItem}
-                  disabled={!newTitle.trim()}
-                >
-                  Add to Sprint
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Modal Footer Actions */}

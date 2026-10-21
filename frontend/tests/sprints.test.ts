@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Task } from '../src/types/index.ts';
+import { isPersistedWorkItemId } from '../src/services/api.ts';
 
 describe('Sprint Domain & Validation Tests (Section 9)', () => {
   it('validates sprint required fields correctly', () => {
@@ -75,5 +76,13 @@ describe('Sprint Domain & Validation Tests (Section 9)', () => {
 
     const unassociated = updatedTasks.find((t) => t.id === 'task-2');
     assert.equal(unassociated?.sprintId, undefined);
+  });
+
+  it('excludes temporary frontend task IDs from sprint payloads', () => {
+    const persistedId = '550e8400-e29b-41d4-a716-446655440000';
+
+    assert.equal(isPersistedWorkItemId(persistedId), true);
+    assert.equal(isPersistedWorkItemId('tf-1792576074881'), false);
+    assert.equal(isPersistedWorkItemId('task-1'), false);
   });
 });

@@ -8,7 +8,7 @@ import { asyncHandler } from "../middleware/async.handler";
 import { validateProjectId } from "../validations/project.validations";
 const router = Router();
 
-// Create a sprint and optionally create work items inside it
+// Create a sprint and optionally attach existing backlog work items
 router.post(
   "/projects/:projectId/sprints",
   isLoggedIn, checkPermission("task:create"), validateProjectId,

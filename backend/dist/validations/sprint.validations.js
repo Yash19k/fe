@@ -75,6 +75,14 @@ exports.createSprintSchema = joi_1.default.object({
     goal: joi_1.default.string().trim().max(1000).allow("", null).optional(),
     startDate: dateSchema.required(),
     endDate: dateSchema.required(),
+    workItemIds: joi_1.default.array()
+        .items(uuidSchema.required())
+        .max(100)
+        .unique()
+        .default([])
+        .messages({
+        "array.unique": "Duplicate work item IDs are not allowed.",
+    }),
     workItems: joi_1.default.array()
         .items(workItemSchema)
         .max(100)

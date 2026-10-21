@@ -12,14 +12,14 @@ import Joi from "joi";
 import { UserSession } from "../entities/user.session.entity";
 import { AppError } from "../errors/app.error";
 
-const invitedMemberSchema = Joi.array().items(
-  Joi.object({
-    email: Joi.string().email().required(),
-    role: Joi.string()
-      .valid(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAMMATE)
-      .default(UserRole.TEAMMATE),
-  })
-);
+// const invitedMemberSchema = Joi.array().items(
+//   Joi.object({
+//     email: Joi.string().email().required(),
+//     role: Joi.string()
+//       .valid(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAMMATE)
+//       .default(UserRole.TEAMMATE),
+//   })
+// );
 
 const userRepository = AppDataSource.getRepository(User);
 
@@ -151,6 +151,7 @@ export async function registerOrganization(
 
 // import { Request, Response, NextFunction } from "express";
 import { QueryFailedError } from "typeorm";
+import { inviteOrganizationMembers } from "../services/member-invitation.service";
 
 type AuthenticatedUser = {
   id: string;
@@ -159,143 +160,86 @@ type AuthenticatedUser = {
   role: UserRole;
 };
 
+
 export async function addOrganizationMembers(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
-  const { error, value } = invitedMembersSchema.validate(req.body, {
-    abortEarly: false,
-    stripUnknown: true,
-  });
-
-  if (error) {
-    return res.status(400).json({
-      message: "Validation failed",
-      errors: error.details.map((detail: any) => ({
-        field: detail.path.join("."),
-        message: detail.message,
-      })),
-    });
-  }
-
-  const authUser = req.user as AuthenticatedUser | undefined;
-
-  if (!authUser) {
-    return res.status(401).json({
-      message: "Authentication required",
-    });
-  }
-
-  if (authUser.role !== UserRole.ADMIN) {
-    return res.status(403).json({
-      message: "Only organization admins can add members",
-    });
-  }
-
-  const organizationId = authUser.organizationId;
-  if (!organizationId) {
-    return res.status(403).json({
-      message: "Admin must belong to an organization",
-    });
-  }
-
-  const members: { email: string; role: UserRole }[] = value.map(
-    (member: { email: string; role: UserRole }) => ({
-      email: member.email.trim().toLowerCase(),
-      role: member.role,
-    }),
-  );
-
-  // Prevent duplicate emails that differ only by capitalization.
-  const emails = members.map((member) => member.email);
-
-  if (new Set(emails).size !== emails.length) {
-    return res.status(400).json({
-      message: "Duplicate email addresses are not allowed",
-    });
-  }
-
   try {
-    const result = await AppDataSource.transaction(async (manager) => {
-      const added: {
-        userId: string;
-        email: string;
-        role: UserRole;
-      }[] = [];
-
-      const failed: {
-        email: string;
-        reason: string;
-      }[] = [];
-
-      for (const item of members) {
-        const existingUser = await manager.findOne(User, {
-          where: { email: item.email },
-        });
-
-        if (!existingUser) {
-          failed.push({
-            email: item.email,
-            reason: "User does not exist",
-          });
-          continue;
-        }
-
-        if (existingUser.organizationId === authUser.organizationId) {
-          failed.push({
-            email: item.email,
-            reason: "User already belongs to this organization",
-          });
-          continue;
-        }
-
-        if (existingUser.organizationId) {
-          failed.push({
-            email: item.email,
-            reason: "User already belongs to another organization",
-          });
-          continue;
-        }
-
-        existingUser.organizationId = organizationId;
-        existingUser.role = item.role;
-
-        const savedUser = await manager.save(User, existingUser);
-
-        added.push({
-          userId: savedUser.id,
-          email: savedUser.email,
-          role: savedUser.role,
-        });
-      }
-
-      return { added, failed };
+    const { error, value } = invitedMembersSchema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
     });
 
-    return res.status(200).json({
-      message: "Member processing completed",
-      data: {
-        added: result.added,
-        failed: result.failed,
-        totalAdded: result.added.length,
-        totalFailed: result.failed.length,
-      },
-    });
-  } catch (err: unknown) {
-    if (err instanceof QueryFailedError) {
-      const dbError = err.driverError as { code?: string };
-
-      if (dbError.code === "23505") {
-        return res.status(409).json({
-          message: "A unique constraint was violated",
-        });
-      }
+    if (error) {
+      return res.status(400).json({
+        message: "Validation failed",
+        errors: error.details.map((detail) => ({
+          field: detail.path.join("."),
+          message: detail.message,
+        })),
+      });
     }
 
-    return next(err);
+    const authUser = req.user as AuthenticatedUser | undefined;
+
+    if (!authUser) {
+      return res.status(401).json({
+        message: "Authentication required",
+      });
+    }
+
+    if (authUser.role !== UserRole.ADMIN) {
+      return res.status(403).json({
+        message: "Only organization admins can add members",
+      });
+    }
+
+    if (!authUser.organizationId) {
+      return res.status(403).json({
+        message: "Admin must belong to an organization",
+      });
+    }
+
+    const members = value.members.map(
+      (member: { email: string; role: UserRole }) => ({
+        email: member.email.trim().toLowerCase(),
+        role: member.role,
+      }),
+    );
+
+    // The invitation service supports MANAGER and TEAMMATE only.
+    if (
+      members.some(
+        (member: { email: string; role: UserRole }) =>
+          ![UserRole.MANAGER, UserRole.TEAMMATE].includes(member.role),
+      )
+    ) {
+      return res.status(400).json({
+        message: "Invitations can only assign MANAGER or TEAMMATE roles",
+      });
+    }
+
+    const result = await inviteOrganizationMembers(
+      authUser.organizationId,
+      members,
+    );
+
+    const emailFailures = result.invitations.filter(
+      (invitation) => !invitation.emailSent,
+    );
+
+    return res.status(emailFailures.length ? 207 : 201).json({
+      success: emailFailures.length === 0,
+      message: result.message,
+      data: result.invitations,
+    });
+  } catch (error) {
+    return next(error);
   }
 }
+
 
 export async function getOrganizationMembers(req: Request, res: Response) {
   const organizationId = req.user?.organizationId;

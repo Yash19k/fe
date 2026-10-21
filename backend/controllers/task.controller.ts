@@ -16,6 +16,7 @@ import {
   WorkItemPriority,
 } from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
+import { Sprint } from "../entities/sprint.entities";
 import {
   WorkItemRecurrence,
   RecurrenceFrequency,
@@ -46,6 +47,7 @@ interface RecurrenceInput {
 
 interface CreateWorkItemBody {
   projectId: string;
+  sprintId?: string | null;
   parentWorkItemId?: string | null;
   type: WorkItemType;
   title: string;
@@ -65,6 +67,7 @@ interface ViewWorkItemsQuery {
 }
 
 interface UpdateWorkItemBody {
+  sprintId?: string | null;
   title?: string;
   description?: string | null;
   type?: WorkItemType;
@@ -567,6 +570,7 @@ export const createWorkItem = async (
 
   const {
     projectId,
+    sprintId,
     parentWorkItemId,
     type,
     title,
@@ -606,6 +610,25 @@ export const createWorkItem = async (
           "PARENT_WORK_ITEM_NOT_FOUND",
         );
       }
+
+    }
+
+    if (sprintId) {
+      const sprint = await manager.getRepository(Sprint).findOne({
+        where: {
+          id: sprintId,
+          projectId: project.id,
+        },
+        select: { id: true },
+      });
+
+      if (!sprint) {
+        throw new AppError(
+          "Sprint not found in this project.",
+          400,
+          "INVALID_SPRINT",
+        );
+      }
     }
 
     await validateAssignees(
@@ -621,6 +644,7 @@ export const createWorkItem = async (
       organizationId: actor.organizationId,
       projectId: project.id,
       createdById: actor.id,
+      sprintId: sprintId ?? null,
       parentWorkItemId: parentWorkItemId ?? null,
       type,
       title: title.trim(),
@@ -815,6 +839,24 @@ export const updateWorkItem = async (
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
+    if (body.sprintId !== undefined && body.sprintId !== null) {
+      const sprint = await manager.getRepository(Sprint).findOne({
+        where: {
+          id: body.sprintId,
+          projectId: workItem.projectId,
+        },
+        select: { id: true },
+      });
+
+      if (!sprint) {
+        throw new AppError(
+          "Sprint not found in this project.",
+          400,
+          "INVALID_SPRINT",
+        );
+      }
+    }
+
     if (newAssignees !== undefined) {
       await validateAssignees(
         newAssignees,
@@ -873,6 +915,10 @@ export const updateWorkItem = async (
 
     if (body.parentWorkItemId !== undefined) {
       workItem.parentWorkItemId = body.parentWorkItemId;
+    }
+
+    if (body.sprintId !== undefined) {
+      workItem.sprintId = body.sprintId;
     }
 
     const savedWorkItem = await manager

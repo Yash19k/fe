@@ -1,10 +1,5 @@
 
 import Joi from "joi";
-import {
-  WorkItemType,
-  WorkItemStatus,
-  WorkItemPriority,
-} from "../entities/work.item.entity";
 
 const isRealDate = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -35,71 +30,6 @@ const uuidSchema = Joi.string().guid({
   version: ["uuidv4", "uuidv5"],
 });
 
-const workItemSchema = Joi.object({
-  type: Joi.string()
-    .valid(
-      WorkItemType.STORY,
-      WorkItemType.TASK,
-      WorkItemType.SUBTASK,
-      WorkItemType.BUG,
-    )
-    .required()
-    .messages({
-      "any.only":
-        "Work-item type must be STORY, TASK, SUBTASK, or BUG. EPIC is not allowed in a sprint.",
-      "any.required": "Work-item type is required.",
-    }),
-
-  title: Joi.string().trim().min(1).max(255).required(),
-
-  description: Joi.string().allow("", null).optional(),
-
-  priority: Joi.string()
-    .valid(...Object.values(WorkItemPriority))
-    .default(WorkItemPriority.MEDIUM),
-
-  status: Joi.string()
-    .valid(...Object.values(WorkItemStatus))
-    .default(WorkItemStatus.BACKLOG),
-
-  dueDate: dateSchema.allow(null).optional(),
-
-  parentWorkItemId: uuidSchema.allow(null).optional(),
-
-  assigneeIds: Joi.array()
-    .items(uuidSchema.required())
-    .unique()
-    .default([])
-    .messages({
-      "array.unique": "Duplicate assignee IDs are not allowed.",
-    }),
-})
-  .unknown(false)
-  .custom((item, helpers) => {
-    if (
-      item.type === WorkItemType.SUBTASK &&
-      !item.parentWorkItemId
-    ) {
-      return helpers.error("workItem.parentRequired");
-    }
-
-    if (
-      item.type !== WorkItemType.SUBTASK &&
-      item.parentWorkItemId
-    ) {
-      return helpers.error("workItem.parentNotAllowed");
-    }
-
-    return item;
-  })
-  .messages({
-    "workItem.parentRequired":
-      "A SUBTASK must have a parentWorkItemId.",
-    "workItem.parentNotAllowed":
-      "Only a SUBTASK may specify a parentWorkItemId.",
-    "object.unknown": "Unknown field: {{#label}}.",
-  });
-
 export const createSprintSchema = Joi.object({
   name: Joi.string().trim().min(1).max(100).required(),
 
@@ -109,10 +39,15 @@ export const createSprintSchema = Joi.object({
 
   endDate: dateSchema.required(),
 
-  workItems: Joi.array()
-    .items(workItemSchema)
+  workItemIds: Joi.array()
+    .items(uuidSchema.required())
     .max(100)
-    .default([]),
+    .unique()
+    .default([])
+    .messages({
+      "array.unique": "Duplicate work item IDs are not allowed.",
+    }),
+
 })
   .unknown(false)
   .custom((payload, helpers) => {

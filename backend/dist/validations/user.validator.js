@@ -3,8 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.loginSchema = exports.onboardingSchema = exports.signupSchema = void 0;
+exports.loginSchema = exports.onboardingSchema = exports.invitedMembersSchema = exports.signupSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
+const user_entity_1 = require("../entities/user.entity");
 // const Joi = require("joi");
 const passwordSchema = joi_1.default.string()
     .min(8)
@@ -42,6 +43,21 @@ exports.signupSchema = joi_1.default.object({
         "string.empty": "Password is required",
     }),
 });
+exports.invitedMembersSchema = joi_1.default.alternatives().try(joi_1.default.array().items(joi_1.default.object({
+    email: joi_1.default.string().email().required(),
+    role: joi_1.default.string()
+        .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+        .default(user_entity_1.UserRole.TEAMMATE),
+})), joi_1.default.object({
+    members: joi_1.default.array()
+        .items(joi_1.default.object({
+        email: joi_1.default.string().email().required(),
+        role: joi_1.default.string()
+            .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+            .default(user_entity_1.UserRole.TEAMMATE),
+    }))
+        .required(),
+}));
 exports.onboardingSchema = joi_1.default.object({
     user: joi_1.default.object({
         fullName: joi_1.default.string().trim().min(2).max(100).required(),

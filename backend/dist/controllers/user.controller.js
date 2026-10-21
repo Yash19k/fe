@@ -218,7 +218,7 @@ async function login(req, res) {
     });
 }
 /**
- * POST /auth/refresh
+* POST /auth/refresh
  * Uses the refresh cookie to issue a new access token
  * and rotates the refresh token.
  */

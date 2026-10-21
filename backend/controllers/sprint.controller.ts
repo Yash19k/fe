@@ -8,14 +8,11 @@ import {
   WorkItem,
   WorkItemType,
   WorkItemStatus,
-  WorkItemPriority,
 } from "../entities/work.item.entity";
-import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import {
   ProjectMember,
   ProjectRole,
 } from "../entities/project.member.entity";
-import { User, UserStatus } from "../entities/user.entity";
 
 import { AppError } from "../errors/app.error";
 import {
@@ -32,23 +29,12 @@ type AuthenticatedRequest = Request & {
   };
 };
 
-type CreateWorkItemInput = {
-  type: WorkItemType;
-  title: string;
-  description?: string | null;
-  priority?: WorkItemPriority;
-  status?: WorkItemStatus;
-  dueDate?: string | null;
-  parentWorkItemId?: string | null;
-  assigneeIds?: string[];
-};
-
 type CreateSprintInput = {
   name: string;
   goal?: string | null;
   startDate: string;
   endDate: string;
-  workItems?: CreateWorkItemInput[];
+  workItemIds?: string[];
 };
 
 const ALLOWED_SPRINT_WORK_ITEM_TYPES: WorkItemType[] = [
@@ -61,6 +47,8 @@ const ALLOWED_SPRINT_WORK_ITEM_TYPES: WorkItemType[] = [
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const parsePositiveInteger = (
   value: unknown,
@@ -201,6 +189,7 @@ const canReadProject = async (
   return String(project.visibility).toUpperCase() === "PUBLIC";
 };
 
+
 export const createSprint = async (
   req: Request,
   res: Response,
@@ -215,245 +204,163 @@ export const createSprint = async (
     goal,
     startDate,
     endDate,
-    workItems = [],
+    workItemIds = [],
   } = req.body as CreateSprintInput;
 
-  const result = await AppDataSource.transaction(
-    async (manager) => {
-      const projectRepo = manager.getRepository(Project);
-      const memberRepo = manager.getRepository(ProjectMember);
-      const userRepo = manager.getRepository(User);
-      const sprintRepo = manager.getRepository(Sprint);
-      const workItemRepo = manager.getRepository(WorkItem);
-      const assigneeRepo = manager.getRepository(WorkItemAssignee);
+  if (!Array.isArray(workItemIds)) {
+    throw new AppError(
+      "workItemIds must be an array.",
+      400,
+      "INVALID_SPRINT_WORK_ITEMS",
+    );
+  }
 
-      const project = await projectRepo.findOne({
-        where: {
-          id: projectId,
-          organizationId,
-        },
+  if (workItemIds.some((id) => typeof id !== "string" || !UUID_REGEX.test(id))) {
+    throw new AppError(
+      "Every workItemId must be a valid database UUID.",
+      400,
+      "INVALID_WORK_ITEM_IDS",
+    );
+  }
+
+  const uniqueWorkItemIds = workItemIds.map((id) => id.trim());
+
+  if (new Set(uniqueWorkItemIds).size !== uniqueWorkItemIds.length) {
+    throw new AppError(
+      "Duplicate work item IDs are not allowed.",
+      400,
+      "DUPLICATE_WORK_ITEM_IDS",
+    );
+  }
+
+  const result = await AppDataSource.transaction(async (manager) => {
+    const projectRepo = manager.getRepository(Project);
+    const memberRepo = manager.getRepository(ProjectMember);
+    const sprintRepo = manager.getRepository(Sprint);
+    const workItemRepo = manager.getRepository(WorkItem);
+
+    // 1. Validate project and permission.
+    const project = await projectRepo.findOne({
+      where: { id: projectId, organizationId },
+    });
+
+    if (!project) {
+      throw new AppError(
+        "Project not found.",
+        404,
+        "PROJECT_NOT_FOUND",
+      );
+    }
+
+    let permitted =
+      project.createdById === userId ||
+      isOrganizationAdmin(authReq.user.role);
+
+    if (!permitted) {
+      const membership = await memberRepo.findOne({
+        where: { projectId, userId },
       });
 
-      if (!project) {
-        throw new AppError(
-          "Project not found.",
-          404,
-          "PROJECT_NOT_FOUND",
-        );
-      }
-
-      let hasPermission =
-        project.createdById === userId ||
-        isOrganizationAdmin(authReq.user.role);
-
-      if (!hasPermission) {
-        const membership = await memberRepo.findOne({
-          where: {
-            projectId,
-            userId,
-          },
-        });
-
-        hasPermission = Boolean(
-          membership &&
-            [
-              ProjectRole.ADMIN,
-              ProjectRole.LEAD,
-            ].includes(membership.role),
-        );
-      }
-
-      if (!hasPermission) {
-        throw new AppError(
-          "You do not have permission to create a sprint in this project.",
-          403,
-          "SPRINT_CREATE_FORBIDDEN",
-        );
-      }
-
-      // Validate all requested work-item types.
-      for (const item of workItems) {
-        if (
-          !ALLOWED_SPRINT_WORK_ITEM_TYPES.includes(item.type)
-        ) {
-          throw new AppError(
-            "Only STORY, TASK, SUBTASK, and BUG are allowed in a sprint.",
-            400,
-            "INVALID_SPRINT_WORK_ITEM_TYPE",
-          );
-        }
-
-        if (
-          item.type === WorkItemType.SUBTASK &&
-          !item.parentWorkItemId
-        ) {
-          throw new AppError(
-            "A SUBTASK must have a parent work item.",
-            400,
-            "SUBTASK_PARENT_REQUIRED",
-          );
-        }
-
-        if (
-          item.type !== WorkItemType.SUBTASK &&
-          item.parentWorkItemId
-        ) {
-          throw new AppError(
-            "Only a SUBTASK may have a parent work item.",
-            400,
-            "PARENT_NOT_ALLOWED",
-          );
-        }
-      }
-
-      // Validate assignees before inserting any records.
-      const allAssigneeIds = [
-        ...new Set(
-          workItems.flatMap(
-            (item) => item.assigneeIds ?? [],
+      permitted = Boolean(
+        membership &&
+          [ProjectRole.ADMIN, ProjectRole.LEAD].includes(
+            membership.role,
           ),
-        ),
-      ];
+      );
+    }
 
-      if (allAssigneeIds.length > 0) {
-        const users = await userRepo.find({
+    if (!permitted) {
+      throw new AppError(
+        "You do not have permission to create a sprint in this project.",
+        403,
+        "SPRINT_CREATE_FORBIDDEN",
+      );
+    }
+
+    // 2. Validate selected existing tasks before writing anything.
+    const existingWorkItems = uniqueWorkItemIds.length
+      ? await workItemRepo.find({
           where: {
-            id: In(allAssigneeIds),
-            organizationId,
-            status: UserStatus.ACTIVE,
-          },
-          select: {
-            id: true,
-          },
-        });
-
-        if (users.length !== allAssigneeIds.length) {
-          throw new AppError(
-            "One or more assignees are invalid, inactive, or outside your organization.",
-            400,
-            "INVALID_ASSIGNEES",
-          );
-        }
-
-        const memberships = await memberRepo.find({
-          where: {
+            id: In(uniqueWorkItemIds),
             projectId,
-            userId: In(allAssigneeIds),
+            organizationId,
           },
-          select: {
-            userId: true,
-          },
-        });
+        })
+      : [];
 
-        const projectMemberIds = new Set(
-          memberships.map((membership) => membership.userId),
+    if (existingWorkItems.length !== uniqueWorkItemIds.length) {
+      throw new AppError(
+        "One or more selected work items do not exist in this project.",
+        400,
+        "INVALID_SELECTED_WORK_ITEMS",
+      );
+    }
+
+    for (const item of existingWorkItems) {
+      if (!ALLOWED_SPRINT_WORK_ITEM_TYPES.includes(item.type)) {
+        throw new AppError(
+          "Only STORY, TASK, SUBTASK, and BUG are allowed in a sprint.",
+          400,
+          "INVALID_SPRINT_WORK_ITEM_TYPE",
         );
-
-        if (
-          allAssigneeIds.some(
-            (id) => !projectMemberIds.has(id),
-          )
-        ) {
-          throw new AppError(
-            "Every assignee must be a member of this project.",
-            400,
-            "ASSIGNEE_NOT_PROJECT_MEMBER",
-          );
-        }
       }
 
-      const sprint = sprintRepo.create({
-        projectId,
-        createdById: userId,
-        name,
-        goal: goal ?? null,
-        startDate,
-        endDate,
-      });
+      if (item.sprintId) {
+        throw new AppError(
+          "A selected task already belongs to a sprint.",
+          400,
+          "WORK_ITEM_ALREADY_IN_SPRINT",
+        );
+      }
 
-      const savedSprint = await sprintRepo.save(sprint);
-      const savedWorkItems: WorkItem[] = [];
+      if (item.status !== WorkItemStatus.BACKLOG) {
+        throw new AppError(
+          "Only backlog work items can be added to a new sprint.",
+          400,
+          "WORK_ITEM_NOT_ELIGIBLE_FOR_SPRINT",
+        );
+      }
+    }
 
-      // Work-item creation and assignments share this transaction.
-      for (const item of workItems) {
-        if (item.parentWorkItemId) {
-          const parent = await workItemRepo.findOne({
-            where: {
-              id: item.parentWorkItemId,
-              projectId,
-              organizationId,
+    // Create the sprint first so associations use its persisted UUID.
+    const sprint = sprintRepo.create({
+      projectId,
+      createdById: userId,
+      name,
+      goal: goal ?? null,
+      startDate,
+      endDate,
+    });
+
+    const savedSprint = await sprintRepo.save(sprint);
+
+    // Attach existing backlog tasks to this same sprint.
+    for (const item of existingWorkItems) {
+      item.sprintId = savedSprint.id;
+    }
+
+    const savedWorkItems = existingWorkItems.length
+      ? await workItemRepo.save(existingWorkItems)
+      : [];
+
+    const returnedWorkItems = savedWorkItems.length
+      ? await workItemRepo.find({
+          where: {
+            id: In(savedWorkItems.map((item) => item.id)),
+          },
+          relations: {
+            assignments: {
+              user: true,
             },
-          });
+          },
+        })
+      : [];
 
-          if (!parent) {
-            throw new AppError(
-              "Parent work item must exist in the same project and organization.",
-              400,
-              "INVALID_PARENT_WORK_ITEM",
-            );
-          }
-
-          if (
-            item.type === WorkItemType.SUBTASK &&
-            ![
-              WorkItemType.TASK,
-              WorkItemType.STORY,
-            ].includes(parent.type)
-          ) {
-            throw new AppError(
-              "A SUBTASK parent must be a TASK or STORY.",
-              400,
-              "INVALID_SUBTASK_PARENT",
-            );
-          }
-        }
-
-        const workItem = workItemRepo.create({
-          organizationId,
-          projectId,
-          createdById: userId,
-          sprintId: savedSprint.id,
-          parentWorkItemId:
-            item.parentWorkItemId ?? null,
-          type: item.type,
-          title: item.title,
-          description: item.description ?? null,
-          priority:
-            item.priority ?? WorkItemPriority.MEDIUM,
-          status: item.status ?? WorkItemStatus.BACKLOG,
-          dueDate: item.dueDate
-            ? new Date(`${item.dueDate}T00:00:00.000Z`)
-            : null,
-        });
-
-        const savedWorkItem = await workItemRepo.save(
-          workItem,
-        );
-
-        savedWorkItems.push(savedWorkItem);
-
-        const assigneeIds = item.assigneeIds ?? [];
-
-        if (assigneeIds.length > 0) {
-          const assignments = assigneeIds.map(
-            (assigneeId) =>
-              assigneeRepo.create({
-                workItemId: savedWorkItem.id,
-                userId: assigneeId,
-                assignedById: userId,
-              }),
-          );
-
-          await assigneeRepo.save(assignments);
-        }
-      }
-
-      return {
-        sprint: savedSprint,
-        workItems: savedWorkItems,
-      };
-    },
-  );
+    return {
+      sprint: savedSprint,
+      workItems: returnedWorkItems,
+    };
+  });
 
   res.status(201).json({
     success: true,
@@ -461,6 +368,7 @@ export const createSprint = async (
     data: result,
   });
 };
+
 
 export const getProjectSprints = async (
   req: Request,

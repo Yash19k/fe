@@ -70,6 +70,11 @@ export const createWorkItemSchema = Joi.object({
     .guid({ version: ["uuidv4"] })
     .required(),
 
+  sprintId: Joi.string()
+    .guid({ version: ["uuidv4", "uuidv5"] })
+    .allow(null)
+    .optional(),
+
   parentWorkItemId: Joi.string()
     .guid({ version: ["uuidv4"] })
     .allow(null)
@@ -139,6 +144,10 @@ export const validateCreateWorkItem = (
 };
 
 const updateWorkItemSchema = Joi.object({
+  sprintId: Joi.string()
+    .guid({ version: ["uuidv4", "uuidv5"] })
+    .allow(null)
+    .optional(),
   title: Joi.string().trim().min(1).max(255).optional(),
   description: Joi.string().allow("", null).optional(),
   type: Joi.string().valid(...Object.values(WorkItemType)).optional(),

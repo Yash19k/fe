@@ -94,11 +94,14 @@ export function SettingsView() {
     setIsSubmittingAdd(true);
 
     try {
-      const res = await addOrganizationMemberApi({
-        email,
-        fullName: fullName || undefined,
-        role: addRole,
-      });
+      const res =await addOrganizationMemberApi({
+  members: [
+    {
+      email,
+      role: addRole.toUpperCase() as "ADMIN" | "MANAGER" | "TEAMMATE",
+    },
+  ],
+});
 
       showToast(res?.message || `Member ${email} added to organization`, 'success');
       setAddEmail('');

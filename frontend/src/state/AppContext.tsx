@@ -74,6 +74,7 @@ import {
   frontendPriorityToBackend,
   normalizeRole,
   toBackendRole,
+  isPersistedWorkItemId,
 } from '../services/api';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -706,6 +707,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (isServerProject) {
       createWorkItemApi({
         projectId: newTask.projectId,
+        sprintId: newTask.sprintId || null,
         parentWorkItemId: newTask.parentId || null,
         type: frontendTypeToBackend(newTask.type),
         title: newTask.title,
@@ -713,7 +715,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         priority: frontendPriorityToBackend(newTask.priority),
         status: frontendStatusToBackend(newTask.status),
         dueDate: newTask.dueDate || null,
-        assignees: newTask.assigneeId ? [{ userId: newTask.assigneeId }] : [],
+        assignees: (newTask.assigneeIds || []).map((userId) => ({ userId })),
       }).then((res) => {
         const serverItem = res?.data || res?.workItem;
         if (serverItem?.id) {
@@ -798,6 +800,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (typeof taskId === 'string' && taskId.includes('-')) {
       const backendUpdates: any = {};
+      if (updates.sprintId !== undefined) backendUpdates.sprintId = updates.sprintId || null;
       if (updates.title !== undefined) backendUpdates.title = updates.title;
       if (updates.description !== undefined) backendUpdates.description = updates.description;
       if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
@@ -1942,53 +1945,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Sprint operations
-  const createSprint = useCallback(async (sprintData: Partial<Sprint>) => {
+  const createSprint = useCallback(async (sprintData: Partial<Sprint> & {
+    workItemIds?: string[];
+  }) => {
     const targetProjectId = sprintData.projectId || currentProjectId;
-    const newSprint: Sprint = {
-      id: `sprint-${Date.now()}`,
-      projectId: targetProjectId,
-      name: (sprintData.name || '').trim(),
-      goal: sprintData.goal || null,
-      startDate: sprintData.startDate || new Date().toISOString().split('T')[0],
-      endDate: sprintData.endDate || new Date().toISOString().split('T')[0],
-      status: (sprintData.status || 'PLANNED') as SprintStatus,
-      workItemIds: sprintData.workItemIds || [],
-      createdById: currentUser.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const workItemIds = sprintData.workItemIds || [];
+
+    if (workItemIds.some((id) => !isPersistedWorkItemId(id))) {
+      const error = new Error(
+        'Only persisted database work items can be added to a sprint.',
+      );
+      showToast(error.message, 'error');
+      throw error;
+    }
 
     try {
       const res = await createSprintApi(targetProjectId, {
-        name: newSprint.name,
-        goal: newSprint.goal,
-        startDate: newSprint.startDate,
-        endDate: newSprint.endDate,
+        name: (sprintData.name || '').trim(),
+        goal: sprintData.goal || null,
+        startDate: sprintData.startDate || new Date().toISOString().split('T')[0],
+        endDate: sprintData.endDate || new Date().toISOString().split('T')[0],
+        workItemIds,
       });
-      const serverSprintId = res?.data?.sprint?.id || res?.data?.id;
-      if (serverSprintId) {
-        newSprint.id = serverSprintId;
+      const responseSprint = res?.data?.sprint || res?.data;
+      if (!responseSprint?.id) {
+        throw new Error('The server did not return the created sprint.');
       }
+
+      const savedSprint = backendSprintToFrontend({
+        ...responseSprint,
+        projectId: responseSprint.projectId || targetProjectId,
+        workItems: res?.data?.workItems || responseSprint.workItems,
+      });
+      const returnedWorkItems: Task[] = Array.isArray(res?.data?.workItems)
+        ? res.data.workItems.map((item: any) => backendWorkItemToTask(item, targetProjectId))
+        : [];
+
+      setSprints((prev) => [savedSprint, ...prev.filter((s) => s.id !== savedSprint.id)]);
+      if (returnedWorkItems.length > 0) {
+        setTasks((prev) => {
+          const returnedById = new Map(returnedWorkItems.map((task) => [task.id, task]));
+          const merged = prev.map((task) => returnedById.get(task.id) || (
+            savedSprint.workItemIds?.includes(task.id)
+              ? { ...task, sprintId: savedSprint.id }
+              : task
+          ));
+          const existingIds = new Set(prev.map((task) => task.id));
+          return [...merged, ...returnedWorkItems.filter((task) => !existingIds.has(task.id))];
+        });
+      } else if (savedSprint.workItemIds?.length) {
+        setTasks((prev) =>
+          prev.map((task) =>
+            savedSprint.workItemIds!.includes(task.id)
+              ? { ...task, sprintId: savedSprint.id }
+              : task
+          )
+        );
+      }
+
+      recordAudit('created', 'sprint', savedSprint.id, `Created sprint "${savedSprint.name}"`, null, savedSprint, false, targetProjectId);
+      showToast(`Sprint "${savedSprint.name}" created`, 'success');
+      return { success: true, sprint: savedSprint, workItems: returnedWorkItems };
     } catch (err: any) {
       const errMsg = err?.message || 'Failed to create sprint on server';
       showToast(errMsg, 'error');
       throw err;
     }
-
-    setSprints((prev) => [newSprint, ...prev]);
-
-    if (newSprint.workItemIds && newSprint.workItemIds.length > 0) {
-      setTasks((prev) =>
-        prev.map((t) =>
-          newSprint.workItemIds!.includes(t.id) ? { ...t, sprintId: newSprint.id } : t
-        )
-      );
-    }
-
-    recordAudit('created', 'sprint', newSprint.id, `Created sprint "${newSprint.name}"`, null, newSprint, false, targetProjectId);
-    showToast(`Sprint "${newSprint.name}" created`, 'success');
-    return { success: true, sprint: newSprint };
-  }, [currentProjectId, currentUser.id, recordAudit, showToast]);
+  }, [currentProjectId, recordAudit, showToast]);
 
   // Label operations
   const createLabel = useCallback((labelData: Partial<Label>): Label => {

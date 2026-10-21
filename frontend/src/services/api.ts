@@ -399,6 +399,7 @@ export async function updateProjectMemberRoleApi(
 
 export interface CreateWorkItemApiInput {
   projectId: string;
+  sprintId?: string | null;
   parentWorkItemId?: string | null;
   type: string;
   title: string;
@@ -455,16 +456,14 @@ export interface CreateSprintApiInput {
   goal?: string | null;
   startDate: string;
   endDate: string;
-  workItems?: Array<{
-    type: string;
-    title: string;
-    description?: string | null;
-    priority?: string;
-    status?: string;
-    dueDate?: string | null;
-    parentWorkItemId?: string | null;
-    assigneeIds?: string[];
-  }>;
+  workItemIds?: string[];
+}
+
+const DATABASE_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isPersistedWorkItemId(value: unknown): value is string {
+  return typeof value === 'string' && DATABASE_UUID.test(value);
 }
 
 export async function createSprintApi(
@@ -516,14 +515,18 @@ export async function getOrganizationMembersApi(): Promise<{ success: boolean; c
 }
 
 export async function addOrganizationMemberApi(payload: {
-  email: string;
-  fullName?: string;
-  role?: string;
+  members: {
+    email: string;
+    role?: "ADMIN" | "MANAGER" | "TEAMMATE";
+  }[];
 }): Promise<{ success: boolean; data: any; message?: string }> {
-  return request<{ success: boolean; data: any; message?: string }>('/api/organizations/members', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return request<{ success: boolean; data: any; message?: string }>(
+    "/api/organizations/members",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
 }
 
 export async function updateOrganizationMemberRoleApi(

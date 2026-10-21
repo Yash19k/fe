@@ -65,6 +65,7 @@ function MainAppShell() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [createTaskSprintId, setCreateTaskSprintId] = useState<string | undefined>();
   const [createSprintOpen, setCreateSprintOpen] = useState(false);
   const [createTaskInitialDate, setCreateTaskInitialDate] = useState<string | undefined>();
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -187,7 +188,13 @@ function MainAppShell() {
                   />
                 )}
                 {projectTab === 'sprint' && (
-                  <SprintDashboardView onOpenCreateSprint={() => setCreateSprintOpen(true)} />
+                  <SprintDashboardView
+                    onOpenCreateSprint={() => setCreateSprintOpen(true)}
+                    onOpenCreateTask={(sprintId) => {
+                      setCreateTaskSprintId(sprintId);
+                      setCreateTaskOpen(true);
+                    }}
+                  />
                 )}
                 {/* Unified Project Settings & Subsection Navigation */}
                 {isSettingsTab(projectTab) && (
@@ -216,9 +223,11 @@ function MainAppShell() {
         isOpen={createTaskOpen}
         initialDueDate={createTaskInitialDate}
         initialStartDate={createTaskInitialDate}
+        initialSprintId={createTaskSprintId}
         onClose={() => {
           setCreateTaskOpen(false);
           setCreateTaskInitialDate(undefined);
+          setCreateTaskSprintId(undefined);
         }}
       />
       <CreateSprintModal

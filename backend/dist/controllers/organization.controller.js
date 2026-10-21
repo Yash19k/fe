@@ -156,7 +156,7 @@ async function registerOrganization(req, res, next) {
 // import { Request, Response, NextFunction } from "express";
 const typeorm_1 = require("typeorm");
 async function addOrganizationMembers(req, res, next) {
-    const { error, value } = invitedMemberSchema.validate(req.body, {
+    const { error, value } = user_validator_1.invitedMembersSchema.validate(req.body, {
         abortEarly: false,
         stripUnknown: true,
     });

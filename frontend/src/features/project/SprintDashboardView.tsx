@@ -22,10 +22,11 @@ import { getRelativeDateLabel } from '../../domain/businessDays';
 
 export interface SprintDashboardViewProps {
   onOpenCreateSprint?: () => void;
+  onOpenCreateTask?: (sprintId: string) => void;
 }
 
-export function SprintDashboardView({ onOpenCreateSprint }: SprintDashboardViewProps) {
-  const { currentProject, projectTasks, allUsers, openTaskDrawer, currentUser } = useApp();
+export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: SprintDashboardViewProps) {
+  const { currentProject, projectTasks, projectSprints, allUsers, openTaskDrawer, currentUser } = useApp();
 
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('');
@@ -88,6 +89,15 @@ export function SprintDashboardView({ onOpenCreateSprint }: SprintDashboardViewP
       isMounted = false;
     };
   }, [currentProject?.id]);
+
+  useEffect(() => {
+    if (projectSprints.length === 0) return;
+    setSprints((prev) => {
+      const merged = new Map(prev.map((sprint) => [sprint.id, sprint]));
+      projectSprints.forEach((sprint) => merged.set(sprint.id, sprint));
+      return Array.from(merged.values());
+    });
+  }, [projectSprints]);
 
   const selectedSprint = useMemo(() => {
     return sprints.find((s) => s.id === selectedSprintId) || null;
@@ -271,15 +281,15 @@ export function SprintDashboardView({ onOpenCreateSprint }: SprintDashboardViewP
             Refresh
           </Button>
 
-          {canCreateSprint && onOpenCreateSprint && (
+          {selectedSprint && onOpenCreateTask && (
             <Button
               variant="primary"
               size="sm"
               icon={Plus}
-              onClick={onOpenCreateSprint}
+              onClick={() => onOpenCreateTask(selectedSprint.id)}
               className="h-8 font-medium"
             >
-              Add Sprint
+              Add Task
             </Button>
           )}
         </div>

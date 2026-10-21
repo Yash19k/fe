@@ -19,6 +19,7 @@ export interface CreateTaskModalProps {
   onClose: () => void;
   initialDueDate?: string;
   initialStartDate?: string;
+  initialSprintId?: string;
 }
 
 export function CreateTaskModal({
@@ -26,6 +27,7 @@ export function CreateTaskModal({
   onClose,
   initialDueDate,
   initialStartDate,
+  initialSprintId,
 }: CreateTaskModalProps) {
   const { createTask, currentProject, allUsers, currentWorkflow, tasks, projectLabels } = useApp();
 
@@ -153,6 +155,7 @@ export function CreateTaskModal({
       labels: selectedLabels,
       startDate: startDate || null,
       dueDate: dueDate || null,
+      sprintId: initialSprintId || null,
       estimateHours: estimateHours !== '' ? Number(estimateHours) : null,
       attachments,
       recurrenceRule:
