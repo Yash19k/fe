@@ -81,6 +81,14 @@ export interface RecurrenceConfig {
 }
 
 export interface SlaInfo {
+  status?: 'ON_TRACK' | 'AT_RISK' | 'BREACHED' | 'ESCALATED' | 'RESOLVED' | string;
+  deadline?: string | null;
+  remainingHours?: number | null;
+  overdueHours?: number | null;
+  escalatedAt?: string | null;
+  escalationReason?: string | null;
+  breachedAt?: string | null;
+  resolvedAt?: string | null;
   isBreached: boolean;
   isApproaching: boolean;
   isEscalated: boolean;
@@ -130,6 +138,7 @@ export interface Task {
   timeEntries?: TimeEntry[];
   recurrence?: RecurrenceConfig | null;
   slaStatus?: string;
+  sla?: SlaInfo;
   version?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -321,7 +330,7 @@ export interface AppContextValue {
   pendingSignupPassword?: string;
   setPendingSignupPassword?: (pwd: string) => void;
   logTimeEntry: (taskId: string, hours: number, note?: string) => void;
-  escalateTask: (taskId: string) => void;
+  escalateTask: (taskId: string, reason?: string) => Promise<Task>;
   simulateExternalTaskEdit: (taskId: string) => void;
   auditLog: AuditLogEntry[];
   undoAuditEntry: (entryId: string) => void;

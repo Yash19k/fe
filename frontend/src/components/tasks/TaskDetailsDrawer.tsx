@@ -113,6 +113,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [isEscalating, setIsEscalating] = useState(false);
 
   // Fetch comments from backend when task opens or comments tab is active
   useEffect(() => {
@@ -185,6 +186,18 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
   const currentType = draft.type;
   const slaInfo = evaluateTaskSla(task);
+  const slaDeadline = task.sla?.deadline ? new Date(task.sla.deadline) : null;
+  const handleEscalate = async () => {
+    if (isEscalating || slaInfo.isEscalated) return;
+    setIsEscalating(true);
+    try {
+      await escalateTask(task.id);
+    } catch {
+      // The context displays the server error toast.
+    } finally {
+      setIsEscalating(false);
+    }
+  };
   const isBlocked = isTaskBlocked(task, tasks);
   const blockingTasks = getBlockingTasks(task, tasks);
   const predecessors = getPredecessorTasks(task, tasks);
@@ -833,8 +846,23 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <div>
               <p className="font-semibold text-text-primary">SLA Policy Status</p>
               <p className="text-[11px] text-text-muted">
-                {slaInfo.label} · Target resolution threshold: {slaInfo.thresholdHours}h
+                <span>{slaInfo.label || 'SLA status unavailable'}</span>
+                {slaDeadline && (
+                  <span> · Deadline: {slaDeadline.toLocaleString()}</span>
+                )}
+                {slaInfo.remainingHours !== undefined && slaInfo.remainingHours !== null && !slaInfo.isBreached && (
+                  <span> · {Math.ceil(slaInfo.remainingHours)}h remaining</span>
+                )}
+                {slaInfo.isBreached && task.sla?.overdueHours !== undefined && task.sla.overdueHours !== null && (
+                  <span> · {Math.ceil(task.sla.overdueHours)}h overdue</span>
+                )}
               </p>
+              {task.sla?.escalatedAt && (
+                <p className="text-[11px] text-text-muted">
+                  Escalated {new Date(task.sla.escalatedAt).toLocaleString()}
+                  {task.sla.escalationReason ? ` · ${task.sla.escalationReason}` : ''}
+                </p>
+              )}
             </div>
           </div>
 
@@ -843,9 +871,10 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               variant="danger"
               size="sm"
               icon={ShieldAlert}
-              onClick={() => escalateTask(task.id)}
+              onClick={() => void handleEscalate()}
+              disabled={isEscalating}
             >
-              Escalate
+              {isEscalating ? 'Escalating...' : 'Escalate'}
             </Button>
           )}
         </div>

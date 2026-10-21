@@ -3,6 +3,7 @@ import { app } from "./app";
 // import { app } from "./src/app"; 
 import { config } from "./config/config";
 import { AppDataSource } from "./config/data.source";
+import { refreshSlaStatuses } from "./services/sla.service";
 
 async function startServer(): Promise<void> {
   try {
@@ -16,6 +17,13 @@ async function startServer(): Promise<void> {
     await AppDataSource.initialize();
 
     console.log("Database connected successfully.");
+
+    const slaIntervalMs = Number(process.env.SLA_CHECK_INTERVAL_MS ?? 60000);
+    const slaTimer = setInterval(() => {
+      void AppDataSource.transaction((manager) => refreshSlaStatuses(manager))
+        .catch((error) => console.error("SLA status refresh failed:", error));
+    }, Math.max(10000, slaIntervalMs));
+    slaTimer.unref();
 
     const server = app.listen(config.port, config.host, () => {
       console.log(

@@ -21,7 +21,12 @@ export type ProjectAction =
   | "task:read"
   | "task:assign"
   | "task:update"
+  | "task:escalate"
   | "task:delete"
+  | "sla:view"
+  | "sla:manage"
+  | "sla:resolve"
+  | "sla:audit"
   | "sprint:view"
   | "sprint:create"
   | "sprint:update"
@@ -39,7 +44,12 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
     "task:read",
     "task:assign",
     "task:update",
+    "task:escalate",
     "task:delete",
+    "sla:view",
+    "sla:manage",
+    "sla:resolve",
+    "sla:audit",
     "sprint:view",
     "sprint:create",
     "sprint:update",
@@ -55,7 +65,12 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
     "task:read",
     "task:assign",
     "task:update",
+    "task:escalate",
     "task:delete",
+    "sla:view",
+    "sla:manage",
+    "sla:resolve",
+    "sla:audit",
     "sprint:view",
     "sprint:create",
     "sprint:update",
@@ -68,16 +83,20 @@ const permissions: Record<ProjectRole, ProjectAction[]> = {
     "task:read",
     "task:assign",
     "task:update",
+    "sla:view",
     "sprint:view",
   ],
 };
 
-export const requireProjectPermission = (action: ProjectAction) => {
-  return async (
-    req: Request,
-    _res: Response,
-    next: NextFunction,
-  ): Promise<void> => {
+export const hasProjectPermission = (
+  role: ProjectRole,
+  action: ProjectAction,
+): boolean => permissions[role]?.includes(action) ?? false;
+
+export const authorizeProjectPermission = async (
+  req: Request,
+  action: ProjectAction,
+): Promise<void> => {
     const userId = req.user?.id;
     let projectId = Array.isArray(req.params.projectId)
       ? req.params.projectId[0]
@@ -175,7 +194,6 @@ export const requireProjectPermission = (action: ProjectAction) => {
 
     // Organization ADMINs have full management over projects in their organization
     if (user.role === UserRole.ADMIN) {
-      next();
       return;
     }
 
@@ -185,7 +203,6 @@ export const requireProjectPermission = (action: ProjectAction) => {
       project.visibility === "PUBLIC" &&
       !membership
     ) {
-      next();
       return;
     }
 
@@ -197,7 +214,7 @@ export const requireProjectPermission = (action: ProjectAction) => {
       );
     }
 
-    if (!permissions[membership.role]?.includes(action)) {
+    if (!hasProjectPermission(membership.role, action)) {
       throw new AppError(
         "You do not have permission to perform this action.",
         403,
@@ -218,6 +235,20 @@ export const requireProjectPermission = (action: ProjectAction) => {
       );
     }
 
-    next();
+    return;
+};
+
+export const requireProjectPermission = (action: ProjectAction) => {
+  return async (
+    req: Request,
+    _res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      await authorizeProjectPermission(req, action);
+      next();
+    } catch (error) {
+      next(error);
+    }
   };
 };

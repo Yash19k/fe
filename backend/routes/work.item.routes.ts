@@ -12,6 +12,10 @@ import {
   deleteWorkItem,
   getProjectWorkItems,
   updateWorkItem,
+  escalateWorkItem,
+  getWorkItemSla,
+  getWorkItemSlaAudit,
+  resolveWorkItemEscalation,
 } from "../controllers/task.controller";
 import {
   addWorkItemComment,
@@ -41,6 +45,34 @@ router.patch(
   requireProjectPermission("task:update"),
   validateUpdateWorkItem,
   asyncHandler(updateWorkItem)
+);
+
+router.patch(
+  "/:workItemId/escalate",
+  isLoggedIn,
+  requireProjectPermission("sla:manage"),
+  asyncHandler(escalateWorkItem),
+);
+
+router.get(
+  "/:workItemId/sla",
+  isLoggedIn,
+  requireProjectPermission("sla:view"),
+  asyncHandler(getWorkItemSla),
+);
+
+router.get(
+  "/:workItemId/sla/audit",
+  isLoggedIn,
+  requireProjectPermission("sla:audit"),
+  asyncHandler(getWorkItemSlaAudit),
+);
+
+router.post(
+  "/:workItemId/escalate/resolve",
+  isLoggedIn,
+  requireProjectPermission("sla:resolve"),
+  asyncHandler(resolveWorkItemEscalation),
 );
 
 router.delete(

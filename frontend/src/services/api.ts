@@ -441,6 +441,17 @@ export async function updateWorkItemApi(workItemId: string, updates: any): Promi
   });
 }
 
+export async function escalateWorkItemApi(
+  workItemId: string,
+  reason?: string,
+): Promise<any> {
+  const payload = reason?.trim() ? { reason: reason.trim() } : {};
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/escalate`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function deleteWorkItemApi(workItemId: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}`, {
     method: 'DELETE',
@@ -927,6 +938,26 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     status,
     priority,
     dueDate,
+    slaStatus: item.sla?.status || item.slaStatus || null,
+    sla: item.sla
+      ? {
+          ...item.sla,
+          deadline: item.sla.deadline || item.slaDeadline || null,
+          isBreached: item.sla.status === 'BREACHED' || Boolean(item.sla.breachedAt),
+          isApproaching: item.sla.status === 'AT_RISK',
+          isEscalated: Boolean(item.sla.isEscalated || item.escalatedAt),
+          hoursRemaining: item.sla.remainingHours ?? null,
+        }
+      : item.slaDeadline
+        ? {
+            status: item.slaStatus,
+            deadline: item.slaDeadline,
+            isBreached: item.slaStatus === 'BREACHED',
+            isApproaching: item.slaStatus === 'AT_RISK',
+            isEscalated: Boolean(item.escalatedAt),
+            hoursRemaining: null,
+          }
+        : undefined,
     startDate: item.startDate || null,
     assigneeId,
     assigneeIds,

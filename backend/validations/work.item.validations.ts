@@ -106,6 +106,11 @@ export const createWorkItemSchema = Joi.object({
     .iso()
     .allow(null)
     .optional(),
+  slaDeadline: Joi.date()
+    .iso()
+    .min("now")
+    .allow(null)
+    .optional(),
 
   assignees: Joi.array()
     .items(assigneeSchema)
@@ -154,6 +159,7 @@ const updateWorkItemSchema = Joi.object({
   priority: Joi.string().valid(...Object.values(WorkItemPriority)).optional(),
   status: Joi.string().valid(...Object.values(WorkItemStatus)).optional(),
   dueDate: Joi.date().iso().allow(null).optional(),
+  slaDeadline: Joi.date().iso().min("now").allow(null).optional(),
   parentWorkItemId: Joi.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
   assignees: Joi.array().items(assigneeSchema).unique("userId").allow(null).optional(),
   assigneeId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),

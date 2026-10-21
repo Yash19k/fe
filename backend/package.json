@@ -6,7 +6,7 @@
   "type": "commonjs",
   "main": "server.ts",
   "scripts": {
-    "test": "node --test",
+    "test": "node --require ts-node/register --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "seed": "ts-node seed.ts",

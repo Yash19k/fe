@@ -43,6 +43,14 @@ export enum WorkItemPriority {
   URGENT = "URGENT",
 }
 
+export enum SlaStatus {
+  ON_TRACK = "ON_TRACK",
+  AT_RISK = "AT_RISK",
+  BREACHED = "BREACHED",
+  ESCALATED = "ESCALATED",
+  RESOLVED = "RESOLVED",
+}
+
 @Entity({ name: "work_items" })
 @Index("IDX_work_items_organization_id", ["organizationId"])
 @Index("IDX_work_items_project_id", ["projectId"])
@@ -50,6 +58,7 @@ export enum WorkItemPriority {
 @Index("IDX_work_items_parent_id", ["parentWorkItemId"])
 @Index("IDX_work_items_project_status", ["projectId", "status"])
 @Index("IDX_work_items_project_type", ["projectId", "type"])
+@Index("IDX_work_items_sla_deadline_status", ["slaDeadline", "slaStatus"])
 export class WorkItem {
   @PrimaryGeneratedColumn("uuid")
   id: string;
@@ -106,6 +115,40 @@ status: WorkItemStatus;
   })
   dueDate: Date | null;
 
+  @Column({
+    name: "sla_deadline",
+    type: "timestamptz",
+    nullable: true,
+  })
+  slaDeadline: Date | null;
+
+  @Column({
+    name: "sla_status",
+    type: "enum",
+    enum: SlaStatus,
+    enumName: "work_items_sla_status_enum",
+    nullable: true,
+  })
+  slaStatus: SlaStatus | null;
+
+  @Column({ name: "sla_deadline_is_custom", type: "boolean", default: false })
+  slaDeadlineIsCustom: boolean;
+
+  @Column({ name: "escalated_at", type: "timestamptz", nullable: true })
+  escalatedAt: Date | null;
+
+  @Column({ name: "escalated_by_id", type: "uuid", nullable: true })
+  escalatedById: string | null;
+
+  @Column({ name: "escalation_reason", type: "text", nullable: true })
+  escalationReason: string | null;
+
+  @Column({ name: "sla_breached_at", type: "timestamptz", nullable: true })
+  slaBreachedAt: Date | null;
+
+  @Column({ name: "sla_resolved_at", type: "timestamptz", nullable: true })
+  slaResolvedAt: Date | null;
+
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
@@ -125,6 +168,10 @@ status: WorkItemStatus;
   })
   @JoinColumn({ name: "created_by_id" })
   createdBy: User;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "escalated_by_id" })
+  escalatedBy: User | null;
 
 
   @ManyToOne(() => WorkItem, (workItem) => workItem.children, {

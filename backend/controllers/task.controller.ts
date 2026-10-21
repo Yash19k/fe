@@ -14,8 +14,10 @@ import {
   WorkItemType,
   WorkItemStatus,
   WorkItemPriority,
+  SlaStatus,
 } from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
+import { AuditLog } from "../entities/audit.log.entity";
 import { Sprint } from "../entities/sprint.entities";
 import {
   WorkItemRecurrence,
@@ -23,6 +25,14 @@ import {
   MonthlyPattern,
 } from "../entities/work.item.recurrence.entity";
 import { AppError } from "../errors/app.error";
+import {
+  applySlaState,
+  calculateSlaDeadline,
+  ensureSlaData,
+  getSlaSnapshot,
+  writeSlaAudit,
+} from "../services/sla.service";
+import { authorizeProjectPermission } from "../middleware/project.permission";
 import {
   getPagination,
   getPaginationMeta,
@@ -55,6 +65,7 @@ interface CreateWorkItemBody {
   priority?: WorkItemPriority;
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
+  slaDeadline?: string | Date | null;
   assignees?: AssigneeInput[];
   recurrence?: RecurrenceInput | null;
 }
@@ -74,6 +85,7 @@ interface UpdateWorkItemBody {
   priority?: WorkItemPriority;
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
+  slaDeadline?: string | Date | null;
   parentWorkItemId?: string | null;
   assignees?: AssigneeInput[] | null;
   assigneeId?: string | null;
@@ -580,7 +592,12 @@ export const createWorkItem = async (
     dueDate,
     assignees = [],
     recurrence,
+    slaDeadline,
   } = body;
+
+  if (slaDeadline !== undefined) {
+    await authorizeProjectPermission(req, "sla:manage");
+  }
 
   if (recurrence) {
     validateRecurrence(recurrence);
@@ -655,6 +672,25 @@ export const createWorkItem = async (
     });
 
     const savedWorkItem = await workItemRepository.save(workItem);
+    savedWorkItem.slaDeadline = slaDeadline
+      ? new Date(slaDeadline)
+      : calculateSlaDeadline(savedWorkItem.createdAt, priority);
+    savedWorkItem.slaDeadlineIsCustom = Boolean(slaDeadline);
+    applySlaState(savedWorkItem);
+    await workItemRepository.save(savedWorkItem);
+    await writeSlaAudit(
+      manager,
+      savedWorkItem,
+      actor.id,
+      "sla_initialized",
+      "Initialized SLA for work item",
+      null,
+      {
+        deadline: savedWorkItem.slaDeadline,
+        status: savedWorkItem.slaStatus,
+        custom: savedWorkItem.slaDeadlineIsCustom,
+      },
+    );
 
     if (assignees.length > 0) {
       const assignments = assignees.map((assignee) =>
@@ -738,6 +774,7 @@ export const createWorkItem = async (
       assigneeId: result.assigneeId,
       assignees: result.assignees,
       recurrence: result.recurrence,
+      sla: getSlaSnapshot(result.workItem),
     },
   });
 };
@@ -793,6 +830,13 @@ export const getProjectWorkItems = async (
   }
 
   const [workItems, total] = await query.getManyAndCount();
+  for (const workItem of workItems) {
+    if (!workItem.slaDeadline) {
+      workItem.slaDeadline = calculateSlaDeadline(workItem.createdAt, workItem.priority);
+      workItem.slaDeadlineIsCustom = false;
+    }
+    applySlaState(workItem);
+  }
 
   res.status(200).json({
     success: true,
@@ -820,6 +864,10 @@ export const updateWorkItem = async (
 
   const workItem = await getAccessibleWorkItem(workItemId, actor);
 
+  if (body.slaDeadline !== undefined) {
+    await authorizeProjectPermission(req, "sla:manage");
+  }
+
   if (body.parentWorkItemId !== undefined) {
     await validateParentWorkItem(
       body.parentWorkItemId,
@@ -839,6 +887,8 @@ export const updateWorkItem = async (
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
+    const previousSlaDeadline = workItem.slaDeadline;
+    const previousSlaStatus = workItem.slaStatus;
     if (body.sprintId !== undefined && body.sprintId !== null) {
       const sprint = await manager.getRepository(Sprint).findOne({
         where: {
@@ -901,7 +951,15 @@ export const updateWorkItem = async (
     }
 
     if (body.priority !== undefined) {
+      const previousPriority = workItem.priority;
       workItem.priority = body.priority;
+      if (
+        previousPriority !== body.priority &&
+        !workItem.slaDeadlineIsCustom &&
+        workItem.slaDeadline
+      ) {
+        workItem.slaDeadline = calculateSlaDeadline(workItem.createdAt, body.priority);
+      }
     }
 
     if (body.status !== undefined) {
@@ -911,6 +969,13 @@ export const updateWorkItem = async (
     if (body.dueDate !== undefined) {
       workItem.dueDate =
         body.dueDate === null ? null : new Date(body.dueDate);
+    }
+
+    if (body.slaDeadline !== undefined) {
+      workItem.slaDeadline = body.slaDeadline
+        ? new Date(body.slaDeadline)
+        : calculateSlaDeadline(workItem.createdAt, workItem.priority);
+      workItem.slaDeadlineIsCustom = Boolean(body.slaDeadline);
     }
 
     if (body.parentWorkItemId !== undefined) {
@@ -924,6 +989,39 @@ export const updateWorkItem = async (
     const savedWorkItem = await manager
       .getRepository(WorkItem)
       .save(workItem);
+    if (!savedWorkItem.slaDeadline) {
+      savedWorkItem.slaDeadline = calculateSlaDeadline(
+        savedWorkItem.createdAt,
+        savedWorkItem.priority,
+      );
+      savedWorkItem.slaDeadlineIsCustom = false;
+    }
+    applySlaState(savedWorkItem);
+    await manager.getRepository(WorkItem).save(savedWorkItem);
+    if (
+      previousSlaDeadline?.getTime() !== savedWorkItem.slaDeadline?.getTime()
+    ) {
+      await writeSlaAudit(
+        manager,
+        savedWorkItem,
+        actor.id,
+        "sla_deadline_changed",
+        "Changed SLA deadline",
+        { deadline: previousSlaDeadline },
+        { deadline: savedWorkItem.slaDeadline },
+      );
+    }
+    if (previousSlaStatus !== savedWorkItem.slaStatus) {
+      await writeSlaAudit(
+        manager,
+        savedWorkItem,
+        actor.id,
+        "sla_status_changed",
+        "Changed SLA status",
+        { status: previousSlaStatus },
+        { status: savedWorkItem.slaStatus },
+      );
+    }
 
     const assignments = await manager
       .getRepository(WorkItemAssignee)
@@ -938,6 +1036,7 @@ export const updateWorkItem = async (
       assigneeIds: assignments.map((a) => a.userId),
       assigneeId: assignments[0]?.userId || null,
       assignees: assignments.map((a) => a.user).filter(Boolean),
+      sla: getSlaSnapshot(savedWorkItem),
     };
   });
 
@@ -945,6 +1044,178 @@ export const updateWorkItem = async (
     success: true,
     message: "Work item updated successfully",
     data: result,
+  });
+};
+
+export const escalateWorkItem = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItemId = requireWorkItemId(req);
+  const reason =
+    req.body?.reason === undefined || req.body.reason === null
+      ? null
+      : String(req.body.reason).trim();
+
+  if (reason && reason.length > 500) {
+    throw new AppError("Escalation reason must be 500 characters or fewer", 400, "INVALID_ESCALATION_REASON");
+  }
+
+  const result = await AppDataSource.transaction(async (manager) => {
+    const workItem = await manager
+      .getRepository(WorkItem)
+      .createQueryBuilder("workItem")
+      .where("workItem.id = :workItemId", { workItemId })
+      .andWhere("workItem.organizationId = :organizationId", {
+        organizationId: actor.organizationId,
+      })
+      .setLock("pessimistic_write")
+      .getOne();
+    if (!workItem) {
+      throw new AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
+    }
+
+    await assertAccessibleProject(workItem.projectId, actor, manager);
+    if (workItem.escalatedAt) {
+      applySlaState(workItem);
+      return { workItem, alreadyEscalated: true };
+    }
+
+    const previous = {
+      status: workItem.slaStatus,
+      escalatedAt: workItem.escalatedAt,
+      reason: workItem.escalationReason,
+    };
+    await ensureSlaData(workItem, manager);
+    workItem.escalatedAt = new Date();
+    workItem.escalatedById = actor.id;
+    workItem.escalationReason = reason;
+    workItem.slaStatus = SlaStatus.ESCALATED;
+    const saved = await manager.getRepository(WorkItem).save(workItem);
+    await writeSlaAudit(
+      manager,
+      saved,
+      actor.id,
+      "escalated",
+      "Escalated work item",
+      previous,
+      { status: saved.slaStatus, escalatedAt: saved.escalatedAt, reason },
+    );
+    return { workItem: saved, alreadyEscalated: false };
+  });
+
+  res.status(200).json({
+    success: true,
+    message: result.alreadyEscalated ? "Work item is already escalated" : "Work item escalated successfully",
+    data: { ...result.workItem, sla: getSlaSnapshot(result.workItem), alreadyEscalated: result.alreadyEscalated },
+  });
+};
+
+export const getWorkItemSla = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+
+  applySlaState(workItem);
+  res.status(200).json({
+    success: true,
+    data: {
+      workItemId: workItem.id,
+      projectId: workItem.projectId,
+      sla: getSlaSnapshot(workItem),
+    },
+  });
+};
+
+export const getWorkItemSlaAudit = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+  const logs = await AppDataSource.getRepository(AuditLog).find({
+    where: {
+      organizationId: actor.organizationId,
+      projectId: workItem.projectId,
+      entityType: "work_item",
+      entityId: workItem.id,
+    },
+    relations: { user: true },
+    order: { createdAt: "DESC" },
+    take: 150,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: logs
+      .filter((log) => log.action === "escalated" || log.action.startsWith("sla_"))
+      .map((log) => ({
+        id: log.id,
+        action: log.action,
+        description: log.description,
+        previousState: log.previousState,
+        newState: log.newState,
+        actorId: log.userId,
+        actorName: log.user?.fullName || log.user?.email || "Unknown user",
+        createdAt: log.createdAt,
+      })),
+  });
+};
+
+export const resolveWorkItemEscalation = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItemId = requireWorkItemId(req);
+
+  const workItem = await AppDataSource.transaction(async (manager) => {
+    const item = await manager
+      .getRepository(WorkItem)
+      .createQueryBuilder("workItem")
+      .where("workItem.id = :workItemId", { workItemId })
+      .andWhere("workItem.organizationId = :organizationId", {
+        organizationId: actor.organizationId,
+      })
+      .setLock("pessimistic_write")
+      .getOne();
+
+    if (!item) {
+      throw new AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
+    }
+
+    await assertAccessibleProject(item.projectId, actor, manager);
+    const previous = {
+      status: item.slaStatus,
+      escalatedAt: item.escalatedAt,
+      reason: item.escalationReason,
+    };
+
+    item.escalatedAt = null;
+    item.escalatedById = null;
+    item.escalationReason = null;
+    item.slaResolvedAt = new Date();
+    applySlaState(item);
+    const saved = await manager.getRepository(WorkItem).save(item);
+    await writeSlaAudit(
+      manager,
+      saved,
+      actor.id,
+      "sla_escalation_resolved",
+      "Resolved work item escalation",
+      previous,
+      { status: saved.slaStatus, resolvedAt: saved.slaResolvedAt },
+    );
+    return saved;
+  });
+
+  res.status(200).json({
+    success: true,
+    message: "Work item escalation resolved successfully",
+    data: { ...workItem, sla: getSlaSnapshot(workItem) },
   });
 };
 

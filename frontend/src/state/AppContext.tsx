@@ -41,6 +41,7 @@ import {
   getProjectWorkItemsApi,
   createWorkItemApi,
   updateWorkItemApi,
+  escalateWorkItemApi,
   deleteWorkItemApi,
   getProjectSprintsApi,
   currentUserApi,
@@ -719,7 +720,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }).then((res) => {
         const serverItem = res?.data || res?.workItem;
         if (serverItem?.id) {
-          setTasks((prev) => prev.map((t) => (t.id === newTask.id ? { ...t, id: serverItem.id } : t)));
+          const authoritativeTask = backendWorkItemToTask(serverItem, serverItem.projectId || newTask.projectId);
+          setTasks((prev) => prev.map((t) => (
+            t.id === newTask.id ? { ...t, ...authoritativeTask } : t
+          )));
         }
       }).catch((err) => {
         console.warn('TaskFlow: Backend task creation notice:', err.message);
@@ -1293,31 +1297,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.id, showToast]);
 
   // SLA Escalation
-  const escalateTask = useCallback((taskId: string) => {
+  const escalateTask = useCallback(async (taskId: string, reason?: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.TRIGGER_ESCALATION)) {
       showToast('Only Managers or Admins can escalate tasks', 'error');
-      return;
+      throw new Error('Only Managers or Admins can escalate tasks');
     }
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId) {
-          return {
-            ...t,
-            sla: {
-              ...(t.sla || {}),
-              isEscalated: true,
-              escalatedAt: new Date().toISOString(),
-            },
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      })
-    );
-    recordAudit('escalated', 'task', taskId, 'Escalated task to management', null, { isEscalated: true }, false);
-    showToast('Task escalated to Management attention', 'warning');
-  }, [currentUser.role, recordAudit, showToast]);
+    try {
+      const response = await escalateWorkItemApi(taskId, reason);
+      const serverItem = response?.data;
+      if (!serverItem?.id) {
+        throw new Error('The server did not return the escalated work item.');
+      }
+      const mapped = backendWorkItemToTask(serverItem, serverItem.projectId);
+      setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...mapped } : task)));
+      broadcastEvent('TASK_UPDATED', mapped);
+      showToast(response?.data?.alreadyEscalated ? 'Task is already escalated' : 'Task escalated to Management attention', 'warning');
+      return mapped;
+    } catch (error: any) {
+      showToast(error?.message || 'Unable to escalate task', 'error');
+      throw error;
+    }
+  }, [currentUser.role, showToast]);
 
   // Concurrency Simulator (allows demonstrating conflict resolution modal)
   const simulateExternalTaskEdit = useCallback((taskId: string) => {
@@ -1872,7 +1872,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutApi().catch(() => null);
-    setCurrentUser(fallbackUser);
+    // setCurrentUser(fallbackUser);
     showToast('Signed out successfully', 'info');
     navigate('/login');
   }, [navigate, showToast]);
