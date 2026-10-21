@@ -32,7 +32,7 @@ export function NotificationPopover({ isOpen, onClose }: NotificationPopoverProp
           <Bell size={15} className="text-text-primary" />
           <h3 className="text-sm font-semibold text-text-primary">Notifications</h3>
           {unreadCount > 0 && (
-            <span className="text-[11px] font-medium bg-brand-primary/20 text-brand-primary px-1.5 py-0.2 rounded-full">
+            <span className="text-[10px] font-semibold bg-brand-subtle text-brand-text border border-brand-primary/30 px-1.5 py-0.2 rounded-full">
               {unreadCount} new
             </span>
           )}

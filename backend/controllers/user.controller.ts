@@ -233,42 +233,18 @@ export async function login(req: Request, res: Response) {
     );
   }
 
-  const jwtSecret = process.env.ACCESS_TOKEN_SECRET;
-
-  if (!jwtSecret) {
-    throw new AppError(
-      "Authentication configuration error.",
-      500,
-      "AUTH_CONFIG_ERROR",
-    );
-  }
-
-  // Create a JWT without creating a server-side session.
-  const token = jwt.sign(
-  {
-    userId: user.id,
-    role: user.role,
-    organizationId: user.organizationId,
-    type: "ACCESS",
-  },
-  config.accessTokenSecret,
-  {
-    expiresIn: "15m",
-    algorithm: "HS256",
-  },
-);
-
-  // Store the access token in an HTTP-only cookie.
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 15 * 60 * 1000,
-  });
+  const token = await createAuthSession(
+    {
+      id: user.id,
+      role: user.role,
+      organizationId: user.organizationId,
+    },
+    res,
+  );
 
   return res.json({
     success: true,
+    token,
     user: {
       id: user.id,
       name: user.fullName,
@@ -286,7 +262,32 @@ export async function login(req: Request, res: Response) {
     },
   });
 }
+
 /**
+ * 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  * POST /auth/refresh
  * Uses the refresh cookie to issue a new access token
  * and rotates the refresh token.
@@ -380,6 +381,7 @@ export async function refreshAccessToken(req: Request, res: Response) {
   return res.status(200).json({
     success: true,
     message: "Access token refreshed successfully.",
+    token: accessToken,
   });
 }
 

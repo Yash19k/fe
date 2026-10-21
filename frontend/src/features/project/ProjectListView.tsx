@@ -352,26 +352,30 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
 
               {/* Task Rows */}
               {!isCollapsed && (
-                <>
-                  {/* Table Column Headers on desktop */}
-                  <div className="hidden md:grid md:grid-cols-[auto_1fr_130px_110px_100px_90px_auto] items-center gap-3 px-4 py-1.5 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/40">
-                    <span className="w-4" />
-                    <span>Task Title</span>
-                    <span>Assignee</span>
-                    <span>Due Date</span>
-                    <span>Status</span>
-                    <span>Priority</span>
-                    <span className="text-right">Tags</span>
-                  </div>
-
-                  <div className="divide-y divide-border/40">
-                    {group.tasks.length === 0 ? (
-                      <div className="px-5 py-4 text-center text-xs text-text-muted italic">
-                        No work items in this group. Click &quot;+&quot; to add one.
+                <div className="overflow-x-auto">
+                  <div className="min-w-[820px]">
+                    {/* Table Column Headers */}
+                    <div className="grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] gap-3 items-center px-4 py-2 border-b border-border/50 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/40 select-none">
+                      <div className="flex items-center gap-2">
+                        <span className="w-4 shrink-0" />
+                        <span>Task Title</span>
                       </div>
-                    ) : (
-                      group.tasks.map((t: Task) => <TaskRow key={t.id} task={t} />)
-                    )}
+                      <span>Assignee</span>
+                      <span>Due Date</span>
+                      <span>Status</span>
+                      <span>Priority</span>
+                      <span className="text-right">Tags</span>
+                    </div>
+
+                    <div className="divide-y divide-border/40">
+                      {group.tasks.length === 0 ? (
+                        <div className="px-5 py-4 text-center text-xs text-text-muted italic">
+                          No work items in this group. Click &quot;+&quot; to add one.
+                        </div>
+                      ) : (
+                        group.tasks.map((t: Task) => <TaskRow key={t.id} task={t} />)
+                      )}
+                    </div>
                   </div>
 
                   {/* Inline Task Add row */}
@@ -405,7 +409,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
                       </Button>
                     </div>
                   )}
-                </>
+                </div>
               )}
             </div>
           );

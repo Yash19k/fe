@@ -2,18 +2,19 @@ import React, { useState } from 'react';
 import { useApp } from '../../hooks/useApp';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { Layers, Shield, Eye, EyeOff } from 'lucide-react';
+import { ThemeToggle } from '../../components/ui/ThemeToggle';
+import { Layers, Eye, EyeOff } from 'lucide-react';
 
 export interface AuthViewProps {
   isSignup?: boolean;
 }
 
 export function AuthView({ isSignup = false }: AuthViewProps) {
-  const { switchUser, registerUser, navigate, showToast, login } = useApp();
+  const { registerUser, navigate, showToast, login, setPendingSignupPassword } = useApp();
 
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('admin@taskflow.pro');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -33,7 +34,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
     }
 
     if (isSignup) {
-      sessionStorage.setItem('pending_signup_password', password);
+      setPendingSignupPassword?.(password);
       registerUser({ name, email });
       showToast('Account created! Please set up your company workspace.', 'success');
       navigate('/onboarding/company');
@@ -50,26 +51,11 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
     }
   }
 
-  async function handleQuickDemoLogin(userId: string) {
-    const roleEmailMap: Record<string, string> = {
-      'user-1': 'admin@taskflow.pro',
-      'user-2': 'manager@taskflow.pro',
-      'user-3': 'teammate@taskflow.pro',
-    };
-    const demoEmail = roleEmailMap[userId];
-    if (demoEmail && login) {
-      const ok = await login(demoEmail, 'Password123!');
-      if (ok) {
-        navigate('/');
-        return;
-      }
-    }
-    switchUser(userId);
-    navigate('/');
-  }
-
   return (
-    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
+    <div className="min-h-screen bg-canvas flex flex-col items-center justify-center p-4 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md bg-surface rounded-2xl border border-border p-6 sm:p-8 shadow-overlay space-y-6">
         {/* Brand */}
         <div className="text-center space-y-2">
@@ -82,39 +68,8 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
           <p className="text-xs text-text-muted">
             {isSignup
               ? 'Join your engineering team workspace'
-              : 'Enter your credentials or choose a quick demo role'}
+              : 'Enter your credentials to continue'}
           </p>
-        </div>
-
-        {/* Quick Demo Access Buttons */}
-        <div className="p-3 rounded-xl bg-surface-elevated border border-border space-y-2">
-          <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-            <span>Prototype Quick Login</span>
-            <Shield size={12} className="text-brand-primary" />
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleQuickDemoLogin('user-1')}
-              className="py-1.5 px-2 text-xs rounded bg-surface hover:bg-surface-hover text-text-primary border border-border font-medium transition-colors"
-            >
-              Admin
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemoLogin('user-2')}
-              className="py-1.5 px-2 text-xs rounded bg-surface hover:bg-surface-hover text-text-primary border border-border font-medium transition-colors"
-            >
-              Manager
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemoLogin('user-3')}
-              className="py-1.5 px-2 text-xs rounded bg-surface hover:bg-surface-hover text-text-primary border border-border font-medium transition-colors"
-            >
-              Teammate
-            </button>
-          </div>
         </div>
 
         {/* Standard Auth Form */}

@@ -27,7 +27,7 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [visibility, setVisibility] = useState<ProjectVisibility>('global');
-  const [color, setColor] = useState('#6B9CFF');
+  const [color, setColor] = useState('#7465F6');
   const [workflowId, setWorkflowId] = useState(workflows[0]?.id || 'wf-1');
 
   // Form errors
@@ -36,12 +36,12 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
   const [dateError, setDateError] = useState('');
 
   const colors = [
-    { label: 'Blue', hex: '#6B9CFF' },
-    { label: 'Emerald', hex: '#10B981' },
-    { label: 'Cyan', hex: '#06B6D4' },
-    { label: 'Purple', hex: '#A855F7' },
-    { label: 'Amber', hex: '#F59E0B' },
-    { label: 'Rose', hex: '#F43F5E' },
+    { label: 'Purple', hex: '#7465F6' },
+    { label: 'Cyan', hex: '#35D5F2' },
+    { label: 'Emerald', hex: '#36C98F' },
+    { label: 'Amber', hex: '#F2BA55' },
+    { label: 'Rose', hex: '#F07187' },
+    { label: 'Indigo', hex: '#6366F1' },
   ];
 
   function handleNameChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -106,7 +106,7 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
     setStartDate('');
     setDueDate('');
     setVisibility('global');
-    setColor('#6B9CFF');
+    setColor('#7465F6');
     setWorkflowId(workflows[0]?.id || 'wf-1');
     setNameError('');
     setIdError('');

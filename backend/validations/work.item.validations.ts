@@ -65,35 +65,6 @@ const recurrenceSchema = Joi.object({
   timezone: Joi.string().trim().max(100).default("UTC"),
 }).unknown(false);
 
-/**
- * Parses JSON-valued fields sent through multipart/form-data.
- * Multer handles files; this middleware only normalizes text fields.
- */
-function parseMultipartJson(value: string): unknown {
-  // Invalid JSON is forwarded to the application's centralized error handler.
-  return JSON.parse(value);
-}
-
-export const normalizeMultipartWorkItemBody = (
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-): void => {
-  for (const field of ["assignees", "recurrence"] as const) {
-    const value = req.body?.[field];
-    if (typeof value !== "string") continue;
-
-    if (value.trim() === "") {
-      req.body[field] = field === "assignees" ? [] : null;
-      continue;
-    }
-
-    req.body[field] = parseMultipartJson(value);
-  }
-
-  next();
-};
-
 export const createWorkItemSchema = Joi.object({
   projectId: Joi.string()
     .guid({ version: ["uuidv4"] })
@@ -115,7 +86,6 @@ export const createWorkItemSchema = Joi.object({
     .required(),
 
   description: Joi.string()
-    .max(10000)
     .allow("", null)
     .optional(),
 
@@ -176,6 +146,9 @@ const updateWorkItemSchema = Joi.object({
   status: Joi.string().valid(...Object.values(WorkItemStatus)).optional(),
   dueDate: Joi.date().iso().allow(null).optional(),
   parentWorkItemId: Joi.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
+  assignees: Joi.array().items(assigneeSchema).unique("userId").allow(null).optional(),
+  assigneeId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
+  assigneeIds: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
 }).min(1).unknown(false);
 
 export const validateUpdateWorkItem = (

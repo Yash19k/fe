@@ -4,15 +4,28 @@ import { In } from "typeorm";
 
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
-import {Project,  ProjectVisibility,} from "../entities/project.entity";
-import { ProjectMember } from "../entities/project.member.entity";
-import { WorkItem, WorkItemType, WorkItemStatus, WorkItemPriority,} from "../entities/work.item.entity";
+import {
+  Project,
+  ProjectVisibility,
+} from "../entities/project.entity";
+import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
+import {
+  WorkItem,
+  WorkItemType,
+  WorkItemStatus,
+  WorkItemPriority,
+} from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
-import { WorkItemAttachment, AttachmentType } from "../entities/work.item.attachment.entity";
-import { uploadToCloudinary } from "../services/cloudinary.service";
-import { WorkItemRecurrence, RecurrenceFrequency, MonthlyPattern,} from "../entities/work.item.recurrence.entity";
+import {
+  WorkItemRecurrence,
+  RecurrenceFrequency,
+  MonthlyPattern,
+} from "../entities/work.item.recurrence.entity";
 import { AppError } from "../errors/app.error";
-import { getPagination, getPaginationMeta,} from "../utils/pagination";
+import {
+  getPagination,
+  getPaginationMeta,
+} from "../utils/pagination";
 
 interface AssigneeInput {
   userId: string;
@@ -59,6 +72,9 @@ interface UpdateWorkItemBody {
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
   parentWorkItemId?: string | null;
+  assignees?: AssigneeInput[] | null;
+  assigneeId?: string | null;
+  assigneeIds?: string[] | null;
 }
 
 interface Actor {
@@ -186,13 +202,11 @@ function validateRecurrence(input: RecurrenceInput): void {
     );
   }
 
-  const timezone = input.timezone ?? "UTC";
-  const intlWithTimeZones = Intl as typeof Intl & {
-    supportedValuesOf?: (key: "timeZone") => string[];
-  };
-  const supportedTimeZones = intlWithTimeZones.supportedValuesOf?.("timeZone") ?? [];
-
-  if (timezone !== "UTC" && !supportedTimeZones.includes(timezone)) {
+  try {
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: input.timezone ?? "UTC",
+    });
+  } catch {
     throw new AppError(
       "Invalid IANA timezone",
       400,
@@ -529,24 +543,27 @@ async function validateAssignees(
   });
 
   const memberIds = new Set(memberships.map((member) => member.userId));
+  const missingMemberIds = uniqueIds.filter((id) => !memberIds.has(id));
 
-  if (uniqueIds.some((id) => !memberIds.has(id))) {
-    throw new AppError(
-      "All assignees must be members of the selected project",
-      400,
-      "ASSIGNEE_NOT_PROJECT_MEMBER",
+  if (missingMemberIds.length > 0) {
+    const newMembers = missingMemberIds.map((userId) =>
+      manager.getRepository(ProjectMember).create({
+        projectId,
+        userId,
+        role: ProjectRole.MEMBER,
+      }),
     );
+    await manager.getRepository(ProjectMember).save(newMembers);
   }
 }
 
-// CREATE WORK ITEM WITH OPTIONAL ATTACHMENTS
+// CREATE WORK ITEM
 export const createWorkItem = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   const actor = await getActiveActor(requireUserId(req));
   const body = req.body as CreateWorkItemBody;
-  const files = (req.files ?? []) as Express.Multer.File[];
 
   const {
     projectId,
@@ -561,49 +578,11 @@ export const createWorkItem = async (
     recurrence,
   } = body;
 
-  if (recurrence) validateRecurrence(recurrence);
-
-  // Check access before sending files to Cloudinary.
-  const accessibleProject = await assertAccessibleProject(projectId, actor);
-
-  if (parentWorkItemId) {
-    const parent = await AppDataSource.getRepository(WorkItem).findOne({
-      where: {
-        id: parentWorkItemId,
-        projectId: accessibleProject.id,
-        organizationId: actor.organizationId,
-      },
-      select: { id: true },
-    });
-
-    if (!parent) {
-      throw new AppError(
-        "Parent work item not found in this project",
-        404,
-        "PARENT_WORK_ITEM_NOT_FOUND",
-      );
-    }
+  if (recurrence) {
+    validateRecurrence(recurrence);
   }
 
-  await validateAssignees(
-    assignees,
-    accessibleProject.id,
-    actor.organizationId,
-  );
-
-  // Uploads happen before the DB transaction because Cloudinary is external
-  // to PostgreSQL. The service returns publicId and secureUrl for each file.
-  const uploadedAssets = await Promise.all(
-    files.map((file) =>
-      uploadToCloudinary(
-        file,
-        `taskflow/${actor.organizationId}/projects/${accessibleProject.id}/work-items`,
-      ),
-    ),
-  );
-
   const result = await AppDataSource.transaction(async (manager) => {
-    // Re-check access and eligibility inside the transaction to reduce race windows.
     const project = await assertAccessibleProject(
       projectId,
       actor,
@@ -637,6 +616,7 @@ export const createWorkItem = async (
     );
 
     const workItemRepository = manager.getRepository(WorkItem);
+
     const workItem = workItemRepository.create({
       organizationId: actor.organizationId,
       projectId: project.id,
@@ -665,72 +645,62 @@ export const createWorkItem = async (
               : String(assignee.estimatedHours),
         }),
       );
+
       await manager.getRepository(WorkItemAssignee).save(assignments);
     }
 
     let savedRecurrence: WorkItemRecurrence | null = null;
+
     if (recurrence) {
-      const recurrenceRepository = manager.getRepository(WorkItemRecurrence);
-      savedRecurrence = await recurrenceRepository.save(
-        recurrenceRepository.create({
-          workItem: savedWorkItem,
-          frequency: recurrence.frequency,
-          interval: recurrence.interval ?? 1,
-          daysOfWeek:
-            recurrence.frequency === RecurrenceFrequency.WEEKLY
-              ? recurrence.daysOfWeek ?? []
-              : null,
-          monthlyPattern:
-            recurrence.frequency === RecurrenceFrequency.MONTHLY
-              ? recurrence.monthlyPattern ?? null
-              : null,
-          dayOfMonth:
-            recurrence.frequency === RecurrenceFrequency.MONTHLY &&
-            recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
-              ? recurrence.dayOfMonth ?? null
-              : null,
-          startsOn: recurrence.startsOn,
-          endsOn: recurrence.endsOn ?? null,
-          nextRunAt: new Date(`${recurrence.startsOn}T00:00:00.000Z`),
-          timezone: recurrence.timezone ?? "UTC",
-          isActive: true,
-        }),
-      );
+      const timezone = recurrence.timezone ?? "UTC";
+
+      savedRecurrence = await manager
+        .getRepository(WorkItemRecurrence)
+        .save(
+          manager.getRepository(WorkItemRecurrence).create({
+            workItem: savedWorkItem,
+            frequency: recurrence.frequency,
+            interval: recurrence.interval ?? 1,
+            daysOfWeek:
+              recurrence.frequency === RecurrenceFrequency.WEEKLY
+                ? recurrence.daysOfWeek ?? []
+                : null,
+            monthlyPattern:
+              recurrence.frequency === RecurrenceFrequency.MONTHLY
+                ? recurrence.monthlyPattern ?? null
+                : null,
+            dayOfMonth:
+              recurrence.frequency === RecurrenceFrequency.MONTHLY &&
+              recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
+                ? recurrence.dayOfMonth ?? null
+                : null,
+            startsOn: recurrence.startsOn,
+            endsOn: recurrence.endsOn ?? null,
+
+            // This is a UTC marker, not a timezone-aware local-midnight
+            // calculation. The recurrence worker must interpret startsOn
+            // using the stored timezone when calculating actual runs.
+            nextRunAt: new Date(`${recurrence.startsOn}T00:00:00.000Z`),
+            timezone,
+            isActive: true,
+          }),
+        );
     }
 
-    const attachmentRepository = manager.getRepository(WorkItemAttachment);
-    const attachments = uploadedAssets.map((asset, index) => {
-      const mimeType = files[index].mimetype;
-      const attachmentType = mimeType.startsWith("image/")
-        ? AttachmentType.IMAGE
-        : mimeType.startsWith("video/")
-          ? AttachmentType.VIDEO
-          : mimeType === "application/pdf"
-            ? AttachmentType.DOCUMENT
-            : AttachmentType.OTHER;
-
-      return attachmentRepository.create({
-        workItemId: savedWorkItem.id,
-        uploadedById: actor.id,
-        originalName: files[index].originalname,
-        type: attachmentType,
-        mimeType,
-        size: String(files[index].size),
-        storageKey: asset.publicId,
-        secureUrl: asset.secureUrl,
-        resourceType: asset.resourceType,
+    const assignments = await manager
+      .getRepository(WorkItemAssignee)
+      .find({
+        where: { workItemId: savedWorkItem.id },
+        relations: { user: true },
       });
-    });
-
-    const savedAttachments = attachments.length
-      ? await attachmentRepository.save(attachments)
-      : [];
 
     return {
       workItem: savedWorkItem,
-      assigneeIds: assignees.map((assignee) => assignee.userId),
+      assignments,
+      assigneeIds: assignments.map((assignee) => assignee.userId),
+      assigneeId: assignments[0]?.userId || null,
+      assignees: assignments.map((a) => a.user).filter(Boolean),
       recurrence: savedRecurrence,
-      attachments: savedAttachments,
     };
   });
 
@@ -739,9 +709,11 @@ export const createWorkItem = async (
     message: "Work item created successfully",
     data: {
       ...result.workItem,
+      assignments: result.assignments,
       assigneeIds: result.assigneeIds,
+      assigneeId: result.assigneeId,
+      assignees: result.assignees,
       recurrence: result.recurrence,
-      attachments: result.attachments,
     },
   });
 };
@@ -771,9 +743,11 @@ export const getProjectWorkItems = async (
   const query = AppDataSource.getRepository(WorkItem)
     .createQueryBuilder("workItem")
     .leftJoinAndSelect("workItem.assignments", "assignments")
+    .leftJoinAndSelect("assignments.user", "assigneeUser")
     .leftJoinAndSelect("workItem.comments", "comments")
     .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
     .leftJoinAndSelect("workItem.children", "children")
+    .leftJoinAndSelect("workItem.attachments", "attachments")
     .where("workItem.projectId = :projectId", {
       projectId: project.id,
     })
@@ -831,44 +805,100 @@ export const updateWorkItem = async (
     );
   }
 
-  // Explicit allow-list: do not mass-assign req.body onto the entity.
-  if (body.title !== undefined) {
-    workItem.title = body.title.trim();
+  let newAssignees: AssigneeInput[] | undefined = undefined;
+  if (body.assignees !== undefined) {
+    newAssignees = body.assignees || [];
+  } else if (body.assigneeIds !== undefined) {
+    newAssignees = (body.assigneeIds || []).map((uid) => ({ userId: uid }));
+  } else if (body.assigneeId !== undefined) {
+    newAssignees = body.assigneeId ? [{ userId: body.assigneeId }] : [];
   }
 
-  if (body.type !== undefined) {
-    workItem.type = body.type;
-  }
+  const result = await AppDataSource.transaction(async (manager) => {
+    if (newAssignees !== undefined) {
+      await validateAssignees(
+        newAssignees,
+        workItem.projectId,
+        actor.organizationId,
+        manager,
+      );
 
-  if (body.description !== undefined) {
-    workItem.description = body.description?.trim() || null;
-  }
+      await manager.getRepository(WorkItemAssignee).delete({
+        workItemId: workItem.id,
+      });
 
-  if (body.priority !== undefined) {
-    workItem.priority = body.priority;
-  }
+      if (newAssignees.length > 0) {
+        const assigneeEntities = newAssignees.map((assignee) =>
+          manager.getRepository(WorkItemAssignee).create({
+            workItemId: workItem.id,
+            userId: assignee.userId,
+            assignedById: actor.id,
+            startDate: assignee.startDate ?? null,
+            estimatedHours:
+              assignee.estimatedHours !== undefined &&
+              assignee.estimatedHours !== null
+                ? assignee.estimatedHours.toString()
+                : null,
+          }),
+        );
+        await manager.getRepository(WorkItemAssignee).save(assigneeEntities);
+      }
+    }
 
-  if (body.status !== undefined) {
-    workItem.status = body.status;
-  }
+    // Explicit allow-list: do not mass-assign req.body onto the entity.
+    if (body.title !== undefined) {
+      workItem.title = body.title.trim();
+    }
 
-  if (body.dueDate !== undefined) {
-    workItem.dueDate =
-      body.dueDate === null ? null : new Date(body.dueDate);
-  }
+    if (body.type !== undefined) {
+      workItem.type = body.type;
+    }
 
-  if (body.parentWorkItemId !== undefined) {
-    workItem.parentWorkItemId = body.parentWorkItemId;
-  }
+    if (body.description !== undefined) {
+      workItem.description = body.description?.trim() || null;
+    }
 
-  const savedWorkItem = await AppDataSource
-    .getRepository(WorkItem)
-    .save(workItem);
+    if (body.priority !== undefined) {
+      workItem.priority = body.priority;
+    }
+
+    if (body.status !== undefined) {
+      workItem.status = body.status;
+    }
+
+    if (body.dueDate !== undefined) {
+      workItem.dueDate =
+        body.dueDate === null ? null : new Date(body.dueDate);
+    }
+
+    if (body.parentWorkItemId !== undefined) {
+      workItem.parentWorkItemId = body.parentWorkItemId;
+    }
+
+    const savedWorkItem = await manager
+      .getRepository(WorkItem)
+      .save(workItem);
+
+    const assignments = await manager
+      .getRepository(WorkItemAssignee)
+      .find({
+        where: { workItemId: savedWorkItem.id },
+        relations: { user: true },
+      });
+
+    return {
+      ...savedWorkItem,
+      assignments,
+      assigneeIds: assignments.map((a) => a.userId),
+      assigneeId: assignments[0]?.userId || null,
+      assignees: assignments.map((a) => a.user).filter(Boolean),
+    };
+  });
 
   res.status(200).json({
     success: true,
     message: "Work item updated successfully",
-    data: savedWorkItem,
+    data: result,
   });
 };
 

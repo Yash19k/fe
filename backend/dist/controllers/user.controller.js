@@ -276,6 +276,7 @@ async function refreshAccessToken(req, res) {
     return res.status(200).json({
         success: true,
         message: "Access token refreshed successfully.",
+        token: accessToken,
     });
 }
 async function currentUser(req, res) {

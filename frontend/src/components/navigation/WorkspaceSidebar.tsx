@@ -5,10 +5,10 @@ import {
   Plus,
   Radio,
   ChevronRight,
-  Shield,
   Lock,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
+import { canUserAccessProject } from '../../domain/permissions';
 
 export interface WorkspaceSidebarProps {
   isOpen: boolean;
@@ -22,15 +22,12 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
     currentProjectId,
     currentCompany,
     currentUser,
-    switchUser,
     activeRoute,
     navigate,
     crossTabIndicator,
   } = useApp();
 
-  const visibleProjects = projects.filter(
-    (proj) => proj.ownerId === currentUser.id || proj.memberIds?.includes(currentUser.id),
-  );
+  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
 
   const isHome = activeRoute === '/' || activeRoute === '';
   const isMyTasks = activeRoute.startsWith('/my-tasks');
@@ -53,7 +50,7 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
         {/* Workspace Brand / Header */}
         <div className="flex items-center justify-between h-14 px-4 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-6 h-6 rounded-md bg-brand-primary flex items-center justify-center font-bold text-xs text-zinc-950">
+            <div className="w-6 h-6 rounded-md bg-brand-primary flex items-center justify-center font-bold text-xs text-white shadow-xs">
               TF
             </div>
             <div className="min-w-0">
@@ -67,8 +64,8 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
           <div
             className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-all duration-300 ${
               crossTabIndicator
-                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 animate-pulse'
-                : 'text-text-muted bg-surface/40'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
+                : 'text-text-muted bg-surface/50 border border-border/50'
             }`}
             title="Real-time multi-tab synchronization"
           >
@@ -86,8 +83,8 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
             }}
             className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
               isHome
-                ? 'bg-surface-active text-text-primary font-semibold'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                ? 'bg-brand-subtle text-brand-text font-semibold border border-brand-primary/30 shadow-xs'
+                : 'text-text-secondary hover:text-text-primary hover:bg-sidebar-hover'
             }`}
           >
             <LayoutDashboard size={15} />
@@ -101,8 +98,8 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
             }}
             className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
               isMyTasks
-                ? 'bg-surface-active text-text-primary font-semibold'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                ? 'bg-brand-subtle text-brand-text font-semibold border border-brand-primary/30 shadow-xs'
+                : 'text-text-secondary hover:text-text-primary hover:bg-sidebar-hover'
             }`}
           >
             <CheckSquare size={15} />
@@ -140,8 +137,8 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
                   }}
                   className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors group ${
                     isSelected
-                      ? 'bg-surface-active text-text-primary font-medium'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                      ? 'bg-brand-subtle text-brand-text font-medium border border-brand-primary/30 shadow-xs'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-sidebar-hover'
                   }`}
                 >
                   <div className="flex items-center gap-2 min-w-0 pr-1">
@@ -175,48 +172,6 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
           </div>
         </div>
 
-        {/* Role Demo Quick Switcher Banner */}
-        <div className="p-3 border-t border-border bg-surface-elevated/40">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1">
-              <Shield size={11} className="text-brand-primary" />
-              Role Demo Mode
-            </span>
-            <span className="text-[10px] text-text-muted">RBAC</span>
-          </div>
-          <div className="grid grid-cols-3 gap-1">
-            <button
-              onClick={() => switchUser('user-1')}
-              className={`px-1.5 py-1 text-[11px] rounded font-medium transition-colors text-center ${
-                currentUser.role === 'Admin'
-                  ? 'bg-brand-primary text-zinc-950 font-bold'
-                  : 'bg-surface text-text-muted hover:text-text-primary'
-              }`}
-            >
-              Admin
-            </button>
-            <button
-              onClick={() => switchUser('user-2')}
-              className={`px-1.5 py-1 text-[11px] rounded font-medium transition-colors text-center ${
-                currentUser.role === 'Manager'
-                  ? 'bg-brand-primary text-zinc-950 font-bold'
-                  : 'bg-surface text-text-muted hover:text-text-primary'
-              }`}
-            >
-              Manager
-            </button>
-            <button
-              onClick={() => switchUser('user-3')}
-              className={`px-1.5 py-1 text-[11px] rounded font-medium transition-colors text-center ${
-                currentUser.role === 'Teammate'
-                  ? 'bg-brand-primary text-zinc-950 font-bold'
-                  : 'bg-surface text-text-muted hover:text-text-primary'
-              }`}
-            >
-              Teammate
-            </button>
-          </div>
-        </div>
       </aside>
     </>
   );

@@ -63,21 +63,21 @@ export function GlobalRail() {
                 onClick={() => navigate(item.route)}
                 className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors group ${
                   isActive
-                    ? 'bg-surface-active text-text-primary'
+                    ? 'bg-brand-subtle text-brand-text border border-brand-primary/35 shadow-xs'
                     : 'text-text-muted hover:text-text-primary hover:bg-surface-hover'
                 }`}
                 title={item.label}
                 aria-label={item.label}
               >
-                <Icon size={19} strokeWidth={isActive ? 2 : 1.75} />
+                <Icon size={19} strokeWidth={isActive ? 2.2 : 1.75} />
                 {item.badge != null && item.badge > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-zinc-950 font-bold text-[9px] flex items-center justify-center">
+                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-white font-bold text-[9px] flex items-center justify-center">
                     {item.badge}
                   </span>
                 )}
                 {/* Active indicator bar */}
                 {isActive && (
-                  <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-brand-primary rounded-r" />
+                  <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 bg-brand-primary rounded-r" />
                 )}
               </button>
             );

@@ -26,15 +26,15 @@ export function Button({
 
   const variants: Record<string, string> = {
     primary:
-      'bg-brand-primary text-zinc-950 font-semibold hover:bg-brand-hover active:bg-blue-400 shadow-sm',
+      'bg-brand-primary text-white font-semibold hover:bg-brand-hover active:bg-brand-pressed shadow-xs transition-colors',
     secondary:
-      'bg-surface-elevated text-text-primary border border-border hover:bg-surface-hover hover:border-border-strong active:bg-surface-active',
+      'bg-surface-elevated text-text-primary border border-border hover:bg-surface-hover hover:border-border-strong active:bg-surface-active transition-colors',
     subtle:
-      'bg-transparent text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active',
+      'bg-transparent text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active transition-colors',
     danger:
-      'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 active:bg-rose-500/40',
+      'bg-status-danger-bg text-status-danger-text border border-status-danger-border hover:opacity-90 active:opacity-100 transition-colors',
     ghost:
-      'bg-transparent text-text-muted hover:text-text-primary hover:bg-surface-hover',
+      'bg-transparent text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors',
   };
 
   const sizes: Record<string, string> = {

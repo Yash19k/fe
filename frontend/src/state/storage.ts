@@ -1,7 +1,7 @@
 /**
  * LocalStorage Persistence Layer for TaskFlow Pro.
  * Provides safe serialization, fallbacks to realistic seed data,
- * non-destructive schema migration, and a complete Reset Demo Data capability.
+ * and non-destructive schema migration.
  */
 
 
@@ -126,15 +126,15 @@ export function migrateProjects(rawProjects: any[]): Project[] {
 
 export const DEFAULT_STANDARD_WORKFLOW: Workflow = {
   id: 'wf-1',
-  name: 'Standard Engineering Flow',
+  name: 'TaskFlow Pro — Final Statuses',
   statuses: [
     { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280', allowedTransitions: ['In Progress'] },
-    { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Blocked', 'On Hold'] },
+    { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Testing / QA', 'Blocked', 'On Hold'] },
     { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7', allowedTransitions: ['Testing / QA', 'In Progress', 'Blocked', 'On Hold'] },
     { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4', allowedTransitions: ['Done', 'In Progress', 'Blocked', 'On Hold'], roleRestrictions: { Done: ['Manager', 'Admin'] } },
-    { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
     { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
     { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
+    { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
   ],
 };
 
@@ -165,16 +165,24 @@ export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
       };
     });
 
-    if (wf.id === 'wf-1') {
+    const isDefaultWf =
+      wf.id === 'wf-1' ||
+      !wf.name ||
+      wf.name === 'Standard Engineering Flow' ||
+      wf.name === 'Custom Engineering Flow' ||
+      wf.name.endsWith(' Workflow') ||
+      /^[0-9a-fA-F-]{20,}/.test(wf.name);
+
+    if (isDefaultWf) {
       const statusNames = new Set(updatedStatuses.map((s) => s.name));
       const approvedSeven: WorkflowStatus[] = [
         { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280', allowedTransitions: ['In Progress'] },
-        { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Blocked', 'On Hold'] },
+        { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Testing / QA', 'Blocked', 'On Hold'] },
         { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7', allowedTransitions: ['Testing / QA', 'In Progress', 'Blocked', 'On Hold'] },
         { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4', allowedTransitions: ['Done', 'In Progress', 'Blocked', 'On Hold'], roleRestrictions: { Done: ['Manager', 'Admin'] } },
-        { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
         { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
         { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
+        { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
       ];
 
       for (const st of approvedSeven) {
@@ -197,15 +205,16 @@ export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
         return s;
       });
 
-      // Sort according to exact standard default order
+      // Sort according to exact standard default order:
+      // 1. Backlog, 2. In Progress, 3. In Review, 4. Testing / QA, 5. Blocked, 6. On Hold, 7. Done
       const standardOrder = [
         'Backlog',
         'In Progress',
         'In Review',
         'Testing / QA',
-        'Done',
         'Blocked',
         'On Hold',
+        'Done',
       ];
       updatedStatuses.sort((a, b) => {
         const idxA = standardOrder.indexOf(a.name);
@@ -219,6 +228,7 @@ export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
 
     return {
       ...wf,
+      name: isDefaultWf ? 'TaskFlow Pro — Final Statuses' : wf.name,
       statuses: updatedStatuses,
     };
   });
@@ -236,33 +246,37 @@ export interface InitialAppState {
   labels: Label[];
 }
 
+export const fallbackUser: User = {
+  id: '',
+  name: 'Workspace Member',
+  email: 'admin@taskflow.pro',
+  role: 'Admin',
+  initials: 'AD',
+  avatarColor: '#4F46E5',
+  onboardingCompleted: true,
+};
+
 export function loadInitialState(): InitialAppState {
-  const fallbackUser: User = {
-    id: '',
-    name: 'Workspace Member',
-    email: 'admin@taskflow.pro',
-    role: 'Admin',
-    initials: 'AD',
-    avatarColor: '#4F46E5',
-    onboardingCompleted: true,
-  };
 
   try {
     const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     const savedCompany = localStorage.getItem(STORAGE_KEYS.COMPANY);
-    const savedProjects = localStorage.getItem(STORAGE_KEYS.PROJECTS);
-    const savedTasks = localStorage.getItem(STORAGE_KEYS.TASKS);
-    const savedWorkflows = localStorage.getItem(STORAGE_KEYS.WORKFLOWS);
-    const savedNotifications = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const savedAuditLog = localStorage.getItem(STORAGE_KEYS.AUDIT_LOG);
-    const savedSprints = localStorage.getItem(STORAGE_KEYS.SPRINTS);
-    const savedLabels = localStorage.getItem(STORAGE_KEYS.LABELS);
 
-    const initialProjects = savedProjects ? JSON.parse(savedProjects) : [];
-    const initialTasks = savedTasks ? JSON.parse(savedTasks) : [];
-    const initialWorkflows = savedWorkflows ? JSON.parse(savedWorkflows) : [DEFAULT_STANDARD_WORKFLOW];
-    const initialSprints = savedSprints ? JSON.parse(savedSprints) : [];
-    const initialLabels = savedLabels ? JSON.parse(savedLabels) : [];
+    // Clean up any legacy business records previously mirrored to localStorage
+    const businessKeys = [
+      STORAGE_KEYS.PROJECTS,
+      STORAGE_KEYS.TASKS,
+      STORAGE_KEYS.WORKFLOWS,
+      STORAGE_KEYS.NOTIFICATIONS,
+      STORAGE_KEYS.AUDIT_LOG,
+      STORAGE_KEYS.SPRINTS,
+      STORAGE_KEYS.LABELS,
+    ];
+    for (const bk of businessKeys) {
+      if (localStorage.getItem(bk)) {
+        localStorage.removeItem(bk);
+      }
+    }
 
     let initialUser: User = savedUser ? JSON.parse(savedUser) : fallbackUser;
     if (initialUser && initialUser.onboardingCompleted === undefined) {
@@ -277,16 +291,16 @@ export function loadInitialState(): InitialAppState {
     return {
       currentUser: initialUser,
       currentCompany: initialCompany,
-      projects: migrateProjects(initialProjects),
-      tasks: migrateTasks(initialTasks),
-      workflows: migrateWorkflows(initialWorkflows),
-      notifications: savedNotifications ? JSON.parse(savedNotifications) : [],
-      auditLog: savedAuditLog ? JSON.parse(savedAuditLog) : [],
-      sprints: initialSprints,
-      labels: initialLabels,
+      projects: [],
+      tasks: [],
+      workflows: [DEFAULT_STANDARD_WORKFLOW],
+      notifications: [],
+      auditLog: [],
+      sprints: [],
+      labels: [],
     };
   } catch (err) {
-    console.warn('TaskFlow: Error loading localStorage:', err);
+    console.warn('TaskFlow: Error loading initial storage:', err);
     return {
       currentUser: fallbackUser,
       currentCompany: null,
@@ -302,6 +316,10 @@ export function loadInitialState(): InitialAppState {
 }
 
 export function saveStateToStorage(key: StorageKeyName, data: any): void {
+  // Only persist UI/session preferences, NOT persistent business records
+  if (key !== 'CURRENT_USER' && key !== 'COMPANY') {
+    return;
+  }
   try {
     const storageKey = STORAGE_KEYS[key];
     if (storageKey) {
@@ -309,13 +327,5 @@ export function saveStateToStorage(key: StorageKeyName, data: any): void {
     }
   } catch (err) {
     console.warn(`TaskFlow: Failed to save ${key} to localStorage:`, err);
-  }
-}
-
-export function resetAllStorage(): void {
-  try {
-    Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
-  } catch (err) {
-    console.warn('TaskFlow: Failed to clear storage:', err);
   }
 }

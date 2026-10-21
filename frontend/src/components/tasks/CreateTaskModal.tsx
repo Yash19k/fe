@@ -398,41 +398,26 @@ export function CreateTaskModal({
           </div>
         )}
 
-        {/* Section */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select
-            label="Section"
-            value={sectionId}
-            onChange={(e) => setSectionId(e.target.value)}
+        {/* Primary / Additional Assignee Picker */}
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            Assignees (Multiple Supported)
+          </label>
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) handleToggleAssignee(e.target.value);
+            }}
+            className="w-full h-9 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
           >
-            {currentProject?.sections?.map((sec) => (
-              <option key={sec.id} value={sec.id}>
-                {sec.name}
+            <option value="">+ Add or remove assignee...</option>
+            {allUsers.map((u) => (
+              <option key={u.id} value={u.id}>
+                {selectedAssigneeIds.includes(u.id) ? '✓ ' : ''}
+                {u.name} ({u.role})
               </option>
             ))}
-          </Select>
-
-          {/* Primary / Additional Assignee Picker */}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Assignees (Multiple Supported)
-            </label>
-            <select
-              value=""
-              onChange={(e) => {
-                if (e.target.value) handleToggleAssignee(e.target.value);
-              }}
-              className="w-full h-9 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
-            >
-              <option value="">+ Add or remove assignee...</option>
-              {allUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {selectedAssigneeIds.includes(u.id) ? '✓ ' : ''}
-                  {u.name} ({u.role})
-                </option>
-              ))}
-            </select>
-          </div>
+          </select>
         </div>
 
         {/* Selected Assignees Chips */}

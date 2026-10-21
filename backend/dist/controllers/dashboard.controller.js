@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getProjectDashboard = void 0;
+exports.getPersonalDashboard = exports.getProjectDashboard = void 0;
 const data_source_1 = require("../config/data.source");
 const project_entity_1 = require("../entities/project.entity");
 const work_item_entity_1 = require("../entities/work.item.entity");
@@ -218,3 +218,68 @@ const getProjectDashboard = async (req, res) => {
     });
 };
 exports.getProjectDashboard = getProjectDashboard;
+const getPersonalDashboard = async (req, res) => {
+    const userId = req.user?.id;
+    const organizationId = req.user?.organizationId;
+    if (!userId || !organizationId) {
+        throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
+    }
+    // Base query for work items assigned to this user in this organization
+    const userTasksQuery = () => workItemRepo()
+        .createQueryBuilder("wi")
+        .innerJoin("wi.assignments", "assignee", "assignee.userId = :userId", { userId })
+        .where("wi.organizationId = :organizationId", { organizationId });
+    const total = await userTasksQuery().getCount();
+    const completed = await userTasksQuery()
+        .andWhere("wi.status = :doneStatus", { doneStatus: work_item_entity_1.WorkItemStatus.DONE })
+        .getCount();
+    const active = total - completed;
+    const overdue = await userTasksQuery()
+        .andWhere("wi.status != :doneStatus", { doneStatus: work_item_entity_1.WorkItemStatus.DONE })
+        .andWhere("wi.dueDate IS NOT NULL")
+        .andWhere("wi.dueDate < NOW()")
+        .getCount();
+    const fiveDaysFromNow = new Date();
+    fiveDaysFromNow.setDate(fiveDaysFromNow.getDate() + 5);
+    const dueSoon = await userTasksQuery()
+        .andWhere("wi.status != :doneStatus", { doneStatus: work_item_entity_1.WorkItemStatus.DONE })
+        .andWhere("wi.dueDate IS NOT NULL")
+        .andWhere("wi.dueDate >= NOW()")
+        .andWhere("wi.dueDate <= :fiveDays", { fiveDays: fiveDaysFromNow.toISOString() })
+        .getCount();
+    const blocked = await userTasksQuery()
+        .andWhere("wi.status = :blockedStatus", { blockedStatus: work_item_entity_1.WorkItemStatus.BLOCKED })
+        .getCount();
+    // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
+    const attentionItems = await userTasksQuery()
+        .leftJoinAndSelect("wi.project", "project")
+        .andWhere("wi.status != :doneStatus", { doneStatus: work_item_entity_1.WorkItemStatus.DONE })
+        .orderBy("wi.dueDate", "ASC", "NULLS LAST")
+        .addOrderBy("wi.createdAt", "DESC")
+        .take(10)
+        .getMany();
+    res.status(200).json({
+        success: true,
+        data: {
+            summary: {
+                total,
+                completed,
+                active,
+                overdue,
+                dueSoon,
+                blocked,
+            },
+            attentionTasks: attentionItems.map((item) => ({
+                id: item.id,
+                title: item.title,
+                type: item.type,
+                status: item.status,
+                priority: item.priority,
+                dueDate: item.dueDate,
+                projectId: item.projectId,
+                projectName: item.project?.name,
+            })),
+        },
+    });
+};
+exports.getPersonalDashboard = getPersonalDashboard;

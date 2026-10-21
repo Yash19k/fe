@@ -218,7 +218,7 @@ export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewPro
                 <span
                   className={`text-xs font-mono font-medium ${
                     cell.isToday
-                      ? 'w-5 h-5 rounded-full bg-brand-primary text-zinc-950 font-bold flex items-center justify-center'
+                      ? 'w-5 h-5 rounded-full bg-brand-primary text-white font-bold flex items-center justify-center'
                       : cell.isCurrentMonth
                         ? 'text-text-primary'
                         : 'text-text-muted'
@@ -245,9 +245,9 @@ export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewPro
                     }}
                     className={`px-1.5 py-0.5 rounded text-[11px] font-medium truncate cursor-pointer transition-colors border flex items-center gap-1 ${
                       task.status === 'Done'
-                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                        ? 'bg-status-success-bg border-status-success-border text-status-success-text'
                         : task.priority === 'High'
-                          ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                          ? 'bg-status-danger-bg border-status-danger-border text-status-danger-text'
                           : 'bg-surface-elevated border-border text-text-primary hover:border-brand-primary'
                     }`}
                     title={`${task.type || 'Task'}: ${task.title} (Due: ${task.dueDate})`}

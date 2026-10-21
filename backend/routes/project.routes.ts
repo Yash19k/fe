@@ -18,6 +18,7 @@ import {
   saveProjectWorkflow,
   getProjectAuditLogs,
   createAuditLog,
+  undoAuditLog,
 } from "../controllers/feature-persistence.controller";
 import {
   validateCreateProject,
@@ -128,16 +129,22 @@ router.delete(
 router.get(
   "/:projectId/workflow",
   isLoggedIn,
+  checkPermission("project:read"),
+  validateProjectId,
   asyncHandler(getProjectWorkflow),
 );
 router.post(
   "/:projectId/workflow",
   isLoggedIn,
+  checkPermission("project:update"),
+  validateProjectId,
   asyncHandler(saveProjectWorkflow),
 );
 router.put(
   "/:projectId/workflow",
   isLoggedIn,
+  checkPermission("project:update"),
+  validateProjectId,
   asyncHandler(saveProjectWorkflow),
 );
 
@@ -156,6 +163,16 @@ router.post(
   "/:projectId/audit-logs",
   isLoggedIn,
   asyncHandler(createAuditLog),
+);
+router.post(
+  "/:projectId/audit-logs/:logId/undo",
+  isLoggedIn,
+  asyncHandler(undoAuditLog),
+);
+router.post(
+  "/audit-logs/:logId/undo",
+  isLoggedIn,
+  asyncHandler(undoAuditLog),
 );
 
 export default router;

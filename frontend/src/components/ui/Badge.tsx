@@ -36,42 +36,52 @@ export function WorkItemTypeBadge({
   > = {
     [WORK_ITEM_TYPES.EPIC]: {
       label: 'Epic',
-      bg: 'bg-purple-500/15',
-      text: 'text-purple-300',
-      border: 'border-purple-500/30',
+      bg: 'bg-status-purple-bg',
+      text: 'text-status-purple-text',
+      border: 'border-status-purple-border',
       icon: Layers,
     },
     [WORK_ITEM_TYPES.STORY]: {
       label: 'Story',
-      bg: 'bg-emerald-500/15',
-      text: 'text-emerald-400',
-      border: 'border-emerald-500/30',
+      bg: 'bg-status-success-bg',
+      text: 'text-status-success-text',
+      border: 'border-status-success-border',
       icon: BookOpen,
     },
     [WORK_ITEM_TYPES.TASK]: {
       label: 'Task',
-      bg: 'bg-blue-500/15',
-      text: 'text-blue-400',
-      border: 'border-blue-500/30',
+      bg: 'bg-status-info-bg',
+      text: 'text-status-info-text',
+      border: 'border-status-info-border',
       icon: CheckSquare,
     },
     [WORK_ITEM_TYPES.SUBTASK]: {
       label: 'Subtask',
-      bg: 'bg-zinc-800/70',
-      text: 'text-zinc-400',
-      border: 'border-zinc-700/50',
+      bg: 'bg-surface-elevated',
+      text: 'text-text-muted',
+      border: 'border-border',
       icon: CornerDownRight,
     },
     [WORK_ITEM_TYPES.BUG]: {
       label: 'Bug',
-      bg: 'bg-rose-500/15',
-      text: 'text-rose-400',
-      border: 'border-rose-500/30',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger-border',
       icon: Bug,
     },
   };
 
-  const c = configs[type] || configs[WORK_ITEM_TYPES.TASK];
+  const normalizedKey = (() => {
+    if (!type) return WORK_ITEM_TYPES.TASK;
+    const lower = String(type).toLowerCase().trim();
+    if (lower === 'epic') return WORK_ITEM_TYPES.EPIC;
+    if (lower === 'story') return WORK_ITEM_TYPES.STORY;
+    if (lower === 'subtask') return WORK_ITEM_TYPES.SUBTASK;
+    if (lower === 'bug') return WORK_ITEM_TYPES.BUG;
+    return WORK_ITEM_TYPES.TASK;
+  })();
+
+  const c = configs[normalizedKey] || configs[type] || configs[WORK_ITEM_TYPES.TASK];
   const Icon = c.icon;
   const isSm = size === 'sm';
 
@@ -100,58 +110,58 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
   > = {
     'Done': {
       label: 'Done',
-      bg: 'bg-emerald-500/15',
-      text: 'text-emerald-400',
-      border: 'border-emerald-500/30',
+      bg: 'bg-status-success-bg',
+      text: 'text-status-success-text',
+      border: 'border-status-success-border',
       icon: CheckCircle2,
     },
     'In Progress': {
       label: 'In Progress',
-      bg: 'bg-blue-500/15',
-      text: 'text-blue-400',
-      border: 'border-blue-500/30',
+      bg: 'bg-brand-subtle',
+      text: 'text-brand-text',
+      border: 'border-brand-border',
       icon: Clock,
     },
     'In Review': {
       label: 'In Review',
-      bg: 'bg-purple-500/15',
-      text: 'text-purple-300',
-      border: 'border-purple-500/30',
+      bg: 'bg-status-purple-bg',
+      text: 'text-status-purple-text',
+      border: 'border-status-purple-border',
       icon: Clock,
     },
     'Testing / QA': {
       label: 'Testing / QA',
-      bg: 'bg-cyan-500/15',
-      text: 'text-cyan-400',
-      border: 'border-cyan-500/30',
+      bg: 'bg-status-info-bg',
+      text: 'text-status-info-text',
+      border: 'border-status-info-border',
       icon: CheckCircle,
     },
     'Blocked': {
       label: 'Blocked',
-      bg: 'bg-rose-500/15',
-      text: 'text-rose-400',
-      border: 'border-rose-500/30',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger-border',
       icon: Ban,
     },
     'On Hold': {
       label: 'On Hold',
-      bg: 'bg-amber-500/15',
-      text: 'text-amber-400',
-      border: 'border-amber-500/30',
+      bg: 'bg-status-warning-bg',
+      text: 'text-status-warning-text',
+      border: 'border-status-warning-border',
       icon: PauseCircle,
     },
     'Backlog': {
       label: 'Backlog',
-      bg: 'bg-zinc-800/60',
-      text: 'text-zinc-400',
-      border: 'border-zinc-700/40',
+      bg: 'bg-surface-elevated',
+      text: 'text-text-muted',
+      border: 'border-border',
       icon: Circle,
     },
     'To Do': {
       label: 'Backlog',
-      bg: 'bg-zinc-800/60',
-      text: 'text-zinc-400',
-      border: 'border-zinc-700/40',
+      bg: 'bg-surface-elevated',
+      text: 'text-text-muted',
+      border: 'border-border',
       icon: Circle,
     },
   };
@@ -185,30 +195,30 @@ export function PriorityBadge({ priority, size = 'sm' }: PriorityBadgeProps) {
   > = {
     'High': {
       label: 'High',
-      bg: 'bg-rose-500/15',
-      text: 'text-rose-400',
-      border: 'border-rose-500/30',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger-border',
       icon: AlertTriangle,
     },
     'Medium': {
       label: 'Medium',
-      bg: 'bg-amber-500/15',
-      text: 'text-amber-400',
-      border: 'border-amber-500/30',
+      bg: 'bg-status-warning-bg',
+      text: 'text-status-warning-text',
+      border: 'border-status-warning-border',
       icon: Clock,
     },
     'Low': {
       label: 'Low',
-      bg: 'bg-zinc-800/80',
-      text: 'text-zinc-400',
-      border: 'border-zinc-700/50',
+      bg: 'bg-surface-elevated',
+      text: 'text-text-secondary',
+      border: 'border-border',
       icon: Circle,
     },
     'No priority': {
       label: 'No priority',
-      bg: 'bg-zinc-800/40',
-      text: 'text-zinc-400',
-      border: 'border-zinc-700/40',
+      bg: 'bg-surface',
+      text: 'text-text-muted',
+      border: 'border-border',
       icon: Minus,
     },
   };
@@ -241,7 +251,7 @@ export function SlaBadge({ slaInfo }: SlaBadgeProps) {
 
   if (slaInfo.isEscalated) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border bg-rose-500/20 text-rose-300 border-rose-500/40">
+      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border bg-status-danger-bg text-status-danger-text border-status-danger-border">
         <ShieldAlert size={12} />
         Escalated
       </span>
@@ -250,7 +260,7 @@ export function SlaBadge({ slaInfo }: SlaBadgeProps) {
 
   if (slaInfo.isBreached) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border bg-rose-500/15 text-rose-400 border-rose-500/30">
+      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border bg-status-danger-bg text-status-danger-text border-status-danger-border">
         <AlertTriangle size={11} />
         SLA Breached
       </span>
@@ -259,7 +269,7 @@ export function SlaBadge({ slaInfo }: SlaBadgeProps) {
 
   if (slaInfo.isApproaching) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border bg-amber-500/15 text-amber-300 border-amber-500/30">
+      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border bg-status-warning-bg text-status-warning-text border-status-warning-border">
         <Clock size={11} />
         SLA Risk
       </span>

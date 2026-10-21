@@ -111,6 +111,9 @@ const updateWorkItemSchema = joi_1.default.object({
     status: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemStatus)).optional(),
     dueDate: joi_1.default.date().iso().allow(null).optional(),
     parentWorkItemId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
+    assignees: joi_1.default.array().items(assigneeSchema).unique("userId").allow(null).optional(),
+    assigneeId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
+    assigneeIds: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
 }).min(1).unknown(false);
 const validateUpdateWorkItem = (req, _res, next) => {
     const { error, value } = updateWorkItemSchema.validate(req.body, {

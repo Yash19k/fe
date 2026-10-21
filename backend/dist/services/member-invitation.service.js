@@ -16,6 +16,9 @@ const INVITATION_EXPIRY_HOURS = 24;
 function hashToken(token) {
     return (0, crypto_1.createHash)("sha256").update(token).digest("hex");
 }
+function generateTemporaryPassword() {
+    return (0, crypto_1.randomInt)(10000000, 100000000).toString();
+}
 async function inviteOrganizationMembers(organizationId, members) {
     const normalizedMembers = members.map((member) => ({
         email: member.email.trim().toLowerCase(),
@@ -42,17 +45,16 @@ async function inviteOrganizationMembers(organizationId, members) {
             .map((user) => user.email)
             .join(", ")}`);
     }
-    const now = Date.now();
-    const invitations = normalizedMembers.map((member) => {
-        const token = (0, crypto_1.randomBytes)(32).toString("hex");
+    const invitations = await Promise.all(normalizedMembers.map(async (member) => {
+        const temporaryPassword = generateTemporaryPassword();
+        const passwordHash = await bcrypt_1.default.hash(temporaryPassword, 12);
         return {
             ...member,
-            token,
-            tokenHash: hashToken(token),
-            expiresAt: new Date(now + INVITATION_EXPIRY_HOURS * 60 * 60 * 1000),
+            temporaryPassword,
+            passwordHash,
         };
-    });
-    // Create all pending users atomically.
+    }));
+    // Create user records atomically before sending emails.
     await data_source_1.AppDataSource.transaction(async (manager) => {
         const repository = manager.getRepository(user_entity_1.User);
         for (const invitation of invitations) {
@@ -61,21 +63,22 @@ async function inviteOrganizationMembers(organizationId, members) {
                 fullName: null,
                 organizationId,
                 role: invitation.role,
-                status: user_entity_2.UserStatus.PENDING,
-                inviteTokenHash: invitation.tokenHash,
-                inviteExpiresAt: invitation.expiresAt,
+                passwordHash: invitation.passwordHash,
+                status: user_entity_2.UserStatus.ACTIVE,
+                inviteTokenHash: null,
+                inviteExpiresAt: null,
             });
             await repository.save(user);
         }
     });
-    // The database transaction is complete before sending emails.
+    // Send each user their temporary login password.
     const results = await Promise.all(invitations.map(async (invitation) => {
         try {
             await (0, mail_service_1.sendInvitationEmail)({
                 email: invitation.email,
                 organizationName: organization.name,
                 role: invitation.role,
-                token: invitation.token,
+                temporaryPassword: invitation.temporaryPassword,
             });
             return {
                 email: invitation.email,
@@ -84,17 +87,17 @@ async function inviteOrganizationMembers(organizationId, members) {
             };
         }
         catch {
-            // Do not expose SMTP credentials or internal errors.
+            // Never expose the temporary password in error responses or logs.
             return {
                 email: invitation.email,
                 role: invitation.role,
                 emailSent: false,
-                message: "Invitation saved, but email delivery failed",
+                message: "User created, but the login email could not be submitted",
             };
         }
     }));
     return {
-        message: "Invitation processing completed",
+        message: "Member creation completed",
         invitations: results,
     };
 }
@@ -114,8 +117,6 @@ async function acceptOrganizationInvitation(token, fullName, password) {
         throw new Error("Invitation has already been accepted or is invalid");
     }
     const passwordHash = await bcrypt_1.default.hash(password, 12);
-    // Conditional update ensures that a token cannot be accepted twice
-    // by concurrent requests.
     const result = await userRepo
         .createQueryBuilder()
         .update(user_entity_1.User)

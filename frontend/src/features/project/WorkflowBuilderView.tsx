@@ -6,13 +6,18 @@ import { Plus, Trash2, ArrowRight, Shield, GripVertical, Info, RotateCcw, Save }
 import type { WorkflowStatus, Workflow, Task } from '../../types';
 import { saveProjectWorkflowApi } from '../../services/api';
 
-export function WorkflowBuilderView() {
+export interface WorkflowBuilderViewProps {
+  isEmbedded?: boolean;
+}
+
+export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewProps) {
   const { currentProject, currentWorkflow, setWorkflows, projectTasks, showToast, currentUser } = useApp();
 
   // Local draft state for workflow customization
   const [draftStatuses, setDraftStatuses] = useState<WorkflowStatus[]>(() =>
     currentWorkflow?.statuses ? JSON.parse(JSON.stringify(currentWorkflow.statuses)) : []
   );
+  const [isSaving, setIsSaving] = useState(false);
   const [newStatusName, setNewStatusName] = useState('');
   const [newStatusColor, setNewStatusColor] = useState('#6366F1');
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
@@ -230,19 +235,45 @@ export function WorkflowBuilderView() {
     );
   }
 
-  function handleSaveWorkflow() {
-    if (!currentWorkflow) return;
-    setWorkflows((prev: Workflow[]) =>
-      prev.map((w: Workflow) =>
-        w.id === currentWorkflow.id ? { ...w, statuses: draftStatuses } : w
-      )
-    );
-    if (currentProject?.id && currentProject.id.includes('-')) {
-      saveProjectWorkflowApi(currentProject.id, { stages: draftStatuses }).catch((err) => {
-        console.warn('TaskFlow: Failed to persist workflow to backend:', err.message);
-      });
+  async function handleSaveWorkflow() {
+    if (!currentWorkflow || !currentProject) return;
+
+    if (currentUser.role === 'Teammate') {
+      showToast('You do not have permission to modify project workflows', 'error');
+      return;
     }
-    showToast('Workflow draft saved successfully', 'success');
+
+    setIsSaving(true);
+    const workflowName =
+      currentWorkflow.name && !currentWorkflow.name.endsWith(' Workflow') && !/^[0-9a-fA-F-]{20,}/.test(currentWorkflow.name)
+        ? currentWorkflow.name
+        : 'TaskFlow Pro — Final Statuses';
+
+    try {
+      if (currentProject.id && currentProject.id.includes('-')) {
+        const res = await saveProjectWorkflowApi(currentProject.id, {
+          name: workflowName,
+          stages: draftStatuses,
+        });
+        if (!res?.success) {
+          throw new Error('Failed to save workflow configuration.');
+        }
+      }
+
+      setWorkflows((prev: Workflow[]) =>
+        prev.map((w: Workflow) =>
+          w.id === currentWorkflow.id || w.projectId === currentProject.id
+            ? { ...w, name: workflowName, statuses: draftStatuses }
+            : w
+        )
+      );
+      showToast('Workflow configuration saved and published successfully', 'success');
+    } catch (err: any) {
+      console.error('TaskFlow: Failed to persist workflow to backend:', err);
+      showToast(err?.message || 'Failed to persist workflow to backend. Please try again.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleCancelChanges() {
@@ -253,7 +284,7 @@ export function WorkflowBuilderView() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className={isEmbedded ? 'space-y-6' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6'}>
       {/* Unsaved Changes Banner */}
       {isDirty && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -264,11 +295,11 @@ export function WorkflowBuilderView() {
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button variant="secondary" size="sm" icon={RotateCcw} onClick={handleCancelChanges}>
+            <Button variant="secondary" size="sm" icon={RotateCcw} onClick={handleCancelChanges} disabled={isSaving}>
               Cancel Changes
             </Button>
-            <Button variant="primary" size="sm" icon={Save} onClick={handleSaveWorkflow}>
-              Save Workflow
+            <Button variant="primary" size="sm" icon={Save} onClick={handleSaveWorkflow} disabled={isSaving}>
+              {isSaving ? 'Saving...' : 'Save Workflow'}
             </Button>
           </div>
         </div>
@@ -278,30 +309,31 @@ export function WorkflowBuilderView() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
         <div>
           <h2 className="text-lg font-bold text-text-primary tracking-tight">
-            Project Workflow & State Machine
+            Workflow Settings
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
             Configure lifecycle stages, transitions, and role restrictions with draft saving.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-text-muted bg-surface-elevated px-2.5 py-1 rounded border border-border">
-            Active: <strong className="text-text-primary">{currentWorkflow.name}</strong>
-          </span>
-          {isDirty && (
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-surface-elevated border border-border">
+            <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+              Active Workflow:
+            </span>
+            <span className="text-xs font-bold text-text-primary">
+              {currentWorkflow.name || 'TaskFlow Pro — Final Statuses'}
+            </span>
+          </div>
+          {isDirty ? (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
               Unsaved Draft
             </span>
+          ) : (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              Active
+            </span>
           )}
         </div>
-      </div>
-
-      {/* Backend Transparency Notice */}
-      <div className="p-3 rounded-lg bg-surface-elevated border border-border/70 text-xs text-text-muted flex items-center gap-2">
-        <Info size={14} className="text-brand-primary shrink-0" />
-        <span>
-          <strong>Backend Notice:</strong> Custom workflow mutations are tracked within the project state. The backend Express server currently exposes user registration only; workflow transitions are managed reliably in the frontend domain engine.
-        </span>
       </div>
 
       {/* Visual Status Flow Sequence */}

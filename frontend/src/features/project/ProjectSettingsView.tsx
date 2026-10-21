@@ -18,16 +18,283 @@ import {
   Check,
   Tag,
   History,
-  Pencil,
   Plus,
   Search,
   Crown,
   Activity,
   AlertCircle,
+  Workflow,
+  Network,
 } from 'lucide-react';
 import type { User, ProjectVisibility, Role, Label, AuditLogEntry, Task } from '../../types';
+import { WorkflowBuilderView } from './WorkflowBuilderView';
+import { DependenciesView } from './DependenciesView';
 
-export type SettingsSection = 'general' | 'members' | 'labels' | 'activity';
+export type SettingsSection = 'general' | 'members' | 'workflow' | 'dependencies' | 'labels' | 'activity' | 'danger';
+
+// Audit Trail Helper Functions
+export function getAuditActor(log: AuditLogEntry, users: User[]): { name: string; email?: string } {
+  const actorId = log.actorId || log.userId;
+  if (actorId) {
+    const user = users.find((u) => u.id === actorId);
+    if (user) {
+      const name = user.name || user.fullName || user.email;
+      if (name) return { name, email: user.email };
+    }
+  }
+  if (log.actorName && log.actorName !== 'User' && log.actorName.trim()) {
+    return { name: log.actorName.trim(), email: log.userEmail };
+  }
+  if (log.userName && log.userName !== 'User' && log.userName.trim()) {
+    return { name: log.userName.trim(), email: log.userEmail };
+  }
+  if (log.userEmail) {
+    return { name: log.userEmail, email: log.userEmail };
+  }
+  return { name: 'Unknown user' };
+}
+
+export function formatAuditAction(action?: string): { label: string; badgeClass: string } {
+  const norm = (action || '').toLowerCase().trim();
+  switch (norm) {
+    case 'status_changed':
+    case 'status_updated':
+      return {
+        label: 'Status changed',
+        badgeClass: 'text-cyan-700 bg-cyan-500/15 border-cyan-500/30 dark:text-cyan-400 dark:bg-cyan-500/10 dark:border-cyan-500/20',
+      };
+    case 'updated':
+    case 'task_updated':
+    case 'project_updated':
+      return {
+        label: 'Updated',
+        badgeClass: 'text-blue-700 bg-blue-500/15 border-blue-500/30 dark:text-blue-400 dark:bg-blue-500/10 dark:border-blue-500/20',
+      };
+    case 'undone':
+    case 'reverted':
+      return {
+        label: 'Change undone',
+        badgeClass: 'text-purple-700 bg-purple-500/15 border-purple-500/30 dark:text-purple-400 dark:bg-purple-500/10 dark:border-purple-500/20',
+      };
+    case 'created':
+    case 'task_created':
+    case 'project_created':
+      return {
+        label: 'Created',
+        badgeClass: 'text-emerald-700 bg-emerald-500/15 border-emerald-500/30 dark:text-emerald-400 dark:bg-emerald-500/10 dark:border-emerald-500/20',
+      };
+    case 'deleted':
+    case 'task_deleted':
+    case 'project_deleted':
+      return {
+        label: 'Deleted',
+        badgeClass: 'text-rose-700 bg-rose-500/15 border-rose-500/30 dark:text-rose-400 dark:bg-rose-500/10 dark:border-rose-500/20',
+      };
+    case 'member_added':
+      return {
+        label: 'Member added',
+        badgeClass: 'text-amber-800 bg-amber-500/15 border-amber-500/30 dark:text-amber-400 dark:bg-amber-500/10 dark:border-amber-500/20',
+      };
+    case 'member_removed':
+      return {
+        label: 'Member removed',
+        badgeClass: 'text-zinc-700 bg-zinc-500/15 border-zinc-500/30 dark:text-zinc-400 dark:bg-zinc-500/10 dark:border-zinc-500/20',
+      };
+    case 'role_changed':
+      return {
+        label: 'Role changed',
+        badgeClass: 'text-indigo-700 bg-indigo-500/15 border-indigo-500/30 dark:text-indigo-400 dark:bg-indigo-500/10 dark:border-indigo-500/20',
+      };
+    case 'rescheduled':
+      return {
+        label: 'Rescheduled',
+        badgeClass: 'text-sky-700 bg-sky-500/15 border-sky-500/30 dark:text-sky-400 dark:bg-sky-500/10 dark:border-sky-500/20',
+      };
+    case 'dependency_added':
+      return {
+        label: 'Dependency linked',
+        badgeClass: 'text-teal-700 bg-teal-500/15 border-teal-500/30 dark:text-teal-400 dark:bg-teal-500/10 dark:border-teal-500/20',
+      };
+    case 'dependency_removed':
+      return {
+        label: 'Dependency removed',
+        badgeClass: 'text-zinc-700 bg-zinc-500/15 border-zinc-500/30 dark:text-zinc-400 dark:bg-zinc-500/10 dark:border-zinc-500/20',
+      };
+    case 'comment_added':
+      return {
+        label: 'Comment posted',
+        badgeClass: 'text-violet-700 bg-violet-500/15 border-violet-500/30 dark:text-violet-400 dark:bg-violet-500/10 dark:border-violet-500/20',
+      };
+    case 'escalated':
+      return {
+        label: 'Escalated',
+        badgeClass: 'text-amber-800 bg-amber-500/15 border-amber-500/30 dark:text-amber-400 dark:bg-amber-500/10 dark:border-amber-500/20',
+      };
+    default: {
+      const cleaned = norm
+        ? norm
+            .replace(/[_-]+/g, ' ')
+            .replace(/\b\w/g, (c) => c.toUpperCase())
+        : 'Activity';
+      return {
+        label: cleaned,
+        badgeClass: 'text-text-secondary bg-surface-elevated border-border',
+      };
+    }
+  }
+}
+
+export function formatAuditDescription(
+  log: AuditLogEntry,
+  tasks: Task[],
+  projectName?: string
+): string {
+  const normAction = (log.action || '').toLowerCase().trim();
+  const lowerType = (log.entityType || '').toLowerCase();
+
+  let taskTitle: string | null = null;
+  if (lowerType === 'task' || lowerType === 'workitem') {
+    const task = tasks.find((t) => t.id === log.entityId);
+    taskTitle =
+      task?.title ||
+      log.entityTitle ||
+      log.newValue?.title ||
+      log.previousValue?.title ||
+      log.newState?.title ||
+      log.previousState?.title ||
+      null;
+  }
+
+  // Handle Undone
+  if (normAction === 'undone' || normAction === 'reverted') {
+    if (taskTitle) {
+      return `Undid a previous change to "${taskTitle}".`;
+    }
+    if (log.description && !log.description.startsWith('aud-') && log.description.toLowerCase() !== 'undone') {
+      return log.description.replace(/^Reverted:\s*/i, 'Undid change: ');
+    }
+    return 'Undid a previous change.';
+  }
+
+  // Handle Status Changed
+  if (normAction === 'status_changed' || normAction === 'status_updated') {
+    const fromStatus =
+      log.previousValue?.status ||
+      log.previousState?.status ||
+      log.details?.previousValue?.status;
+    const toStatus =
+      log.newValue?.status ||
+      log.newState?.status ||
+      log.details?.newValue?.status;
+
+    if (taskTitle) {
+      if (fromStatus && toStatus && fromStatus !== toStatus) {
+        return `Changed the status of "${taskTitle}" from "${fromStatus}" to "${toStatus}".`;
+      }
+      if (toStatus) {
+        return `Changed the status of "${taskTitle}" to "${toStatus}".`;
+      }
+      return `Changed the status of "${taskTitle}".`;
+    }
+    if (fromStatus && toStatus && fromStatus !== toStatus) {
+      return `Changed status from "${fromStatus}" to "${toStatus}".`;
+    }
+  }
+
+  // Handle Updated
+  if (normAction === 'updated') {
+    if (taskTitle) {
+      return `Updated "${taskTitle}".`;
+    }
+    if (lowerType === 'project') {
+      return `Updated project "${projectName || log.entityTitle || 'settings'}".`;
+    }
+  }
+
+  // Handle Created
+  if (normAction === 'created') {
+    if (taskTitle) {
+      return `Created "${taskTitle}".`;
+    }
+  }
+
+  // Handle Deleted
+  if (normAction === 'deleted') {
+    if (taskTitle) {
+      return `Deleted "${taskTitle}".`;
+    }
+  }
+
+  // Replace raw task ID in description with title if applicable
+  if (log.description) {
+    let desc = log.description;
+    if (taskTitle && log.entityId && desc.includes(log.entityId)) {
+      desc = desc.replace(log.entityId, `"${taskTitle}"`);
+    }
+    if (desc.toUpperCase().startsWith('STATUS_CHANGED') || desc.toUpperCase().startsWith('UPDATED') || desc.toUpperCase().startsWith('UNDONE')) {
+      const parts = desc.split(' ');
+      if (parts.length <= 2 && taskTitle) {
+        return `${formatAuditAction(log.action).label} "${taskTitle}".`;
+      }
+    }
+    return desc;
+  }
+
+  if (taskTitle) {
+    return `${formatAuditAction(log.action).label} "${taskTitle}".`;
+  }
+
+  return `${formatAuditAction(log.action).label} ${log.entityType || 'item'}.`;
+}
+
+export function getAuditEntityInfo(
+  log: AuditLogEntry,
+  tasks: Task[],
+  projectName?: string
+): { label: string; isDeleted?: boolean } {
+  const lowerType = (log.entityType || '').toLowerCase();
+  if (lowerType === 'task' || lowerType === 'workitem') {
+    const task = tasks.find((t) => t.id === log.entityId);
+    if (task && task.title) {
+      return { label: `Task: ${task.title}` };
+    }
+    if (log.entityTitle) {
+      return { label: `Task: ${log.entityTitle}` };
+    }
+    const historicalTitle =
+      log.newValue?.title ||
+      log.previousValue?.title ||
+      log.newState?.title ||
+      log.previousState?.title ||
+      log.details?.newValue?.title ||
+      log.details?.previousValue?.title;
+    if (historicalTitle) {
+      return { label: `Task: ${historicalTitle}` };
+    }
+    return { label: 'Task: Deleted task', isDeleted: true };
+  }
+
+  if (lowerType === 'project') {
+    return { label: `Project: ${projectName || log.entityTitle || 'Project'}` };
+  }
+
+  const typeName =
+    log.entityType ? log.entityType.charAt(0).toUpperCase() + log.entityType.slice(1) : 'Item';
+  return { label: `${typeName}: ${log.entityTitle || log.entityId}` };
+}
+
+export function formatAuditTimestamp(rawTimestamp?: string | Date | null): string {
+  if (!rawTimestamp) return 'Date unavailable';
+  const d = new Date(rawTimestamp);
+  if (isNaN(d.getTime())) return 'Date unavailable';
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 interface ProjectSettingsViewProps {
   initialSection?: SettingsSection;
@@ -38,6 +305,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     currentProject,
     currentUser,
     allUsers,
+    currentWorkflow,
     projects,
     updateProject,
     updateProjectKey,
@@ -57,14 +325,14 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   // Active section inside Settings
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
     if (initialSection) return initialSection;
-    if (typeof window !== 'undefined' && (window.location.hash.includes('#members') || window.location.hash.endsWith('/members'))) {
-      return 'members';
-    }
-    if (typeof window !== 'undefined' && (window.location.hash.includes('#activity') || window.location.hash.endsWith('/activity'))) {
-      return 'activity';
-    }
-    if (typeof window !== 'undefined' && window.location.hash.includes('#labels')) {
-      return 'labels';
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash;
+      if (hash.includes('#workflow') || hash.endsWith('/workflow')) return 'workflow';
+      if (hash.includes('#dependencies') || hash.endsWith('/dependencies')) return 'dependencies';
+      if (hash.includes('#members') || hash.endsWith('/members')) return 'members';
+      if (hash.includes('#activity') || hash.endsWith('/activity')) return 'activity';
+      if (hash.includes('#labels') || hash.endsWith('/labels')) return 'labels';
+      if (hash.includes('#danger') || hash.includes('#security')) return 'danger';
     }
     return 'general';
   });
@@ -80,14 +348,24 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   useEffect(() => {
     function handleHash() {
       const hash = window.location.hash;
-      if (hash.includes('#members') || hash.endsWith('/members')) setActiveSection('members');
+      if (hash.includes('#workflow') || hash.endsWith('/workflow')) setActiveSection('workflow');
+      else if (hash.includes('#dependencies') || hash.endsWith('/dependencies')) setActiveSection('dependencies');
+      else if (hash.includes('#members') || hash.endsWith('/members')) setActiveSection('members');
       else if (hash.includes('#activity') || hash.endsWith('/activity')) setActiveSection('activity');
-      else if (hash.includes('#labels')) setActiveSection('labels');
-      else if (hash.includes('#general')) setActiveSection('general');
+      else if (hash.includes('#labels') || hash.endsWith('/labels')) setActiveSection('labels');
+      else if (hash.includes('#danger') || hash.includes('#security')) setActiveSection('danger');
+      else if (hash.includes('#general') || hash.endsWith('/general')) setActiveSection('general');
     }
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
+
+  function handleSelectSection(sec: SettingsSection) {
+    setActiveSection(sec);
+    if (currentProject) {
+      window.location.hash = `/project/${currentProject.id}/settings#${sec}`;
+    }
+  }
 
   // ==========================================
   // GENERAL SETTINGS DRAFT STATE (Feature 12)
@@ -114,13 +392,8 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [isSavingGeneral, setIsSavingGeneral] = useState(false);
 
-  // Key editing state
+  // Key copy state
   const [copiedKey, setCopiedKey] = useState(false);
-  const [isEditingKey, setIsEditingKey] = useState(false);
-  const [projectKeyInput, setProjectKeyInput] = useState(
-    currentProject?.projectKey || currentProject?.id.toUpperCase() || ''
-  );
-  const [keyError, setKeyError] = useState('');
 
   // Delete Project Modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -183,19 +456,24 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       const matchesScope =
         log.projectId === currentProject.id ||
         (log.entityType === 'project' && log.entityId === currentProject.id) ||
-        (log.entityType === 'task' && projectTaskIds.has(log.entityId));
+        (log.entityType === 'task' && (projectTaskIds.has(log.entityId) || log.projectId === currentProject.id));
 
       if (!matchesScope) return false;
       if (!auditFilter.trim()) return true;
 
       const q = auditFilter.toLowerCase();
+      const actor = getAuditActor(log, allUsers);
+      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+
       return (
         log.action.toLowerCase().includes(q) ||
         log.description.toLowerCase().includes(q) ||
-        log.entityType.toLowerCase().includes(q)
+        log.entityType.toLowerCase().includes(q) ||
+        actor.name.toLowerCase().includes(q) ||
+        entity.label.toLowerCase().includes(q)
       );
     });
-  }, [currentProject, projectTasks, auditLog, auditFilter]);
+  }, [currentProject, projectTasks, auditLog, auditFilter, allUsers]);
 
   if (!currentProject) return null;
 
@@ -251,32 +529,6 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     setCopiedKey(true);
     showToast('Project Key copied to clipboard', 'info');
     setTimeout(() => setCopiedKey(false), 2000);
-  }
-
-  function handleStartEditKey() {
-    setProjectKeyInput(currentProject?.projectKey || currentProject?.id.toUpperCase() || '');
-    setKeyError('');
-    setIsEditingKey(true);
-  }
-
-  function handleSaveKey(e: React.FormEvent) {
-    e.preventDefault();
-    if (!currentProject || !canEdit) return;
-
-    const val = projectKeyInput.trim();
-    const validation = validateProjectId(val, projects, currentProject.id);
-    if (!validation.isValid) {
-      setKeyError(validation.error || 'Invalid project identifier');
-      return;
-    }
-
-    const res = updateProjectKey(currentProject.id, val);
-    if (res.success) {
-      setIsEditingKey(false);
-      setKeyError('');
-    } else if (res.error) {
-      setKeyError(res.error);
-    }
   }
 
   function handleConfirmDelete(e?: React.FormEvent) {
@@ -356,9 +608,9 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Header with Project Badge */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Settings Page Header */}
+      <div className="border-b border-border pb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-xs shrink-0"
@@ -371,71 +623,154 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <h1 className="text-xl font-bold text-text-primary tracking-tight">
                 Project Settings
               </h1>
-              <span className="font-mono text-xs px-2 py-0.5 rounded bg-surface-elevated border border-border text-text-secondary font-semibold">
-                {currentProject.name}
-              </span>
             </div>
             <p className="text-xs text-text-muted mt-0.5">
-              Manage project metadata, team roles, labels, and audit trails in one place.
+              Manage project metadata, access controls, lifecycle workflows, and dependencies.
             </p>
           </div>
         </div>
-
-        {/* Section Navigation Tabs */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border text-xs shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveSection('general')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeSection === 'general'
-                ? 'bg-surface text-text-primary shadow-xs font-semibold'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-          >
-            <Settings size={13} />
-            <span>General</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('members')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeSection === 'members'
-                ? 'bg-surface text-text-primary shadow-xs font-semibold'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-          >
-            <Users size={13} />
-            <span>Members ({projectMembers.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('labels')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeSection === 'labels'
-                ? 'bg-surface text-text-primary shadow-xs font-semibold'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-          >
-            <Tag size={13} />
-            <span>Labels ({projectLabels.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('activity')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeSection === 'activity'
-                ? 'bg-surface text-text-primary shadow-xs font-semibold'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-          >
-            <History size={13} />
-            <span>Activity & Audit</span>
-          </button>
-        </div>
       </div>
+
+      {/* Main Settings Layout: Secondary Sidebar on Left, Content on Right */}
+      <div className="flex flex-col md:flex-row gap-6 items-start">
+        {/* Left Secondary Settings Sidebar */}
+        <aside className="w-full md:w-60 shrink-0">
+          <nav className="p-2.5 rounded-xl bg-surface border border-border space-y-4">
+            {/* Group 1: GENERAL */}
+            <div className="space-y-1">
+              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                General
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSection('general')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'general'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <Settings size={14} className={activeSection === 'general' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>General</span>
+              </button>
+            </div>
+
+            {/* Group 2: ACCESS AND TEAM */}
+            <div className="space-y-1">
+              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                Access and Team
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSection('members')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'members'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Users size={14} className={activeSection === 'members' ? 'text-brand-primary' : 'text-text-muted'} />
+                  <span>Members</span>
+                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
+                  {projectMembers.length}
+                </span>
+              </button>
+            </div>
+
+            {/* Group 3: PROJECT CONFIGURATION */}
+            <div className="space-y-1">
+              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                Project Configuration
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSection('workflow')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'workflow'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <Workflow size={14} className={activeSection === 'workflow' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Workflow & Statuses</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectSection('dependencies')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'dependencies'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <Network size={14} className={activeSection === 'dependencies' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Dependencies</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectSection('labels')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'labels'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Tag size={14} className={activeSection === 'labels' ? 'text-brand-primary' : 'text-text-muted'} />
+                  <span>Labels</span>
+                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
+                  {projectLabels.length}
+                </span>
+              </button>
+            </div>
+
+            {/* Group 4: ACTIVITY */}
+            <div className="space-y-1">
+              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                Activity
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSection('activity')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'activity'
+                    ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                <History size={14} className={activeSection === 'activity' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Activity & Audit</span>
+              </button>
+            </div>
+
+            {/* Group 5: SECURITY */}
+            <div className="space-y-1">
+              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                Security
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSection('danger')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeSection === 'danger'
+                    ? 'bg-rose-500/10 border border-rose-500/30 text-rose-300 font-semibold shadow-xs'
+                    : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/5 border border-transparent'
+                }`}
+              >
+                <ShieldAlert size={14} className={activeSection === 'danger' ? 'text-rose-400' : 'text-rose-400/70'} />
+                <span>Security & Danger Zone</span>
+              </button>
+            </div>
+          </nav>
+        </aside>
+
+        {/* Right Main Settings Content Area */}
+        <div className="flex-1 min-w-0 w-full space-y-6">
 
       {/* ==================================================== */}
       {/* 1. GENERAL SETTINGS SECTION                          */}
@@ -514,62 +849,20 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                   <label className="block text-xs font-medium text-text-secondary mb-1">
                     Project Key / Slug
                   </label>
-                  {isEditingKey ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={projectKeyInput}
-                        onChange={(e) => {
-                          const formatted = normalizeProjectId(e.target.value);
-                          setProjectKeyInput(formatted);
-                          if (keyError) setKeyError('');
-                        }}
-                        placeholder="e.g. ALPHA"
-                        className="font-mono text-xs uppercase px-2.5 py-1.5 rounded-lg bg-surface-elevated border border-border text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary flex-1"
-                        autoFocus
-                      />
-                      <Button variant="primary" size="sm" type="button" onClick={handleSaveKey}>
-                        Save Key
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => setIsEditingKey(false)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between h-9 px-3 rounded-lg bg-surface-elevated border border-border">
-                      <span className="font-mono text-xs font-semibold text-text-primary">
-                        {currentProject.projectKey || currentProject.id.toUpperCase()}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        {canEdit && (
-                          <button
-                            type="button"
-                            onClick={handleStartEditKey}
-                            className="p-1 rounded hover:bg-surface text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                            title="Edit Project Key"
-                            aria-label="Edit Project Key"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={handleCopyKey}
-                          className="p-1 rounded hover:bg-surface text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                          title="Copy Key"
-                          aria-label="Copy Key"
-                        >
-                          {copiedKey ? <Check size={14} className="text-emerald-400" /> : <Copy size={13} />}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {keyError && <p className="text-[11px] text-rose-400 mt-1">{keyError}</p>}
+                  <div className="flex items-center justify-between h-9 px-3 rounded-lg bg-surface-elevated border border-border">
+                    <span className="font-mono text-xs font-semibold text-text-primary">
+                      {currentProject.projectKey || currentProject.id.toUpperCase()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyKey}
+                      className="p-1 rounded hover:bg-surface text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                      title="Copy Key"
+                      aria-label="Copy Key"
+                    >
+                      {copiedKey ? <Check size={14} className="text-emerald-400" /> : <Copy size={13} />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -656,43 +949,6 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                 </div>
               )}
             </form>
-          </section>
-
-          {/* Danger Zone: Delete Project with typed confirmation */}
-          <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
-            <div className="border-b border-rose-500/20 pb-3">
-              <div className="flex items-center gap-2 text-rose-400">
-                <ShieldAlert size={18} />
-                <h2 className="text-sm font-bold tracking-tight text-rose-300">
-                  Danger Zone
-                </h2>
-              </div>
-              <p className="text-xs text-rose-300/80 mt-1">
-                Destructive actions that cannot be undone. Please proceed with caution.
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-              <div className="space-y-1">
-                <h3 className="text-xs font-semibold text-rose-200">
-                  Delete Project
-                </h3>
-                <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
-                  Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
-                  sprints, dependencies, sections, and attachments.
-                </p>
-              </div>
-              <Button
-                variant="danger"
-                size="sm"
-                icon={Trash2}
-                disabled={!canDelete}
-                onClick={() => setDeleteModalOpen(true)}
-                className="shrink-0"
-              >
-                Delete Project
-              </Button>
-            </div>
           </section>
         </div>
       )}
@@ -896,7 +1152,25 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       )}
 
       {/* ==================================================== */}
-      {/* 3. LABELS MANAGEMENT SECTION (Feature 8)             */}
+      {/* 3. WORKFLOW & STATUSES SECTION (Req 4 & Req 5)       */}
+      {/* ==================================================== */}
+      {activeSection === 'workflow' && (
+        <div className="bg-surface rounded-xl border border-border p-5 sm:p-6 space-y-6">
+          <WorkflowBuilderView isEmbedded={true} key={currentWorkflow?.id} />
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 4. DEPENDENCIES SECTION (Req 4 & Req 5)              */}
+      {/* ==================================================== */}
+      {activeSection === 'dependencies' && (
+        <div className="bg-surface rounded-xl border border-border p-5 sm:p-6 space-y-6">
+          <DependenciesView isEmbedded={true} />
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 5. LABELS MANAGEMENT SECTION (Feature 8)             */}
       {/* ==================================================== */}
       {activeSection === 'labels' && (
         <div className="space-y-6">
@@ -1058,8 +1332,9 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
           </div>
 
           <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="hidden md:grid md:grid-cols-[130px_110px_1fr_160px_90px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            <div className="hidden md:grid md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
               <span>Action</span>
+              <span>Performed By</span>
               <span>Entity</span>
               <span>Description</span>
               <span>Timestamp</span>
@@ -1074,49 +1349,141 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                   <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
                 </div>
               ) : (
-                projectAuditLog.map((log: AuditLogEntry) => (
-                  <div
-                    key={log.id}
-                    className="grid grid-cols-1 md:grid-cols-[130px_110px_1fr_160px_90px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
-                  >
-                    <div>
-                      <span className="font-mono text-[10px] uppercase text-brand-primary bg-brand-primary/10 px-2 py-0.5 rounded border border-brand-primary/20">
-                        {log.action}
-                      </span>
-                    </div>
+                projectAuditLog.map((log: AuditLogEntry) => {
+                  const actor = getAuditActor(log, allUsers);
+                  const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+                  const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
+                  const actionInfo = formatAuditAction(log.action);
+                  const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
 
-                    <div className="text-text-muted capitalize">
-                      {log.entityType} ({log.entityId})
-                    </div>
+                  return (
+                    <div
+                      key={log.id}
+                      className="grid grid-cols-1 md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
+                    >
+                      {/* Action */}
+                      <div>
+                        <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
+                          {actionInfo.label}
+                        </span>
+                      </div>
 
-                    <div className="font-medium text-text-primary truncate">
-                      {log.description}
-                    </div>
+                      {/* Performed By */}
+                      <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
+                        <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
+                          {initials}
+                        </div>
+                        <span className="font-medium text-text-primary truncate">
+                          {actor.name}
+                        </span>
+                      </div>
 
-                    <div className="text-[11px] text-text-muted font-mono">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </div>
+                      {/* Entity */}
+                      <div
+                        className={`truncate font-medium ${
+                          entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
+                        }`}
+                        title={entity.label}
+                      >
+                        {entity.label}
+                      </div>
 
-                    <div className="flex justify-end">
-                      {log.canUndo && currentUser.role !== 'Teammate' && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={RotateCcw}
-                          onClick={() => undoAuditEntry(log.id)}
-                          title="Undo mutation"
-                        >
-                          Undo
-                        </Button>
-                      )}
+                      {/* Description */}
+                      <div className="font-medium text-text-primary truncate" title={formattedDesc}>
+                        {formattedDesc}
+                      </div>
+
+                      {/* Timestamp */}
+                      <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
+                        {formatAuditTimestamp(log.timestamp)}
+                      </div>
+
+                      {/* Action */}
+                      <div className="flex justify-end items-center min-w-[100px]">
+                        {log.isUndone ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border">
+                            Change undone
+                          </span>
+                        ) : log.canUndo && currentUser.role !== 'Teammate' ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={RotateCcw}
+                            onClick={() => undoAuditEntry(log.id)}
+                            title="Undo mutation"
+                          >
+                            Undo
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>
         </div>
       )}
+
+      {/* ==================================================== */}
+      {/* 5. SECURITY & DANGER ZONE SECTION                    */}
+      {/* ==================================================== */}
+      {activeSection === 'danger' && (
+        <div className="space-y-6">
+          <div className="border-b border-border pb-3">
+            <h2 className="text-sm font-semibold text-text-primary">
+              Security &amp; Danger Zone
+            </h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              Destructive project-level operations and security-sensitive configuration.
+            </p>
+          </div>
+
+          <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
+            <div className="border-b border-rose-500/20 pb-3">
+              <div className="flex items-center gap-2 text-rose-400">
+                <ShieldAlert size={18} />
+                <h3 className="text-sm font-bold tracking-tight text-rose-300">
+                  Destructive Project Operations
+                </h3>
+              </div>
+              <p className="text-xs text-rose-300/80 mt-1 leading-relaxed">
+                Actions performed here are irreversible and have significant effects across your workspace. Please verify before proceeding.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+              <div className="space-y-1">
+                <h4 className="text-xs font-semibold text-rose-200">
+                  Delete Project
+                </h4>
+                <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
+                  Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
+                  sprints, dependencies, sections, labels, and associated data.
+                </p>
+                {!canDelete && (
+                  <p className="text-[11px] text-amber-300/90 font-mono mt-1">
+                    Only Project Admins have permission to delete this project.
+                  </p>
+                )}
+              </div>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={Trash2}
+                disabled={!canDelete}
+                onClick={() => setDeleteModalOpen(true)}
+                className="shrink-0"
+              >
+                Delete Project
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+
+        </div>
+      </div>
 
       {/* ==================================================== */}
       {/* ROLE CHANGE CONFIRMATION MODAL (Feature 6)           */}

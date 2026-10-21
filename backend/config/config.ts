@@ -28,12 +28,11 @@ export const config = {
   },
   accessTokenSecret,
   email: {
-    smtpHost: process.env.SMTP_HOST,
+    smtpHost: process.env.SMTP_HOST ?? (process.env as any)["SMTP HOST"] ?? "",
     smtpPort: Number(process.env.SMTP_PORT ?? 587),
-    smtpSecure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
-    smtpUser: process.env.SMTP_USER,
-    smtpPassword: process.env.SMTP_PASS,
-    smtpFrom: process.env.SMTP_FROM,
-    frontendUrl: process.env.FRONTEND_URL,
+    smtpSecure: process.env.SMTP_SECURE === "true" || Number(process.env.SMTP_PORT) === 465,
+    smtpUser: process.env.SMTP_USER ?? (process.env as any)["SMTP USER"] ?? "",
+    smtpPassword: process.env.SMTP_PASS ?? (process.env as any)["SMTP PASS"] ?? process.env.SMTP_PASSWORD ?? "",
+    smtpFrom: process.env.SMTP_FROM ?? (process.env as any)["SMTP FROM"] ?? "",
   },
 };

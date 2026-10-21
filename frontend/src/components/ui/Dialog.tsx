@@ -8,6 +8,7 @@ export interface DialogProps {
   description?: React.ReactNode;
   children: React.ReactNode;
   maxWidth?: string;
+  zIndex?: string;
 }
 
 export function Dialog({
@@ -17,6 +18,7 @@ export function Dialog({
   description,
   children,
   maxWidth = 'max-w-md',
+  zIndex,
 }: DialogProps) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -36,7 +38,8 @@ export function Dialog({
 
   return (
     <div
-      className="modal-backdrop"
+      className={`modal-backdrop ${zIndex || ''}`}
+      style={zIndex ? { zIndex: 70 } : undefined}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

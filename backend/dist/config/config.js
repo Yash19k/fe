@@ -27,4 +27,12 @@ exports.config = {
         logging: process.env.DB_LOGGING === "true",
     },
     accessTokenSecret,
+    email: {
+        smtpHost: process.env.SMTP_HOST ?? process.env["SMTP HOST"] ?? "",
+        smtpPort: Number(process.env.SMTP_PORT ?? 587),
+        smtpSecure: process.env.SMTP_SECURE === "true" || Number(process.env.SMTP_PORT) === 465,
+        smtpUser: process.env.SMTP_USER ?? process.env["SMTP USER"] ?? "",
+        smtpPassword: process.env.SMTP_PASS ?? process.env["SMTP PASS"] ?? process.env.SMTP_PASSWORD ?? "",
+        smtpFrom: process.env.SMTP_FROM ?? process.env["SMTP FROM"] ?? "",
+    },
 };

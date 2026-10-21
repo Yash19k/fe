@@ -22,11 +22,13 @@ router.get("/:projectId/labels", is_loggedin_1.isLoggedIn, (0, async_handler_1.a
 router.post("/:projectId/labels", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.createProjectLabel));
 router.delete("/:projectId/labels/:labelId", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.deleteProjectLabel));
 // Workflows
-router.get("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.getProjectWorkflow));
-router.post("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.saveProjectWorkflow));
-router.put("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.saveProjectWorkflow));
+router.get("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("project:read"), project_validations_1.validateProjectId, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.getProjectWorkflow));
+router.post("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("project:update"), project_validations_1.validateProjectId, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.saveProjectWorkflow));
+router.put("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, check_permissions_1.checkPermission)("project:update"), project_validations_1.validateProjectId, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.saveProjectWorkflow));
 // Audit Logs
 router.post("/audit-logs", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.createAuditLog));
 router.get("/:projectId/audit-logs", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.getProjectAuditLogs));
 router.post("/:projectId/audit-logs", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.createAuditLog));
+router.post("/:projectId/audit-logs/:logId/undo", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.undoAuditLog));
+router.post("/audit-logs/:logId/undo", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(feature_persistence_controller_1.undoAuditLog));
 exports.default = router;

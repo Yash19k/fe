@@ -45,6 +45,18 @@ export class AuditLog {
   @Column({ name: "new_state", type: "jsonb", nullable: true })
   newState: any;
 
+  @Column({ name: "is_undone", type: "boolean", default: false })
+  isUndone: boolean;
+
+  @Column({ name: "undone_at", type: "timestamptz", nullable: true })
+  undoneAt: Date | null;
+
+  @Column({ name: "undone_by_id", type: "uuid", nullable: true })
+  undoneById: string | null;
+
+  @Column({ name: "reversal_log_id", type: "uuid", nullable: true })
+  reversalLogId: string | null;
+
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 

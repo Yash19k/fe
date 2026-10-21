@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Menu, Shield, LogOut, RotateCcw } from 'lucide-react';
+import { Search, Bell, Menu, Shield, LogOut } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { NotificationPopover } from './NotificationPopover';
 import { Avatar } from '../ui/Avatar';
+import { ThemeToggle } from '../ui/ThemeToggle';
 
 export interface TopbarProps {
   onToggleSidebar?: () => void;
@@ -11,7 +12,7 @@ export interface TopbarProps {
 }
 
 export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, onOpenSearch }: TopbarProps) {
-  const { currentUser, notifications, resetDemoState, navigate } = useApp();
+  const { currentUser, notifications, navigate } = useApp();
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -69,6 +70,9 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
           <span className="text-[11px] font-medium">{currentUser.role}</span>
         </div>
 
+        {/* Theme Mode Toggle */}
+        <ThemeToggle />
+
         {/* Notifications Popover */}
         <div className="relative" ref={notifRef}>
           <button
@@ -115,16 +119,6 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
                   className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                 >
                   Workspace Settings
-                </button>
-                <button
-                  onClick={() => {
-                    resetDemoState();
-                    setProfileOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors flex items-center gap-1.5"
-                >
-                  <RotateCcw size={13} className="text-amber-400" />
-                  Reset Demo Data
                 </button>
               </div>
 

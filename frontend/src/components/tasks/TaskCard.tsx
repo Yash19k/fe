@@ -17,7 +17,7 @@ export interface TaskCardProps {
 export function TaskCard({ task, onDragStart }: TaskCardProps) {
   const { openTaskDrawer, changeTaskStatus, allUsers, currentWorkflow, tasks } = useApp();
 
-  const assignee = allUsers.find((u) => u.id === task.assigneeId);
+  const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
   const isBlocked = isTaskBlocked(task, tasks);
   const slaInfo = evaluateTaskSla(task);
   const dateInfo = getRelativeDateLabel(task.dueDate);
@@ -47,7 +47,7 @@ export function TaskCard({ task, onDragStart }: TaskCardProps) {
           <SlaBadge slaInfo={slaInfo} />
           {isBlocked && (
             <span
-              className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1"
+              className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-status-danger-bg text-status-danger-text border border-status-danger-border flex items-center gap-1"
               title="Blocked by incomplete predecessor"
             >
               <Network size={10} />

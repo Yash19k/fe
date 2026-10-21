@@ -4,7 +4,7 @@ import { CheckCircle2, Clock, AlertTriangle, ListTodo, Loader2 } from 'lucide-re
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { WorkItemTypeBadge } from '../../components/ui/Badge';
 import { WORK_ITEM_TYPES } from '../../domain/workItems';
-import { getProjectDashboardApi } from '../../services/api';
+import { getProjectDashboardApi, backendTypeToFrontend } from '../../services/api';
 import type { Task, WorkItemType } from '../../types';
 
 export function ProjectDashboardView() {
@@ -74,31 +74,33 @@ export function ProjectDashboardView() {
   }, [backendDashboard, projectTasks]);
 
   // Work-Item Type Breakdown
-  const tasksByType = useMemo(() => {
-    if (Array.isArray(backendDashboard?.workItemTypes) && backendDashboard.workItemTypes.length > 0) {
-      return backendDashboard.workItemTypes.map((item: any) => ({
-        type: item.type as WorkItemType,
-        count: item.count || 0,
-      }));
-    }
-
-    const counts: Record<string, number> = {
+  const tasksByType = useMemo<Array<{ type: WorkItemType; count: number }>>(() => {
+    const counts: Record<WorkItemType, number> = {
       [WORK_ITEM_TYPES.EPIC]: 0,
       [WORK_ITEM_TYPES.STORY]: 0,
       [WORK_ITEM_TYPES.TASK]: 0,
       [WORK_ITEM_TYPES.SUBTASK]: 0,
       [WORK_ITEM_TYPES.BUG]: 0,
     };
-    projectTasks.forEach((t: Task) => {
-      const type = t.type || WORK_ITEM_TYPES.TASK;
-      counts[type] = (counts[type] || 0) + 1;
-    });
+
+    if (projectTasks && projectTasks.length > 0) {
+      projectTasks.forEach((t: Task) => {
+        const canonical = backendTypeToFrontend(t.type);
+        counts[canonical] = (counts[canonical] || 0) + 1;
+      });
+    } else if (Array.isArray(backendDashboard?.workItemTypes) && backendDashboard.workItemTypes.length > 0) {
+      backendDashboard.workItemTypes.forEach((item: any) => {
+        const canonical = backendTypeToFrontend(item.type);
+        counts[canonical] = (counts[canonical] || 0) + (Number(item.count) || 0);
+      });
+    }
+
     return [
-      { type: WORK_ITEM_TYPES.EPIC as WorkItemType, count: counts[WORK_ITEM_TYPES.EPIC] || 0 },
-      { type: WORK_ITEM_TYPES.STORY as WorkItemType, count: counts[WORK_ITEM_TYPES.STORY] || 0 },
-      { type: WORK_ITEM_TYPES.TASK as WorkItemType, count: counts[WORK_ITEM_TYPES.TASK] || 0 },
-      { type: WORK_ITEM_TYPES.SUBTASK as WorkItemType, count: counts[WORK_ITEM_TYPES.SUBTASK] || 0 },
-      { type: WORK_ITEM_TYPES.BUG as WorkItemType, count: counts[WORK_ITEM_TYPES.BUG] || 0 },
+      { type: WORK_ITEM_TYPES.EPIC, count: counts[WORK_ITEM_TYPES.EPIC] },
+      { type: WORK_ITEM_TYPES.STORY, count: counts[WORK_ITEM_TYPES.STORY] },
+      { type: WORK_ITEM_TYPES.TASK, count: counts[WORK_ITEM_TYPES.TASK] },
+      { type: WORK_ITEM_TYPES.SUBTASK, count: counts[WORK_ITEM_TYPES.SUBTASK] },
+      { type: WORK_ITEM_TYPES.BUG, count: counts[WORK_ITEM_TYPES.BUG] },
     ];
   }, [backendDashboard, projectTasks]);
 

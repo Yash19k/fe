@@ -254,8 +254,14 @@ async function validateAssignees(assignees, projectId, organizationId, manager =
         },
     });
     const memberIds = new Set(memberships.map((member) => member.userId));
-    if (uniqueIds.some((id) => !memberIds.has(id))) {
-        throw new app_error_1.AppError("All assignees must be members of the selected project", 400, "ASSIGNEE_NOT_PROJECT_MEMBER");
+    const missingMemberIds = uniqueIds.filter((id) => !memberIds.has(id));
+    if (missingMemberIds.length > 0) {
+        const newMembers = missingMemberIds.map((userId) => manager.getRepository(project_member_entity_1.ProjectMember).create({
+            projectId,
+            userId,
+            role: project_member_entity_1.ProjectRole.MEMBER,
+        }));
+        await manager.getRepository(project_member_entity_1.ProjectMember).save(newMembers);
     }
 }
 // CREATE WORK ITEM
@@ -337,9 +343,18 @@ const createWorkItem = async (req, res) => {
                 isActive: true,
             }));
         }
+        const assignments = await manager
+            .getRepository(work_item_assignee_entity_1.WorkItemAssignee)
+            .find({
+            where: { workItemId: savedWorkItem.id },
+            relations: { user: true },
+        });
         return {
             workItem: savedWorkItem,
-            assigneeIds: assignees.map((assignee) => assignee.userId),
+            assignments,
+            assigneeIds: assignments.map((assignee) => assignee.userId),
+            assigneeId: assignments[0]?.userId || null,
+            assignees: assignments.map((a) => a.user).filter(Boolean),
             recurrence: savedRecurrence,
         };
     });
@@ -348,7 +363,10 @@ const createWorkItem = async (req, res) => {
         message: "Work item created successfully",
         data: {
             ...result.workItem,
+            assignments: result.assignments,
             assigneeIds: result.assigneeIds,
+            assigneeId: result.assigneeId,
+            assignees: result.assignees,
             recurrence: result.recurrence,
         },
     });
@@ -367,9 +385,11 @@ const getProjectWorkItems = async (req, res) => {
     const query = data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem)
         .createQueryBuilder("workItem")
         .leftJoinAndSelect("workItem.assignments", "assignments")
+        .leftJoinAndSelect("assignments.user", "assigneeUser")
         .leftJoinAndSelect("workItem.comments", "comments")
         .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
         .leftJoinAndSelect("workItem.children", "children")
+        .leftJoinAndSelect("workItem.attachments", "attachments")
         .where("workItem.projectId = :projectId", {
         projectId: project.id,
     })
@@ -409,36 +429,80 @@ const updateWorkItem = async (req, res) => {
     if (body.parentWorkItemId !== undefined) {
         await validateParentWorkItem(body.parentWorkItemId, workItem.projectId, actor.organizationId, workItem.id);
     }
-    // Explicit allow-list: do not mass-assign req.body onto the entity.
-    if (body.title !== undefined) {
-        workItem.title = body.title.trim();
+    let newAssignees = undefined;
+    if (body.assignees !== undefined) {
+        newAssignees = body.assignees || [];
     }
-    if (body.type !== undefined) {
-        workItem.type = body.type;
+    else if (body.assigneeIds !== undefined) {
+        newAssignees = (body.assigneeIds || []).map((uid) => ({ userId: uid }));
     }
-    if (body.description !== undefined) {
-        workItem.description = body.description?.trim() || null;
+    else if (body.assigneeId !== undefined) {
+        newAssignees = body.assigneeId ? [{ userId: body.assigneeId }] : [];
     }
-    if (body.priority !== undefined) {
-        workItem.priority = body.priority;
-    }
-    if (body.status !== undefined) {
-        workItem.status = body.status;
-    }
-    if (body.dueDate !== undefined) {
-        workItem.dueDate =
-            body.dueDate === null ? null : new Date(body.dueDate);
-    }
-    if (body.parentWorkItemId !== undefined) {
-        workItem.parentWorkItemId = body.parentWorkItemId;
-    }
-    const savedWorkItem = await data_source_1.AppDataSource
-        .getRepository(work_item_entity_1.WorkItem)
-        .save(workItem);
+    const result = await data_source_1.AppDataSource.transaction(async (manager) => {
+        if (newAssignees !== undefined) {
+            await validateAssignees(newAssignees, workItem.projectId, actor.organizationId, manager);
+            await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).delete({
+                workItemId: workItem.id,
+            });
+            if (newAssignees.length > 0) {
+                const assigneeEntities = newAssignees.map((assignee) => manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).create({
+                    workItemId: workItem.id,
+                    userId: assignee.userId,
+                    assignedById: actor.id,
+                    startDate: assignee.startDate ?? null,
+                    estimatedHours: assignee.estimatedHours !== undefined &&
+                        assignee.estimatedHours !== null
+                        ? assignee.estimatedHours.toString()
+                        : null,
+                }));
+                await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).save(assigneeEntities);
+            }
+        }
+        // Explicit allow-list: do not mass-assign req.body onto the entity.
+        if (body.title !== undefined) {
+            workItem.title = body.title.trim();
+        }
+        if (body.type !== undefined) {
+            workItem.type = body.type;
+        }
+        if (body.description !== undefined) {
+            workItem.description = body.description?.trim() || null;
+        }
+        if (body.priority !== undefined) {
+            workItem.priority = body.priority;
+        }
+        if (body.status !== undefined) {
+            workItem.status = body.status;
+        }
+        if (body.dueDate !== undefined) {
+            workItem.dueDate =
+                body.dueDate === null ? null : new Date(body.dueDate);
+        }
+        if (body.parentWorkItemId !== undefined) {
+            workItem.parentWorkItemId = body.parentWorkItemId;
+        }
+        const savedWorkItem = await manager
+            .getRepository(work_item_entity_1.WorkItem)
+            .save(workItem);
+        const assignments = await manager
+            .getRepository(work_item_assignee_entity_1.WorkItemAssignee)
+            .find({
+            where: { workItemId: savedWorkItem.id },
+            relations: { user: true },
+        });
+        return {
+            ...savedWorkItem,
+            assignments,
+            assigneeIds: assignments.map((a) => a.userId),
+            assigneeId: assignments[0]?.userId || null,
+            assignees: assignments.map((a) => a.user).filter(Boolean),
+        };
+    });
     res.status(200).json({
         success: true,
         message: "Work item updated successfully",
-        data: savedWorkItem,
+        data: result,
     });
 };
 exports.updateWorkItem = updateWorkItem;

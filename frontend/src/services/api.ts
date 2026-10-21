@@ -47,9 +47,51 @@ export class ApiError extends Error {
   }
 }
 
+interface RequestOptions extends RequestInit {
+  _retry?: boolean;
+}
+
+let refreshPromise: Promise<string | null> | null = null;
+
+async function executeTokenRefresh(): Promise<string | null> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/users/refresh`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        clearAuthToken();
+        return null;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (data?.token && typeof data.token === 'string') {
+        setAuthToken(data.token);
+        return data.token;
+      }
+      return getAuthToken() || 'active_session';
+    } catch {
+      clearAuthToken();
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestOptions = {}
 ): Promise<T> {
   const url = `${API_BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
   const token = getAuthToken();
@@ -77,12 +119,38 @@ async function request<T>(
     }
 
     if (!res.ok) {
-      let errorMessage =
-        data?.message ||
-        (Array.isArray(data?.errors)
-          ? data.errors.map((e: any) => e.message || e).join(', ')
-          : null) ||
-        `Request failed with status ${res.status}`;
+      // If 401 Unauthorized, attempt transparent token refresh once
+      if (
+        res.status === 401 &&
+        !options._retry &&
+        !endpoint.includes('/users/login') &&
+        !endpoint.includes('/users/refresh') &&
+        !endpoint.includes('/users/logout')
+      ) {
+        const refreshedToken = await executeTokenRefresh();
+        if (refreshedToken) {
+          return request<T>(endpoint, {
+            ...options,
+            _retry: true,
+          });
+        }
+      }
+
+      let errorMessage = data?.message || data?.error;
+      if (Array.isArray(data?.errors) && data.errors.length > 0) {
+        const details = data.errors
+          .map((e: any) => {
+            if (typeof e === 'object' && e !== null) {
+              return e.message ? `${e.field ? e.field + ': ' : ''}${e.message}` : JSON.stringify(e);
+            }
+            return String(e);
+          })
+          .join(', ');
+        errorMessage = errorMessage ? `${errorMessage}: ${details}` : details;
+      }
+      if (!errorMessage) {
+        errorMessage = `Request failed with status ${res.status}`;
+      }
 
       throw new ApiError(errorMessage, res.status, data?.code, data?.errors);
     }
@@ -195,6 +263,12 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
 export async function currentUserApi(): Promise<{ user: any; organization: any }> {
   return request<{ user: any; organization: any }>('/api/users/me', {
     method: 'GET',
+  });
+}
+
+export async function refreshTokenApi(): Promise<{ success: boolean; message?: string; token?: string }> {
+  return request<{ success: boolean; message?: string; token?: string }>('/api/users/refresh', {
+    method: 'POST',
   });
 }
 
@@ -419,14 +493,61 @@ export async function getProjectDashboardApi(projectId: string): Promise<any> {
   });
 }
 
+export async function getPersonalDashboardApi(): Promise<{ success: boolean; data: any }> {
+  return request<{ success: boolean; data: any }>('/api/dashboard/personal', {
+    method: 'GET',
+  });
+}
+
 // ==========================================
-// Organization Users
+// Organization Users & Member Management
 // ==========================================
 
 export async function getOrganizationUsersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
   return request<{ success: boolean; count: number; data: any[] }>('/api/users', {
     method: 'GET',
   });
+}
+
+export async function getOrganizationMembersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
+  return request<{ success: boolean; count: number; data: any[] }>('/api/organizations/members', {
+    method: 'GET',
+  });
+}
+
+export async function addOrganizationMemberApi(payload: {
+  email: string;
+  fullName?: string;
+  role?: string;
+}): Promise<{ success: boolean; data: any; message?: string }> {
+  return request<{ success: boolean; data: any; message?: string }>('/api/organizations/members', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationMemberRoleApi(
+  userId: string,
+  role: string
+): Promise<{ success: boolean; data: any; message?: string }> {
+  return request<{ success: boolean; data: any; message?: string }>(
+    `/api/organizations/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }
+  );
+}
+
+export async function removeOrganizationMemberApi(
+  userId: string
+): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    `/api/organizations/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
 }
 
 // ==========================================
@@ -563,7 +684,7 @@ export async function getProjectWorkflowApi(projectId: string): Promise<{ succes
 
 export async function saveProjectWorkflowApi(
   projectId: string,
-  payload: { stages: any[]; transitions?: any; rules?: any }
+  payload: { name?: string; stages?: any[]; statuses?: any[]; transitions?: any; rules?: any }
 ): Promise<{ success: boolean; data: any }> {
   return request<{ success: boolean; data: any }>(
     `/api/projects/${encodeURIComponent(projectId)}/workflow`,
@@ -591,11 +712,31 @@ export async function createAuditLogApi(payload: {
   action: string;
   entityType: string;
   entityId: string;
+  description?: string;
+  previousState?: any;
+  newState?: any;
   details?: any;
 }): Promise<{ success: boolean; data: any }> {
   return request<{ success: boolean; data: any }>('/api/projects/audit-logs', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function undoAuditLogApi(
+  projectId: string,
+  logId: string
+): Promise<{
+  success: boolean;
+  message: string;
+  data: {
+    undoneLogId: string;
+    reversalLog: any;
+    restoredTask?: any;
+  };
+}> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/audit-logs/${encodeURIComponent(logId)}/undo`, {
+    method: 'POST',
   });
 }
 
@@ -748,6 +889,31 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
         ? item.assignees.map((a: any) => a.userId)
         : (item.assigneeIds || (assigneeId ? [assigneeId] : [])));
 
+  let assignees: any[] = [];
+  if (Array.isArray(item.assignees) && item.assignees.length > 0) {
+    assignees = item.assignees.map((u: any) => ({
+      id: u.id || u.userId,
+      name: u.fullName || u.name || u.email || 'User',
+      fullName: u.fullName || u.name || u.email || 'User',
+      email: u.email || '',
+      role: u.role || 'Teammate',
+    }));
+  } else if (Array.isArray(item.assignments) && item.assignments.length > 0) {
+    assignees = item.assignments
+      .map((a: any) => {
+        const u = a.user;
+        if (!u) return null;
+        return {
+          id: u.id,
+          name: u.fullName || u.name || u.email || 'User',
+          fullName: u.fullName || u.name || u.email || 'User',
+          email: u.email || '',
+          role: u.role || 'Teammate',
+        };
+      })
+      .filter(Boolean);
+  }
+
   return {
     id: item.id,
     projectId: item.projectId || currentProjectId,
@@ -761,6 +927,7 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     startDate: item.startDate || null,
     assigneeId,
     assigneeIds,
+    assignees,
     sprintId: item.sprintId || null,
     creatorId: item.createdById || item.creatorId,
     labels: Array.isArray(item.labels)
@@ -783,10 +950,10 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     comments: Array.isArray(item.comments)
       ? item.comments.map((c: any) => ({
           id: c.id,
-          userId: c.userId,
-          authorId: c.userId,
-          text: c.content || c.text || c.body || '',
-          body: c.content || c.text || c.body || '',
+          userId: c.authorId || c.userId,
+          authorId: c.authorId || c.userId,
+          text: c.body || c.content || c.text || '',
+          body: c.body || c.content || c.text || '',
           createdAt: c.createdAt || new Date().toISOString(),
         }))
       : (item.comments || []),
@@ -813,6 +980,17 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
     version: item.version || 1,
     createdAt: item.createdAt || new Date().toISOString(),
     updatedAt: item.updatedAt || new Date().toISOString(),
+    attachments: Array.isArray(item.attachments)
+      ? item.attachments.map((att: any) => ({
+          id: att.id,
+          name: att.originalName || att.name || 'attachment',
+          size: Number(att.size) || 0,
+          type: att.mimeType || att.type || 'application/octet-stream',
+          url: att.url || (att.storageKey ? `/api/attachments/${att.id}/file` : ''),
+          blobKey: att.blobKey || att.id,
+          uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
+        }))
+      : (item.attachments || []),
   };
 }
 

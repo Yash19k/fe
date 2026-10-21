@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Star,
   LayoutGrid,
   ListFilter,
   Kanban,
@@ -15,6 +14,7 @@ import {
   Settings,
   Plus,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { AvatarGroup } from '../ui/Avatar';
@@ -38,6 +38,7 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     setProjectTab,
     allUsers,
     navigate,
+    currentUser,
   } = useApp();
 
   if (!currentProject) return null;
@@ -46,17 +47,14 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     (currentProject.memberIds || []).includes(u.id)
   );
 
-  // Primary project navigation sections:
-  // Members and Activity & Audit are moved into Project Settings
+  // Primary consolidated project navigation sections (Req 2.1 & Req 5.1)
   const tabs: TabItem[] = [
     { id: 'overview', label: 'Overview', icon: LayoutGrid },
     { id: 'list', label: 'List', icon: ListFilter },
     { id: 'board', label: 'Board', icon: Kanban },
     { id: 'timeline', label: 'Timeline', icon: GitCommit },
     { id: 'calendar', label: 'Calendar', icon: CalendarDays },
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'dependencies', label: 'Dependencies', icon: Network },
-    { id: 'workflow', label: 'Workflow', icon: Workflow },
+    { id: 'sprint', label: 'Sprint', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -68,8 +66,8 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
 
   function handleManageMembersClick() {
     if (!currentProject) return;
-    setProjectTab('members');
-    navigate(`/project/${currentProject.id}/members`);
+    setProjectTab('settings#members');
+    navigate(`/project/${currentProject.id}/settings#members`);
   }
 
   return (
@@ -88,11 +86,6 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
               <h1 className="text-base font-bold text-text-primary truncate">
                 {currentProject.name}
               </h1>
-
-              {/* Project ID / Key Badge */}
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-surface-elevated border border-border text-text-secondary font-semibold">
-                {currentProject.projectKey || currentProject.id.toUpperCase()}
-              </span>
 
               {/* Visibility Badge */}
               <span
@@ -119,25 +112,6 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
                   </>
                 )}
               </span>
-
-              {/* Status Badge */}
-              <span
-                className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
-                  currentProject.status === 'On Track'
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                }`}
-              >
-                {currentProject.status}
-              </span>
-
-              <button
-                className="text-text-muted hover:text-amber-400 transition-colors p-0.5 rounded"
-                title="Star project"
-                aria-label="Star project"
-              >
-                <Star size={14} />
-              </button>
             </div>
             <p className="text-xs text-text-muted truncate max-w-md hidden sm:block mt-0.5">
               {currentProject.description}
@@ -173,16 +147,18 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
               <span>Add Work Item</span>
             </Button>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={Sparkles}
-              onClick={onOpenCreateSprint}
-              className="font-medium h-7 px-2.5 text-xs border-border bg-surface-elevated hover:bg-surface hover:border-border-strong text-text-primary"
-              title="Create a new sprint"
-            >
-              <span>Add Sprint</span>
-            </Button>
+            {currentUser.role !== 'Teammate' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={Sparkles}
+                onClick={onOpenCreateSprint}
+                className="font-medium h-7 px-2.5 text-xs border-border bg-surface-elevated hover:bg-surface hover:border-border-strong text-text-primary"
+                title="Create a new sprint"
+              >
+                <span>Add Sprint</span>
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -192,7 +168,15 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
         {tabs.map((tab) => {
           const isActive =
             projectTab === tab.id ||
-            (tab.id === 'settings' && (projectTab === 'members' || projectTab === 'activity'));
+            (tab.id === 'settings' &&
+              (projectTab.startsWith('settings') ||
+                projectTab === 'members' ||
+                projectTab === 'activity' ||
+                projectTab === 'workflow' ||
+                projectTab === 'dependencies' ||
+                projectTab === 'labels' ||
+                projectTab === 'danger' ||
+                projectTab === 'security'));
           const Icon = tab.icon;
 
           return (

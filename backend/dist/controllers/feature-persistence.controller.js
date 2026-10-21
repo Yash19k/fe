@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_WORKFLOW_STATUSES = exports.DEFAULT_WORKFLOW_NAME = void 0;
 exports.addWorkItemComment = addWorkItemComment;
 exports.getWorkItemComments = getWorkItemComments;
 exports.addWorkItemTimeEntry = addWorkItemTimeEntry;
@@ -14,10 +15,12 @@ exports.getProjectWorkflow = getProjectWorkflow;
 exports.saveProjectWorkflow = saveProjectWorkflow;
 exports.getProjectAuditLogs = getProjectAuditLogs;
 exports.createAuditLog = createAuditLog;
+exports.undoAuditLog = undoAuditLog;
 exports.getUserNotifications = getUserNotifications;
 exports.markNotificationRead = markNotificationRead;
 exports.markAllNotificationsRead = markAllNotificationsRead;
 exports.createNotification = createNotification;
+const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data.source");
 const work_item_comment_entity_1 = require("../entities/work.item.comment.entity");
 const work_item_time_entry_entity_1 = require("../entities/work.item.time.entry.entity");
@@ -27,6 +30,7 @@ const project_workflow_entity_1 = require("../entities/project.workflow.entity")
 const audit_log_entity_1 = require("../entities/audit.log.entity");
 const notification_entity_1 = require("../entities/notification.entity");
 const work_item_entity_1 = require("../entities/work.item.entity");
+const work_item_assignee_entity_1 = require("../entities/work.item-assignee.entity");
 const app_error_1 = require("../errors/app.error");
 // ==========================================
 // Comments
@@ -42,7 +46,7 @@ async function addWorkItemComment(req, res) {
         where: { id: workItemId },
         select: { id: true, projectId: true, organizationId: true },
     });
-    if (!workItem) {
+    if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
         throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
     }
     const commentRepo = data_source_1.AppDataSource.getRepository(work_item_comment_entity_1.WorkItemComment);
@@ -67,6 +71,13 @@ async function addWorkItemComment(req, res) {
 }
 async function getWorkItemComments(req, res) {
     const workItemId = String(req.params.workItemId);
+    const workItem = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).findOne({
+        where: { id: workItemId },
+        select: { id: true, projectId: true, organizationId: true },
+    });
+    if (!workItem || (req.user?.organizationId && workItem.organizationId !== req.user.organizationId)) {
+        throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+    }
     const comments = await data_source_1.AppDataSource.getRepository(work_item_comment_entity_1.WorkItemComment).find({
         where: { workItemId },
         relations: { author: true },
@@ -246,27 +257,58 @@ async function deleteProjectLabel(req, res) {
 // ==========================================
 // Workflows
 // ==========================================
+exports.DEFAULT_WORKFLOW_NAME = "TaskFlow Pro — Final Statuses";
+exports.DEFAULT_WORKFLOW_STATUSES = [
+    { id: "st-backlog", name: "Backlog", category: "unstarted", color: "#6B7280", allowedTransitions: ["In Progress"] },
+    { id: "st-inprogress", name: "In Progress", category: "active", color: "#3B82F6", allowedTransitions: ["In Review", "Testing / QA", "Blocked", "On Hold"] },
+    { id: "st-inreview", name: "In Review", category: "active", color: "#A855F7", allowedTransitions: ["Testing / QA", "In Progress", "Blocked", "On Hold"] },
+    { id: "st-testingqa", name: "Testing / QA", category: "active", color: "#06B6D4", allowedTransitions: ["Done", "In Progress", "Blocked", "On Hold"], roleRestrictions: { Done: ["Manager", "Admin"] } },
+    { id: "st-blocked", name: "Blocked", category: "impediment", color: "#EF4444", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+    { id: "st-onhold", name: "On Hold", category: "impediment", color: "#F97316", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+    { id: "st-done", name: "Done", category: "completed", color: "#22C55E", allowedTransitions: ["In Progress"] },
+];
 async function getProjectWorkflow(req, res) {
     const projectId = String(req.params.projectId);
     const workflow = await data_source_1.AppDataSource.getRepository(project_workflow_entity_1.ProjectWorkflow).findOne({
         where: { projectId },
     });
+    if (!workflow) {
+        return res.json({
+            success: true,
+            data: {
+                id: `default-${projectId}`,
+                projectId,
+                name: exports.DEFAULT_WORKFLOW_NAME,
+                statuses: exports.DEFAULT_WORKFLOW_STATUSES,
+                stages: exports.DEFAULT_WORKFLOW_STATUSES,
+                isDefault: true,
+            },
+        });
+    }
+    // Normalize legacy generic or raw UUID workflow names
+    const isGenericName = !workflow.name ||
+        workflow.name === "Custom Engineering Flow" ||
+        workflow.name.endsWith(" Workflow") ||
+        /^[0-9a-fA-F-]{20,}/.test(workflow.name);
+    const resolvedName = isGenericName ? exports.DEFAULT_WORKFLOW_NAME : workflow.name;
     return res.json({
         success: true,
-        data: workflow
-            ? {
-                ...workflow,
-                stages: workflow.statuses,
-            }
-            : null,
+        data: {
+            ...workflow,
+            name: resolvedName,
+            stages: workflow.statuses,
+        },
     });
 }
 async function saveProjectWorkflow(req, res) {
     const projectId = String(req.params.projectId);
     const stages = req.body.stages || req.body.statuses;
-    const name = req.body.name ? String(req.body.name).trim() : "Custom Engineering Flow";
-    if (!stages || !Array.isArray(stages)) {
-        throw new app_error_1.AppError("Workflow stages or statuses array is required.", 400, "VALIDATION_ERROR");
+    const rawName = req.body.name ? String(req.body.name).trim() : "";
+    const name = rawName && rawName !== "Custom Engineering Flow" && !rawName.endsWith(" Workflow")
+        ? rawName
+        : exports.DEFAULT_WORKFLOW_NAME;
+    if (!stages || !Array.isArray(stages) || stages.length === 0) {
+        throw new app_error_1.AppError("Workflow stages or statuses array is required and must not be empty.", 400, "VALIDATION_ERROR");
     }
     const repo = data_source_1.AppDataSource.getRepository(project_workflow_entity_1.ProjectWorkflow);
     let workflow = await repo.findOne({ where: { projectId } });
@@ -312,37 +354,148 @@ async function saveProjectWorkflow(req, res) {
 async function getProjectAuditLogs(req, res) {
     const projectId = req.params.projectId ? String(req.params.projectId) : undefined;
     const organizationId = req.user?.organizationId;
-    const logs = await data_source_1.AppDataSource.getRepository(audit_log_entity_1.AuditLog).find({
-        where: projectId ? { projectId, organizationId } : { organizationId },
-        relations: { user: true },
-        order: { createdAt: "DESC" },
-        take: 100,
-    });
+    // Find all task IDs for this project if projectId is supplied
+    let projectTaskIds = [];
+    if (projectId) {
+        try {
+            const projectTasks = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).find({
+                where: { projectId },
+                select: { id: true, title: true },
+            });
+            projectTaskIds = projectTasks.map((t) => t.id);
+        }
+        catch {
+            // Gracefully continue
+        }
+    }
+    let logs = [];
+    const auditRepo = data_source_1.AppDataSource.getRepository(audit_log_entity_1.AuditLog);
+    if (projectId) {
+        const qb = auditRepo
+            .createQueryBuilder("audit")
+            .leftJoinAndSelect("audit.user", "user")
+            .leftJoinAndSelect("audit.project", "project")
+            .orderBy("audit.createdAt", "DESC")
+            .take(150);
+        if (organizationId) {
+            qb.where("audit.organizationId = :organizationId", { organizationId });
+            if (projectTaskIds.length > 0) {
+                qb.andWhere("(audit.projectId = :projectId OR (audit.entityType = 'task' AND audit.entityId IN (:...projectTaskIds)))", { projectId, projectTaskIds });
+            }
+            else {
+                qb.andWhere("audit.projectId = :projectId", { projectId });
+            }
+        }
+        else {
+            if (projectTaskIds.length > 0) {
+                qb.where("(audit.projectId = :projectId OR (audit.entityType = 'task' AND audit.entityId IN (:...projectTaskIds)))", { projectId, projectTaskIds });
+            }
+            else {
+                qb.where("audit.projectId = :projectId", { projectId });
+            }
+        }
+        logs = await qb.getMany();
+    }
+    else {
+        logs = await auditRepo.find({
+            where: organizationId ? { organizationId } : {},
+            relations: { user: true, project: true },
+            order: { createdAt: "DESC" },
+            take: 150,
+        });
+    }
+    const taskIds = logs
+        .filter((l) => l.entityType === "task" && l.entityId)
+        .map((l) => l.entityId);
+    const taskMap = {};
+    if (taskIds.length > 0) {
+        try {
+            const foundTasks = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).find({
+                where: { id: (0, typeorm_1.In)(taskIds) },
+                select: { id: true, title: true },
+            });
+            foundTasks.forEach((t) => {
+                taskMap[t.id] = t.title;
+            });
+        }
+        catch {
+            // In case of non-uuid entityId, gracefully continue
+        }
+    }
     return res.json({
         success: true,
-        data: logs.map((l) => ({
-            id: l.id,
-            action: l.action,
-            entityType: l.entityType,
-            entityId: l.entityId,
-            description: l.description,
-            previousState: l.previousState,
-            newState: l.newState,
-            projectId: l.projectId,
-            userId: l.userId,
-            userName: l.user?.fullName || l.user?.email || "User",
-            timestamp: l.createdAt,
-        })),
+        data: logs.map((l) => {
+            let entityTitle = null;
+            if (l.entityType === "task") {
+                entityTitle =
+                    taskMap[l.entityId] ||
+                        l.newState?.title ||
+                        l.previousState?.title ||
+                        null;
+            }
+            else if (l.entityType === "project") {
+                entityTitle = l.project?.name || null;
+            }
+            const userName = l.user?.fullName?.trim() ||
+                l.user?.email ||
+                "Unknown user";
+            const canUndo = !l.isUndone &&
+                Boolean(l.previousState) &&
+                l.action !== "undone" &&
+                l.action !== "UNDONE" &&
+                l.action !== "deleted" &&
+                l.action !== "DELETED" &&
+                (l.entityType !== "task" || Boolean(taskMap[l.entityId]));
+            return {
+                id: l.id,
+                action: l.action,
+                entityType: l.entityType,
+                entityId: l.entityId,
+                entityTitle,
+                description: l.description,
+                previousState: l.previousState,
+                newState: l.newState,
+                previousValue: l.previousState,
+                newValue: l.newState,
+                canUndo,
+                isUndone: Boolean(l.isUndone),
+                undoneAt: l.undoneAt || null,
+                reversalLogId: l.reversalLogId || null,
+                projectId: l.projectId,
+                userId: l.userId,
+                actorId: l.userId,
+                userName,
+                actorName: userName,
+                userEmail: l.user?.email || null,
+                timestamp: l.createdAt,
+                createdAt: l.createdAt,
+            };
+        }),
     });
 }
 async function createAuditLog(req, res) {
     const organizationId = req.user?.organizationId;
     const userId = req.user?.id;
     const { action, entityType, entityId, previousState, newState } = req.body;
-    const pId = req.body.projectId || (req.params.projectId && req.params.projectId !== "audit-logs" ? req.params.projectId : null);
+    let pId = req.body.projectId || (req.params.projectId && req.params.projectId !== "audit-logs" ? req.params.projectId : null);
     const desc = req.body.description || req.body.details?.description || `${action || ""} ${entityType || ""}`.trim() || "Activity";
     if (!action || !entityType) {
         throw new app_error_1.AppError("action and entityType are required.", 400, "VALIDATION_ERROR");
+    }
+    // If pId is missing and this is a task event, attempt to resolve from WorkItem record
+    if (!pId && entityType === "task" && entityId) {
+        try {
+            const task = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).findOne({
+                where: { id: String(entityId) },
+                select: { id: true, projectId: true },
+            });
+            if (task?.projectId) {
+                pId = task.projectId;
+            }
+        }
+        catch {
+            // non-uuid entityId
+        }
     }
     const repo = data_source_1.AppDataSource.getRepository(audit_log_entity_1.AuditLog);
     const log = await repo.save(repo.create({
@@ -358,7 +511,160 @@ async function createAuditLog(req, res) {
     }));
     return res.status(201).json({
         success: true,
-        data: log,
+        data: {
+            ...log,
+            timestamp: log.createdAt,
+        },
+    });
+}
+async function undoAuditLog(req, res) {
+    const userId = req.user?.id;
+    const organizationId = req.user?.organizationId;
+    const logId = String(req.params.logId);
+    const requestedProjectId = req.params.projectId && req.params.projectId !== "audit-logs"
+        ? String(req.params.projectId)
+        : null;
+    if (!userId) {
+        throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
+    }
+    const result = await data_source_1.AppDataSource.transaction(async (manager) => {
+        const auditRepo = manager.getRepository(audit_log_entity_1.AuditLog);
+        const targetLog = await auditRepo
+            .createQueryBuilder("audit")
+            .setLock("pessimistic_write")
+            .where("audit.id = :logId", { logId })
+            .getOne();
+        if (!targetLog) {
+            throw new app_error_1.AppError("Audit log entry not found.", 404, "AUDIT_LOG_NOT_FOUND");
+        }
+        if (organizationId && targetLog.organizationId !== organizationId) {
+            throw new app_error_1.AppError("Access denied.", 403, "FORBIDDEN");
+        }
+        if (requestedProjectId && targetLog.projectId && targetLog.projectId !== requestedProjectId) {
+            throw new app_error_1.AppError("Audit log does not belong to specified project.", 403, "FORBIDDEN");
+        }
+        if (targetLog.isUndone) {
+            throw new app_error_1.AppError("This action has already been undone.", 400, "ALREADY_UNDONE");
+        }
+        if (!targetLog.previousState ||
+            targetLog.action.toLowerCase() === "undone" ||
+            targetLog.action.toLowerCase() === "deleted") {
+            throw new app_error_1.AppError("This action cannot be undone.", 400, "ACTION_NOT_REVERSIBLE");
+        }
+        let restoredTask = null;
+        if (targetLog.entityType === "task") {
+            const workItemRepo = manager.getRepository(work_item_entity_1.WorkItem);
+            const workItem = await workItemRepo.findOne({
+                where: { id: targetLog.entityId },
+            });
+            if (!workItem) {
+                throw new app_error_1.AppError("Target work item no longer exists.", 404, "WORK_ITEM_NOT_FOUND");
+            }
+            if (organizationId && workItem.organizationId !== organizationId) {
+                throw new app_error_1.AppError("Access denied to work item.", 403, "FORBIDDEN");
+            }
+            const prev = targetLog.previousState;
+            if (prev.title !== undefined && prev.title !== null) {
+                workItem.title = String(prev.title).trim();
+            }
+            if (prev.description !== undefined) {
+                workItem.description = prev.description ? String(prev.description).trim() : null;
+            }
+            if (prev.status !== undefined && prev.status !== null) {
+                const normStatus = String(prev.status).toUpperCase().replace(/[-\s]/g, "_");
+                if (Object.values(work_item_entity_1.WorkItemStatus).includes(normStatus)) {
+                    workItem.status = normStatus;
+                }
+            }
+            if (prev.priority !== undefined && prev.priority !== null) {
+                const normPriority = String(prev.priority).toUpperCase();
+                if (Object.values(work_item_entity_1.WorkItemPriority).includes(normPriority)) {
+                    workItem.priority = normPriority;
+                }
+            }
+            if (prev.type !== undefined && prev.type !== null) {
+                const normType = String(prev.type).toUpperCase();
+                if (Object.values(work_item_entity_1.WorkItemType).includes(normType)) {
+                    workItem.type = normType;
+                }
+            }
+            if (prev.dueDate !== undefined) {
+                workItem.dueDate = prev.dueDate ? new Date(prev.dueDate) : null;
+            }
+            if (prev.parentWorkItemId !== undefined || prev.parentId !== undefined) {
+                workItem.parentWorkItemId = prev.parentWorkItemId || prev.parentId || null;
+            }
+            await workItemRepo.save(workItem);
+            if (prev.assigneeId !== undefined || prev.assignees !== undefined || prev.assigneeIds !== undefined) {
+                const assigneeRepo = manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee);
+                await assigneeRepo.delete({ workItemId: workItem.id });
+                let userIds = [];
+                if (Array.isArray(prev.assignees)) {
+                    userIds = prev.assignees
+                        .map((a) => (typeof a === "string" ? a : a.userId || a.id))
+                        .filter(Boolean);
+                }
+                else if (Array.isArray(prev.assigneeIds)) {
+                    userIds = prev.assigneeIds.filter(Boolean);
+                }
+                else if (prev.assigneeId) {
+                    userIds = [prev.assigneeId];
+                }
+                if (userIds.length > 0) {
+                    const assigneeEntities = userIds.map((uId) => assigneeRepo.create({
+                        workItemId: workItem.id,
+                        userId: uId,
+                        assignedById: userId,
+                    }));
+                    await assigneeRepo.save(assigneeEntities);
+                }
+            }
+            const assignments = await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+                where: { workItemId: workItem.id },
+            });
+            restoredTask = {
+                ...workItem,
+                assignments,
+                assigneeIds: assignments.map((a) => a.userId),
+                assigneeId: assignments[0]?.userId || null,
+            };
+        }
+        const reversalDesc = `Undid change: ${targetLog.description || targetLog.action}`;
+        const reversalLog = await auditRepo.save(auditRepo.create({
+            organizationId: targetLog.organizationId,
+            projectId: targetLog.projectId,
+            userId: userId,
+            action: "undone",
+            entityType: targetLog.entityType,
+            entityId: targetLog.entityId,
+            description: reversalDesc,
+            previousState: targetLog.newState,
+            newState: targetLog.previousState,
+            isUndone: false,
+        }));
+        targetLog.isUndone = true;
+        targetLog.undoneAt = new Date();
+        targetLog.undoneById = userId;
+        targetLog.reversalLogId = reversalLog.id;
+        await auditRepo.save(targetLog);
+        return {
+            targetLog,
+            reversalLog,
+            restoredTask,
+        };
+    });
+    return res.status(200).json({
+        success: true,
+        message: "Action undone successfully.",
+        data: {
+            undoneLogId: result.targetLog.id,
+            reversalLog: {
+                ...result.reversalLog,
+                timestamp: result.reversalLog.createdAt,
+                actorId: result.reversalLog.userId,
+            },
+            restoredTask: result.restoredTask,
+        },
     });
 }
 // ==========================================

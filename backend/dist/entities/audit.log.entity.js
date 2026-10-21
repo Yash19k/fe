@@ -58,6 +58,22 @@ __decorate([
     __metadata("design:type", Object)
 ], AuditLog.prototype, "newState", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "is_undone", type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], AuditLog.prototype, "isUndone", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "undone_at", type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], AuditLog.prototype, "undoneAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "undone_by_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], AuditLog.prototype, "undoneById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "reversal_log_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], AuditLog.prototype, "reversalLogId", void 0);
+__decorate([
     (0, typeorm_1.CreateDateColumn)({ name: "created_at", type: "timestamptz" }),
     __metadata("design:type", Date)
 ], AuditLog.prototype, "createdAt", void 0);

@@ -43,7 +43,7 @@ function ProjectCard({ project }: { project: MyProjectItem }) {
       <div className="flex items-start gap-3 mb-3">
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-          style={{ backgroundColor: project.color || '#6B9CFF' }}
+          style={{ backgroundColor: project.color || '#7465F6' }}
           aria-hidden="true"
         >
           {project.name.charAt(0)}
@@ -72,7 +72,7 @@ function ProjectCard({ project }: { project: MyProjectItem }) {
             className="h-full rounded-full transition-all duration-300"
             style={{
               width: `${project.progress}%`,
-              backgroundColor: project.color || '#6B9CFF',
+              backgroundColor: project.color || '#7465F6',
             }}
           />
         </div>

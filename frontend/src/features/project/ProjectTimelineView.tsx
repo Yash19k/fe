@@ -329,12 +329,12 @@ export function ProjectTimelineView() {
                               }}
                               className={`absolute top-1.5 bottom-1.5 rounded-md px-2.5 flex items-center justify-between text-xs font-semibold cursor-pointer shadow-xs transition-transform hover:scale-[1.01] overflow-hidden ${
                                 highlightCriticalPath && isCritical
-                                  ? 'bg-rose-500/25 border border-rose-500/60 text-rose-200'
+                                  ? 'bg-status-danger-bg border border-status-danger-border text-status-danger-text'
                                   : task.status === 'Done'
-                                    ? 'bg-emerald-500/25 border border-emerald-500/50 text-emerald-200'
+                                    ? 'bg-status-success-bg border border-status-success-border text-status-success-text'
                                     : task.status === 'In Progress'
-                                      ? 'bg-blue-500/25 border border-blue-500/50 text-blue-200'
-                                      : 'bg-zinc-700/50 border border-zinc-600/50 text-zinc-200'
+                                      ? 'bg-brand-subtle border border-brand-border text-brand-text'
+                                      : 'bg-surface-elevated border border-border-strong text-text-secondary'
                               }`}
                               title={`${task.title} (${task.startDate || 'No start'} to ${task.dueDate || 'No due'})`}
                             >

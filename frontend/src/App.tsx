@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider } from './state/AppContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { useApp } from './hooks/useApp';
 import { GlobalRail } from './components/navigation/GlobalRail';
 import { WorkspaceSidebar } from './components/navigation/WorkspaceSidebar';
@@ -26,12 +27,38 @@ import { ProjectBoardView } from './features/project/ProjectBoardView';
 import { ProjectTimelineView } from './features/project/ProjectTimelineView';
 import { ProjectCalendarView } from './features/project/ProjectCalendarView';
 import { ProjectDashboardView } from './features/project/ProjectDashboardView';
+import { SprintDashboardView } from './features/project/SprintDashboardView';
 import { WorkflowBuilderView } from './features/project/WorkflowBuilderView';
 import { DependenciesView } from './features/project/DependenciesView';
-import { ProjectSettingsView } from './features/project/ProjectSettingsView';
+import { ProjectSettingsView, SettingsSection } from './features/project/ProjectSettingsView';
 import { SettingsView } from './features/settings/SettingsView';
 import { AuthView } from './features/auth/AuthView';
 import { CompanySetupView } from './features/onboarding/CompanySetupView';
+
+function isSettingsTab(tab: string): boolean {
+  return (
+    tab === 'settings' ||
+    tab.startsWith('settings#') ||
+    ['workflow', 'dependencies', 'members', 'activity', 'labels', 'danger', 'security', 'general'].includes(tab)
+  );
+}
+
+function getSettingsSectionFromTab(tab: string): SettingsSection {
+  if (tab.includes('#')) {
+    const sec = tab.split('#')[1];
+    if (sec === 'security' || sec === 'danger') return 'danger';
+    if (['general', 'members', 'workflow', 'dependencies', 'labels', 'activity'].includes(sec)) {
+      return sec as SettingsSection;
+    }
+  }
+  if (tab === 'workflow') return 'workflow';
+  if (tab === 'dependencies') return 'dependencies';
+  if (tab === 'members') return 'members';
+  if (tab === 'activity') return 'activity';
+  if (tab === 'labels') return 'labels';
+  if (tab === 'danger' || tab === 'security') return 'danger';
+  return 'general';
+}
 
 function MainAppShell() {
   const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate } = useApp();
@@ -142,6 +169,8 @@ function MainAppShell() {
             ) : (
               <>
                 {projectTab === 'overview' && <ProjectOverviewView />}
+                {/* Legacy /dashboard URL renders consolidated Overview (Req 2.5) */}
+                {projectTab === 'dashboard' && <ProjectOverviewView />}
                 {projectTab === 'list' && (
                   <ProjectListView onOpenCreateTask={() => setCreateTaskOpen(true)} />
                 )}
@@ -157,18 +186,15 @@ function MainAppShell() {
                     }}
                   />
                 )}
-                {projectTab === 'dashboard' && <ProjectDashboardView />}
-                {projectTab === 'workflow' && <WorkflowBuilderView key={currentWorkflow?.id} />}
-                {projectTab === 'dependencies' && <DependenciesView />}
-                {/* Direct-link backwards compatibility for /members and /activity URLs to Settings sections */}
-                {(projectTab === 'members' || projectTab === 'settings#members') && (
-                  <ProjectSettingsView key={`${currentProject.id}-members`} initialSection="members" />
+                {projectTab === 'sprint' && (
+                  <SprintDashboardView onOpenCreateSprint={() => setCreateSprintOpen(true)} />
                 )}
-                {(projectTab === 'activity' || projectTab === 'settings#activity') && (
-                  <ProjectSettingsView key={`${currentProject.id}-activity`} initialSection="activity" />
-                )}
-                {projectTab === 'settings' && (
-                  <ProjectSettingsView key={currentProject.id} />
+                {/* Unified Project Settings & Subsection Navigation */}
+                {isSettingsTab(projectTab) && (
+                  <ProjectSettingsView
+                    key={currentProject.id}
+                    initialSection={getSettingsSectionFromTab(projectTab)}
+                  />
                 )}
               </>
             )
@@ -213,8 +239,10 @@ function MainAppShell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainAppShell />
-    </AppProvider>
+    <ThemeProvider>
+      <AppProvider>
+        <MainAppShell />
+      </AppProvider>
+    </ThemeProvider>
   );
 }

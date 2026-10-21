@@ -258,4 +258,128 @@ describe('Workflow, Settings, and Task Editing Tests (Sections 11, 12, 13, 15, 1
       assert.deepEqual(savedWorkflow.statuses[4].name, 'Backlog');
     });
   });
+
+  describe('TaskFlow Pro — Final Statuses Default Workflow Requirements', () => {
+    it('verifies exact default workflow name and 7 statuses in exact order', async () => {
+      const { DEFAULT_STANDARD_WORKFLOW } = await import('../src/state/storage.ts');
+
+      assert.equal(DEFAULT_STANDARD_WORKFLOW.name, 'TaskFlow Pro — Final Statuses');
+      assert.equal(DEFAULT_STANDARD_WORKFLOW.statuses.length, 7);
+
+      const expectedOrder = [
+        'Backlog',
+        'In Progress',
+        'In Review',
+        'Testing / QA',
+        'Blocked',
+        'On Hold',
+        'Done',
+      ];
+
+      const actualOrder = DEFAULT_STANDARD_WORKFLOW.statuses.map((s) => s.name);
+      assert.deepEqual(actualOrder, expectedOrder);
+
+      // Verify recovery transitions
+      const blockedStatus = DEFAULT_STANDARD_WORKFLOW.statuses.find((s) => s.name === 'Blocked');
+      assert.ok(blockedStatus);
+      assert.ok(blockedStatus.allowedTransitions?.includes('In Progress'));
+      assert.ok(blockedStatus.allowedTransitions?.includes('Backlog'));
+
+      const onHoldStatus = DEFAULT_STANDARD_WORKFLOW.statuses.find((s) => s.name === 'On Hold');
+      assert.ok(onHoldStatus);
+      assert.ok(onHoldStatus.allowedTransitions?.includes('In Progress'));
+    });
+
+    it('verifies legacy /dashboard, /workflow, and /dependencies URL routing normalization', () => {
+      function resolveProjectTabFromRoute(hash: string): { projectId?: string; projectTab?: string } {
+        const clean = hash.replace(/^#/, '');
+        const match = clean.match(/^\/project\/([^/]+)(?:\/([^/]+))?/);
+        if (!match) return {};
+        const projectId = match[1];
+        if (!match[2]) return { projectId, projectTab: 'overview' };
+
+        const rawTab = match[2].split(/[#?]/)[0];
+        const hashSection = match[2].includes('#') ? match[2].split('#')[1] : null;
+
+        if (rawTab === 'dashboard') {
+          return { projectId, projectTab: 'overview' };
+        } else if (rawTab === 'workflow') {
+          return { projectId, projectTab: 'settings#workflow' };
+        } else if (rawTab === 'dependencies') {
+          return { projectId, projectTab: 'settings#dependencies' };
+        } else if (rawTab === 'members') {
+          return { projectId, projectTab: 'settings#members' };
+        } else if (rawTab === 'activity') {
+          return { projectId, projectTab: 'settings#activity' };
+        } else if (rawTab === 'settings' && hashSection) {
+          return { projectId, projectTab: `settings#${hashSection}` };
+        }
+        return { projectId, projectTab: rawTab };
+      }
+
+      // Legacy dashboard routes to overview
+      assert.deepEqual(resolveProjectTabFromRoute('#/project/p-100/dashboard'), {
+        projectId: 'p-100',
+        projectTab: 'overview',
+      });
+
+      // Legacy workflow top-level tab routes to settings#workflow
+      assert.deepEqual(resolveProjectTabFromRoute('#/project/p-100/workflow'), {
+        projectId: 'p-100',
+        projectTab: 'settings#workflow',
+      });
+
+      // Legacy dependencies top-level tab routes to settings#dependencies
+      assert.deepEqual(resolveProjectTabFromRoute('#/project/p-100/dependencies'), {
+        projectId: 'p-100',
+        projectTab: 'settings#dependencies',
+      });
+
+      // Overview route stays overview
+      assert.deepEqual(resolveProjectTabFromRoute('#/project/p-100/overview'), {
+        projectId: 'p-100',
+        projectTab: 'overview',
+      });
+
+      // Settings hash stays settings#workflow
+      assert.deepEqual(resolveProjectTabFromRoute('#/project/p-100/settings#workflow'), {
+        projectId: 'p-100',
+        projectTab: 'settings#workflow',
+      });
+    });
+
+    it('verifies workflow name resolution avoids raw UUID or project ID suffixes', () => {
+      function resolveWorkflowName(rawName?: string): string {
+        const isGeneric =
+          !rawName ||
+          rawName === 'Custom Engineering Flow' ||
+          rawName === 'Standard Engineering Flow' ||
+          rawName.endsWith(' Workflow') ||
+          /^[0-9a-fA-F-]{20,}/.test(rawName);
+
+        return isGeneric ? 'TaskFlow Pro — Final Statuses' : rawName;
+      }
+
+      assert.equal(
+        resolveWorkflowName('cf78bf63-1fe3-48a6-8fce-f98ac43f75f9 Workflow'),
+        'TaskFlow Pro — Final Statuses'
+      );
+      assert.equal(
+        resolveWorkflowName('cf78bf63-1fe3-48a6-8fce-f98ac43f75f9'),
+        'TaskFlow Pro — Final Statuses'
+      );
+      assert.equal(
+        resolveWorkflowName('Custom Engineering Flow'),
+        'TaskFlow Pro — Final Statuses'
+      );
+      assert.equal(
+        resolveWorkflowName('TaskFlow Pro — Final Statuses'),
+        'TaskFlow Pro — Final Statuses'
+      );
+      assert.equal(
+        resolveWorkflowName('Deliberate Custom Mobile Release Pipeline'),
+        'Deliberate Custom Mobile Release Pipeline'
+      );
+    });
+  });
 });

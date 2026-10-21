@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, resetAllStorage } from './storage';
+import { loadInitialState, saveStateToStorage, fallbackUser, DEFAULT_STANDARD_WORKFLOW } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
@@ -61,6 +61,7 @@ import {
   saveProjectWorkflowApi,
   getProjectAuditLogsApi,
   createAuditLogApi,
+  undoAuditLogApi,
   getUserNotificationsApi,
   markNotificationReadApi,
   markAllNotificationsReadApi,
@@ -99,18 +100,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => {
     if (typeof window !== 'undefined' && window.location.hash) {
-      const match = window.location.hash.match(/^\/project\/([^/]+)/);
+      const cleanHash = window.location.hash.replace(/^#/, '');
+      const match = cleanHash.match(/^\/project\/([^/]+)/);
       if (match && match[1] && match[1] !== 'proj-1') return match[1];
     }
     return '';
   });
-  const [projectTab, setProjectTab] = useState<string>('overview'); // overview, list, board, timeline, calendar, dashboard, workflow, dependencies, members, activity, settings
+  const [projectTab, setProjectTab] = useState<string>(() => {
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const cleanHash = window.location.hash.replace(/^#/, '');
+      const match = cleanHash.match(/^\/project\/([^/]+)(?:\/([^/]+))?/);
+      if (match && match[2]) {
+        const rawTab = match[2].split(/[#?]/)[0];
+        const hashSection = match[2].includes('#') ? match[2].split('#')[1] : null;
+        if (rawTab === 'dashboard') return 'overview';
+        if (rawTab === 'workflow') return 'settings#workflow';
+        if (rawTab === 'dependencies') return 'settings#dependencies';
+        if (rawTab === 'members') return 'settings#members';
+        if (rawTab === 'activity') return 'settings#activity';
+        if (rawTab === 'settings' && hashSection) return `settings#${hashSection}`;
+        return rawTab;
+      }
+    }
+    return 'overview';
+  });
   const [activeDrawerTaskId, setActiveDrawerTaskId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [impactModalData, setImpactModalData] = useState<any>(null);
   const [conflictModalData, setConflictModalData] = useState<any>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [crossTabIndicator, setCrossTabIndicator] = useState<boolean>(false);
+  const [pendingSignupPassword, setPendingSignupPassword] = useState<string>('');
 
   // Hash route synchronization
   useEffect(() => {
@@ -125,8 +145,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (match[2]) {
           const rawTab = match[2].split(/[#?]/)[0];
           const hashSection = match[2].includes('#') ? match[2].split('#')[1] : null;
-          if (rawTab === 'settings' && hashSection === 'members') {
-            setProjectTab('members');
+          if (rawTab === 'dashboard') {
+            setProjectTab('overview');
+          } else if (rawTab === 'workflow') {
+            setProjectTab('settings#workflow');
+          } else if (rawTab === 'dependencies') {
+            setProjectTab('settings#dependencies');
+          } else if (rawTab === 'members') {
+            setProjectTab('settings#members');
+          } else if (rawTab === 'activity') {
+            setProjectTab('settings#activity');
+          } else if (rawTab === 'settings' && hashSection) {
+            setProjectTab(`settings#${hashSection}`);
           } else {
             setProjectTab(rawTab);
           }
@@ -146,16 +176,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveRoute(route);
   }, []);
 
-  // Sync to localStorage
+  // Sync session/identity only to localStorage (business data is retrieved from PostgreSQL)
   useEffect(() => saveStateToStorage('CURRENT_USER', currentUser), [currentUser]);
   useEffect(() => saveStateToStorage('COMPANY', currentCompany), [currentCompany]);
-  useEffect(() => saveStateToStorage('PROJECTS', projects), [projects]);
-  useEffect(() => saveStateToStorage('TASKS', tasks), [tasks]);
-  useEffect(() => saveStateToStorage('WORKFLOWS', workflows), [workflows]);
-  useEffect(() => saveStateToStorage('NOTIFICATIONS', notifications), [notifications]);
-  useEffect(() => saveStateToStorage('AUDIT_LOG', auditLog), [auditLog]);
-  useEffect(() => saveStateToStorage('SPRINTS', sprints), [sprints]);
-  useEffect(() => saveStateToStorage('LABELS', labels), [labels]);
 
   // Toast helper
   const showToast = useCallback((message: string, type: ToastType = 'info') => {
@@ -173,14 +196,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async function initBackend() {
       try {
         let authRes = await currentUserApi().catch(() => null);
-        if (!authRes?.user) {
-          // If not currently logged in, auto-login with default admin account to restore session
-          const loginRes = await loginApi({ email: 'admin@taskflow.pro', password: 'Password123!' }).catch(() => null);
-          if (loginRes?.user) {
-            authRes = await currentUserApi().catch(() => null);
-          }
-        }
-
         if (authRes?.user && !isCancelled) {
           const u = authRes.user;
           const org = authRes.organization;
@@ -359,6 +374,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const wfRes = await getProjectWorkflowApi(currentProjectId).catch(() => null);
         if (wfRes?.data && !isCancelled) {
           const backendWf = wfRes.data;
+          const resolvedName =
+            backendWf.name &&
+            backendWf.name !== 'Custom Engineering Flow' &&
+            !backendWf.name.endsWith(' Workflow') &&
+            !/^[0-9a-fA-F-]{20,}/.test(backendWf.name)
+              ? backendWf.name
+              : 'TaskFlow Pro — Final Statuses';
+
           setWorkflows((prev) => {
             const exists = prev.some((w) => w.projectId === currentProjectId || w.id === `wf-${currentProjectId}`);
             if (exists) {
@@ -366,7 +389,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 if (w.projectId === currentProjectId || w.id === `wf-${currentProjectId}`) {
                   return {
                     ...w,
-                    statuses: backendWf.stages || w.statuses,
+                    name: resolvedName,
+                    statuses: backendWf.stages || backendWf.statuses || w.statuses,
                   };
                 }
                 return w;
@@ -377,8 +401,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 {
                   id: `wf-${currentProjectId}`,
                   projectId: currentProjectId,
-                  name: `${currentProjectId} Workflow`,
-                  statuses: backendWf.stages || [],
+                  name: resolvedName,
+                  statuses: backendWf.stages || backendWf.statuses || DEFAULT_STANDARD_WORKFLOW.statuses,
                 },
               ];
             }
@@ -390,13 +414,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (auditRes?.data && Array.isArray(auditRes.data) && !isCancelled) {
           const mappedAudit: AuditLogEntry[] = auditRes.data.map((a: any) => ({
             id: a.id,
-            actorId: a.userId,
+            actorId: a.userId || a.actorId,
+            actorName: a.actorName || a.userName,
+            userEmail: a.userEmail,
             action: a.action,
             entityType: a.entityType || 'task',
             entityId: a.entityId,
+            entityTitle: a.entityTitle || null,
             projectId: a.projectId,
-            description: a.details?.description || `${a.action} ${a.entityType}`,
-            timestamp: a.createdAt,
+            description: a.description || a.details?.description || `${a.action} ${a.entityType}`,
+            timestamp: a.timestamp || a.createdAt || a.created_at || new Date().toISOString(),
+            previousValue: a.previousState || a.previousValue,
+            newValue: a.newState || a.newValue,
+            previousState: a.previousState || a.previousValue,
+            newState: a.newState || a.newValue,
+            canUndo: Boolean(a.canUndo),
+            isUndone: Boolean(a.isUndone),
+            undoneAt: a.undoneAt || null,
+            reversalLogId: a.reversalLogId || null,
             details: a.details,
           }));
           setAuditLog((prev) => {
@@ -413,7 +448,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isCancelled = true;
     };
-  }, [currentProjectId, projects]);
+  }, [currentProjectId]);
 
   // Multi-tab broadcast subscription
   useEffect(() => {
@@ -457,11 +492,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const taskTitle =
+      entityType === 'task'
+        ? tasks.find((t) => t.id === entityId)?.title ||
+          newValue?.title ||
+          previousValue?.title ||
+          null
+        : null;
+
     const entry: AuditLogEntry = {
       id: `aud-${Date.now()}-${Math.random().toString(36).substring(5)}`,
       actorId: currentUser.id,
+      actorName: currentUser.name || currentUser.email || 'Unknown user',
+      userEmail: currentUser.email,
       entityType,
       entityId,
+      entityTitle: taskTitle,
       projectId: resolvedProjectId,
       action,
       description,
@@ -479,12 +525,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         action,
         entityType,
         entityId,
+        description,
         details: { description, previousValue, newValue },
-      }).catch((err) => {
-        console.warn('TaskFlow: Backend audit log notice:', err.message);
-      });
+        previousState: previousValue,
+        newState: newValue,
+      })
+        .then((res) => {
+          if (res?.data?.id) {
+            setAuditLog((prev) =>
+              prev.map((log) =>
+                log.id === entry.id
+                  ? {
+                      ...log,
+                      id: res.data.id,
+                      timestamp: res.data.createdAt || res.data.timestamp || log.timestamp,
+                    }
+                  : log
+              )
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn('TaskFlow: Backend audit log notice:', err.message);
+        });
     }
-  }, [currentUser.id, tasks, currentProjectId]);
+  }, [currentUser, tasks, currentProjectId]);
 
   // Active project
   const currentProject = useMemo(() => {
@@ -493,8 +558,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Active workflow
   const currentWorkflow = useMemo(() => {
-    if (!currentProject) return workflows[0];
-    return workflows.find((w) => w.projectId === currentProject.id || w.id === currentProject.workflowId) || workflows[0];
+    const fallback = workflows[0] || DEFAULT_STANDARD_WORKFLOW;
+    if (!currentProject) {
+      return {
+        ...fallback,
+        name:
+          fallback.name && !fallback.name.endsWith(' Workflow') && !/^[0-9a-fA-F-]{20,}/.test(fallback.name)
+            ? fallback.name
+            : 'TaskFlow Pro — Final Statuses',
+      };
+    }
+    const found =
+      workflows.find((w) => w.projectId === currentProject.id || w.id === currentProject.workflowId) || fallback;
+    const isGeneric =
+      !found.name ||
+      found.name === 'Custom Engineering Flow' ||
+      found.name.endsWith(' Workflow') ||
+      /^[0-9a-fA-F-]{20,}/.test(found.name);
+
+    return {
+      ...found,
+      name: isGeneric ? 'TaskFlow Pro — Final Statuses' : found.name,
+    };
   }, [workflows, currentProject]);
 
   // Tasks for current project
@@ -720,16 +805,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
       if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = updates.parentId || null;
+      if (updates.assignees !== undefined) {
+        const mapped = Array.isArray(updates.assignees)
+          ? updates.assignees
+              .map((a: any) => (typeof a === 'string' ? a : a.userId || a.id))
+              .filter((id: any) => typeof id === 'string' && id.trim().length > 0)
+          : [];
+        backendUpdates.assigneeIds = mapped;
+        backendUpdates.assignees = mapped.map((uid: string) => ({ userId: uid }));
+        backendUpdates.assigneeId = mapped[0] || null;
+      } else if (updates.assigneeIds !== undefined) {
+        const validIds = Array.isArray(updates.assigneeIds)
+          ? updates.assigneeIds.filter((id: any) => typeof id === 'string' && id.trim().length > 0)
+          : [];
+        backendUpdates.assigneeIds = validIds;
+        backendUpdates.assignees = validIds.map((uid: string) => ({ userId: uid }));
+        backendUpdates.assigneeId = validIds[0] || null;
+      } else if (updates.assigneeId !== undefined) {
+        const validId =
+          updates.assigneeId && typeof updates.assigneeId === 'string' && updates.assigneeId.trim().length > 0
+            ? updates.assigneeId.trim()
+            : null;
+        backendUpdates.assigneeId = validId;
+        backendUpdates.assigneeIds = validId ? [validId] : [];
+        backendUpdates.assignees = validId ? [{ userId: validId }] : [];
+      }
 
       if (Object.keys(backendUpdates).length > 0) {
-        updateWorkItemApi(taskId, backendUpdates).catch((err) => {
-          console.warn('TaskFlow: Backend task update notice:', err.message);
-        });
+        updateWorkItemApi(taskId, backendUpdates)
+          .then((res) => {
+            if (res?.data) {
+              const authoritativeTask = backendWorkItemToTask(
+                res.data,
+                res.data.projectId || currentProjectId
+              );
+              setTasks((currentTasks) =>
+                currentTasks.map((t) =>
+                  t.id === taskId ? { ...t, ...authoritativeTask } : t
+                )
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn('TaskFlow: Backend task update notice:', err.message);
+            showToast(`Failed to persist changes: ${err.message}`, 'error');
+          });
       }
     }
 
     return { success: true };
-  }, [recordAudit, showToast]);
+  }, [recordAudit, showToast, currentProjectId]);
 
   const deleteTask = useCallback((taskId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_TASK)) {
@@ -822,7 +947,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return nextList;
     });
 
-    recordAudit('status_changed', 'task', taskId, `Changed status of "${target.title}" to ${newStatus}`, previousValue, { status: newStatus }, true, target.projectId);
+    recordAudit('status_changed', 'task', taskId, `Changed status of "${target.title}" from "${target.status}" to "${newStatus}"`, previousValue, { status: newStatus }, true, target.projectId);
     broadcastEvent('TASK_UPDATED', updated);
 
     if (nextRecurring) {
@@ -1063,40 +1188,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Comments
-  const addComment = useCallback((taskId: string, body: string) => {
-    if (!body.trim()) return;
-    const newComment = {
-      id: `c-${Date.now()}`,
-      userId: currentUser.id,
-      authorId: currentUser.id,
-      body: body.trim(),
-      text: body.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment] } : t))
-    );
-    recordAudit('comment_added', 'task', taskId, `Added comment on task ${taskId}`, null, newComment, false);
-    showToast('Comment posted', 'info');
+  const addComment = useCallback(async (taskId: string, body: string) => {
+    if (!body.trim()) {
+      showToast('Comment text cannot be empty', 'error');
+      return;
+    }
+    const trimmed = body.trim();
 
-    if (taskId && taskId.includes('-')) {
-      addWorkItemCommentApi(taskId, body.trim()).then((res) => {
+    try {
+      let commentId = `c-${Date.now()}`;
+      let createdAt = new Date().toISOString();
+
+      if (taskId && taskId.includes('-')) {
+        const res = await addWorkItemCommentApi(taskId, trimmed);
         const serverComment = res?.data;
         if (serverComment?.id) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === taskId
-                ? {
-                    ...t,
-                    comments: (t.comments || []).map((c) => (c.id === newComment.id ? { ...c, id: serverComment.id } : c)),
-                  }
-                : t
-            )
-          );
+          commentId = serverComment.id;
+          if (serverComment.createdAt) {
+            createdAt = serverComment.createdAt;
+          }
         }
-      }).catch((err) => {
-        console.warn('TaskFlow: Backend comment save notice:', err.message);
-      });
+      }
+
+      const newComment = {
+        id: commentId,
+        userId: currentUser.id,
+        authorId: currentUser.id,
+        body: trimmed,
+        text: trimmed,
+        createdAt,
+      };
+
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment] } : t))
+      );
+      recordAudit('comment_added', 'task', taskId, `Added comment on task ${taskId}`, null, newComment, false);
+      showToast('Comment posted successfully', 'success');
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to save comment to server';
+      showToast(errMsg, 'error');
+      throw err;
     }
   }, [currentUser.id, recordAudit, showToast]);
 
@@ -1206,32 +1337,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [showToast]);
 
-  // Undo Audit Entry
-  const undoAuditEntry = useCallback((auditId: string) => {
+  // Undo Audit Entry (Persisted authoritative backend operation)
+  const undoAuditEntry = useCallback(async (auditId: string) => {
     const entry = auditLog.find((a) => a.id === auditId);
-    if (!entry || !entry.canUndo || !entry.previousValue) {
+    if (!entry || !entry.canUndo || entry.isUndone || !entry.previousValue) {
       showToast('This action cannot be undone', 'error');
       return;
     }
 
-    if (entry.entityType === 'task') {
-      setTasks((prev) =>
-        prev.map((t) => {
-          if (t.id === entry.entityId) {
-            return {
-              ...t,
-              ...entry.previousValue,
-              version: (t.version || 1) + 1,
-              updatedAt: new Date().toISOString(),
+    const projectId = entry.projectId || currentProjectId;
+    try {
+      const res = await undoAuditLogApi(projectId, auditId);
+      if (res?.success) {
+        // 1. If backend restored the task, update task state authoritatively
+        if (res.data?.restoredTask) {
+          const authoritative = backendWorkItemToTask(res.data.restoredTask, projectId);
+          setTasks((prev) =>
+            prev.map((t) => (t.id === entry.entityId ? { ...t, ...authoritative } : t))
+          );
+        }
+
+        // 2. Update audit log state authoritatively
+        setAuditLog((prev) => {
+          const updatedTarget = prev.map((a) => {
+            if (a.id === auditId) {
+              return {
+                ...a,
+                canUndo: false,
+                isUndone: true,
+                undoneAt: new Date().toISOString(),
+                reversalLogId: res.data?.reversalLog?.id || null,
+              };
+            }
+            return a;
+          });
+
+          // Prepend reversal log if provided
+          if (res.data?.reversalLog) {
+            const rev = res.data.reversalLog;
+            const reversalEntry: AuditLogEntry = {
+              id: rev.id,
+              actorId: currentUser.id,
+              actorName: currentUser.name || currentUser.fullName || 'User',
+              userEmail: currentUser.email,
+              action: 'undone',
+              entityType: rev.entityType || entry.entityType,
+              entityId: rev.entityId || entry.entityId,
+              entityTitle: entry.entityTitle || null,
+              projectId: rev.projectId || projectId,
+              description: rev.description || `Undid previous change`,
+              timestamp: rev.timestamp || rev.createdAt || new Date().toISOString(),
+              previousValue: rev.previousState,
+              newValue: rev.newState,
+              canUndo: false,
+              isUndone: false,
             };
+            return [reversalEntry, ...updatedTarget];
           }
-          return t;
-        })
-      );
-      recordAudit('undone', 'task', entry.entityId, `Reverted: ${entry.description}`, null, null, false);
-      showToast('Change successfully reverted', 'success');
+
+          return updatedTarget;
+        });
+
+        const taskTitle = entry.entityTitle || 'item';
+        showToast(`Reverted change to "${taskTitle}"`, 'success');
+      } else {
+        showToast(res?.message || 'Failed to undo action', 'error');
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to undo action';
+      showToast(msg, 'error');
     }
-  }, [auditLog, recordAudit, showToast]);
+  }, [auditLog, currentProjectId, currentUser, showToast]);
 
   // Project Lifecycle & CRUD
   const createProject = useCallback((projectData: any) => {
@@ -1248,7 +1424,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       description: projectData.description || '',
       visibility: projectData.visibility || 'global',
       status: 'On Track',
-      color: projectData.color || '#6B9CFF',
+      color: projectData.color || '#7465F6',
       ownerId: currentUser.id,
       memberIds: [currentUser.id],
       memberRoles: { [currentUser.id]: currentUser.role },
@@ -1407,7 +1583,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [currentUser.role, projects, recordAudit, showToast]);
 
-  const updateProjectKey = useCallback((projectId: string, newKey: string) => {
+  const updateProjectKey = useCallback(async (projectId: string, newKey: string): Promise<{ success: boolean; error?: string }> => {
     if (!hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
       showToast('Permission denied: Only Managers and Admins can update project identifiers', 'error');
       return { success: false, error: 'Permission denied' };
@@ -1426,26 +1602,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const previousKey = target.projectKey || target.id;
     if (previousKey === normalized) return { success: true };
 
-    setProjects((prev) =>
-      prev.map((p) =>
-        p.id === projectId
-          ? { ...p, projectKey: normalized, updatedAt: new Date().toISOString() }
-          : p
-      )
-    );
+    try {
+      if (typeof projectId === 'string' && projectId.includes('-')) {
+        await updateProjectApi(projectId, { key: normalized });
+      }
 
-    recordAudit(
-      'updated',
-      'project',
-      projectId,
-      `Updated project identifier from "${previousKey}" to "${normalized}"`,
-      { projectKey: previousKey },
-      { projectKey: normalized },
-      false,
-      projectId
-    );
-    showToast(`Project identifier updated to "${normalized}"`, 'success');
-    return { success: true };
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectId
+            ? { ...p, projectKey: normalized, updatedAt: new Date().toISOString() }
+            : p
+        )
+      );
+
+      recordAudit(
+        'updated',
+        'project',
+        projectId,
+        `Updated project identifier from "${previousKey}" to "${normalized}"`,
+        { projectKey: previousKey },
+        { projectKey: normalized },
+        false,
+        projectId
+      );
+      showToast(`Project identifier updated to "${normalized}"`, 'success');
+      return { success: true };
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to update project key on server';
+      showToast(errMsg, 'error');
+      return { success: false, error: errMsg };
+    }
   }, [currentUser.role, projects, recordAudit, showToast]);
 
   const deleteProject = useCallback((projectId: string) => {
@@ -1526,7 +1712,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId);
     recordAudit('member_added', 'project', projectId, `Added ${userObj?.name || userId} (${role}) to project`, null, { userId, role }, false, projectId);
     showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
 
@@ -1568,7 +1754,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId);
     recordAudit('member_removed', 'project', projectId, `Removed ${userObj?.name || userId} from project`, null, { userId }, false, projectId);
     showToast('Member removed from project', 'info');
 
@@ -1608,7 +1794,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser((prev) => ({ ...prev, role: newRole }));
     }
 
-    const userObj = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
+    const userObj = allUsers.find((u) => u.id === userId);
     recordAudit('role_changed', 'project', projectId, `Changed role of ${userObj?.name || userId} to ${newRole}`, null, { userId, role: newRole }, false, projectId);
     showToast(`Role updated to ${newRole}`, 'success');
 
@@ -1683,29 +1869,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutApi().catch(() => null);
-    setCurrentUser(mockUsers[0]);
+    setCurrentUser(fallbackUser);
     showToast('Signed out successfully', 'info');
     navigate('/login');
   }, [navigate, showToast]);
-
-  // Role Switcher (Simulated user selector for prototype testing)
-  const switchUser = useCallback((userId: string) => {
-    const target = allUsers.find((u) => u.id === userId) || mockUsers.find((u) => u.id === userId);
-    if (target) {
-      setCurrentUser(target);
-      showToast(`Switched active role to ${target.role} (${target.name})`, 'info');
-      // If demo user, authenticate with backend session as well
-      const roleEmailMap: Record<string, string> = {
-        Admin: 'admin@taskflow.pro',
-        Manager: 'manager@taskflow.pro',
-        Teammate: 'teammate@taskflow.pro',
-      };
-      const email = roleEmailMap[target.role];
-      if (email) {
-        loginApi({ email, password: 'Password123!' }).catch(() => null);
-      }
-    }
-  }, [allUsers, showToast]);
 
   const registerUser = useCallback((userData: { name: string; email: string }): User => {
     const initials = userData.name
@@ -1803,7 +1970,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         newSprint.id = serverSprintId;
       }
     } catch (err: any) {
-      console.warn('TaskFlow: Backend createSprint notification:', err.message);
+      const errMsg = err?.message || 'Failed to create sprint on server';
+      showToast(errMsg, 'error');
+      throw err;
     }
 
     setSprints((prev) => [newSprint, ...prev]);
@@ -1872,31 +2041,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast('Label removed', 'info');
   }, [labels, recordAudit, showToast]);
 
-  // Reset Demo State
-  const resetDemoState = useCallback(() => {
-    resetAllStorage();
-    setCurrentUser(mockUsers[0]);
-    setCurrentCompany(defaultCompany);
-    setProjects(mockProjects);
-    setTasks(mockTasks);
-    setWorkflows(mockWorkflows);
-    setNotifications(mockNotifications);
-    setAuditLog(mockAuditLog);
-    setSprints(mockSprints);
-    setLabels(mockLabels);
-    setCurrentProjectId('proj-1');
-    setProjectTab('overview');
-    setActiveDrawerTaskId(null);
-    showToast('Demo data restored to initial seed state', 'success');
-  }, [showToast]);
-
   const value: AppContextValue = {
     currentUser,
     currentCompany,
     registerUser,
     completeCompanyOnboarding,
     finishOnboarding,
-    switchUser,
     projects,
     createProject,
     updateProject,
@@ -1930,6 +2080,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toggleSubtask,
     deleteSubtask,
     addComment,
+    pendingSignupPassword,
+    setPendingSignupPassword,
     logTimeEntry,
     escalateTask,
     simulateExternalTaskEdit,
@@ -1953,7 +2105,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toasts,
     showToast,
     crossTabIndicator,
-    resetDemoState,
     allUsers,
     login,
     logout,

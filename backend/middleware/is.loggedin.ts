@@ -23,9 +23,14 @@ export const isLoggedIn = async (
         ? authHeader.slice(7).trim()
         : undefined;
 
-    const token = req.cookies?.token || bearerToken;
+    const cookieToken =
+      typeof req.cookies?.token === "string" ? req.cookies.token : undefined;
 
-    if (!token || typeof token !== "string") {
+    const candidateTokens: string[] = [];
+    if (bearerToken) candidateTokens.push(bearerToken);
+    if (cookieToken && cookieToken !== bearerToken) candidateTokens.push(cookieToken);
+
+    if (candidateTokens.length === 0) {
       throw new AppError(
         "Authentication required. Please log in.",
         401,
@@ -33,18 +38,39 @@ export const isLoggedIn = async (
       );
     }
 
-    const decoded = jwt.verify(
-      token,
-      config.accessTokenSecret,
-      { algorithms: ["HS256"] },
-    );
+    let decoded: any = null;
+    let lastError: any = null;
+    for (const token of candidateTokens) {
+      try {
+        const candidate = jwt.verify(
+          token,
+          config.accessTokenSecret,
+          { algorithms: ["HS256"] },
+        );
+        if (
+          typeof candidate !== "string" &&
+          typeof candidate?.userId === "string" &&
+          candidate.userId.length > 0 &&
+          candidate.type === "ACCESS"
+        ) {
+          decoded = candidate;
+          lastError = null;
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        decoded = null;
+      }
+    }
 
-    if (
-      typeof decoded === "string" ||
-      typeof decoded.userId !== "string" ||
-      decoded.userId.length === 0 ||
-      decoded.type !== "ACCESS"
-    ) {
+    if (!decoded || typeof decoded.userId !== "string" || decoded.userId.length === 0) {
+      if (lastError instanceof jwt.JsonWebTokenError) {
+        throw new AppError(
+          "Invalid or expired authentication token.",
+          401,
+          "INVALID_TOKEN",
+        );
+      }
       throw new AppError(
         "Invalid authentication token.",
         401,

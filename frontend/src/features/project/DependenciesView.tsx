@@ -15,7 +15,11 @@ interface DependencyLink {
   successor: Task;
 }
 
-export function DependenciesView() {
+export interface DependenciesViewProps {
+  isEmbedded?: boolean;
+}
+
+export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) {
   const { projectTasks, addDependency, removeDependency, openTaskDrawer, showToast, currentUser } = useApp();
 
   const [fromTaskId, setFromTaskId] = useState('');
@@ -65,7 +69,7 @@ export function DependenciesView() {
   }, [projectTasks]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className={isEmbedded ? 'space-y-6' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6'}>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
         <div>
@@ -80,13 +84,13 @@ export function DependenciesView() {
 
       {/* Cycle Detection Interactive Banner */}
       {cycleAlert && (
-        <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-200 space-y-2 animate-in fade-in duration-200">
-          <div className="flex items-center gap-2 font-bold text-rose-300 text-sm">
-            <AlertTriangle size={18} className="text-rose-400 flex-shrink-0" />
+        <div className="p-4 rounded-xl bg-status-danger-bg border border-status-danger-border text-xs text-status-danger-text space-y-2 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 font-bold text-status-danger-text text-sm">
+            <AlertTriangle size={18} className="text-danger flex-shrink-0" />
             <span>Cycle Prevention Triggered</span>
           </div>
           <p className="leading-relaxed">{cycleAlert.reason}</p>
-          <p className="text-[11px] text-rose-300/80">
+          <p className="text-[11px] text-status-danger-text/90">
             Rule: A circular dependency would deadlock project scheduling because no task in the loop could legally complete first.
           </p>
         </div>

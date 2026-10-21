@@ -15,6 +15,7 @@ export interface Company {
 export interface User {
   id: string;
   name: string;
+  fullName?: string;
   email: string;
   role: Role;
   avatar?: string;
@@ -111,6 +112,7 @@ export interface Task {
   priority?: Priority | null;
   assigneeId?: string | null;
   assigneeIds?: string[];
+  assignees?: User[];
   labels?: string[];
   sprintId?: string | null;
   creatorId?: string;
@@ -249,9 +251,12 @@ export interface AuditLogEntry {
   id: string;
   userId?: string;
   actorId?: string;
+  actorName?: string;
+  userEmail?: string;
   action: string;
   entityType: 'task' | 'project' | 'workflow' | string;
   entityId: string;
+  entityTitle?: string | null;
   projectId?: string;
   description: string;
   timestamp: string;
@@ -260,6 +265,9 @@ export interface AuditLogEntry {
   previousValue?: any;
   newValue?: any;
   canUndo?: boolean;
+  isUndone?: boolean;
+  undoneAt?: string | null;
+  reversalLogId?: string | null;
   [key: string]: any;
 }
 
@@ -277,13 +285,12 @@ export interface AppContextValue {
   registerUser: (userData: { name: string; email: string }) => User;
   completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
   finishOnboarding: () => void;
-  switchUser: (userId: string) => void;
   projects: Project[];
   createProject: (projectData: Partial<Project>) => Project | null;
   updateProject: (projectId: string, updates: Partial<Project>) => boolean;
   renameProject: (projectId: string, name: string) => boolean;
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
-  updateProjectKey: (projectId: string, key: string) => { success: boolean; error?: string };
+  updateProjectKey: (projectId: string, key: string) => Promise<{ success: boolean; error?: string }>;
   deleteProject: (projectId: string) => boolean;
   addProjectMember: (projectId: string, userId: string, role?: Role) => void;
   removeProjectMember: (projectId: string, userId: string) => boolean;
@@ -310,7 +317,9 @@ export interface AppContextValue {
   addSubtask: (taskId: string, title: string) => void;
   toggleSubtask: (taskId: string, subtaskId: string) => void;
   deleteSubtask: (taskId: string, subtaskId: string) => void;
-  addComment: (taskId: string, text: string) => void;
+  addComment: (taskId: string, text: string) => Promise<void>;
+  pendingSignupPassword?: string;
+  setPendingSignupPassword?: (pwd: string) => void;
   logTimeEntry: (taskId: string, hours: number, note?: string) => void;
   escalateTask: (taskId: string) => void;
   simulateExternalTaskEdit: (taskId: string) => void;
@@ -334,7 +343,6 @@ export interface AppContextValue {
   toasts: ToastMessage[];
   showToast: (message: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
   crossTabIndicator: boolean;
-  resetDemoState: () => void;
   allUsers: User[];
   sprints: Sprint[];
   projectSprints: Sprint[];
@@ -348,4 +356,3 @@ export interface AppContextValue {
   isLoadingBackend?: boolean;
   [key: string]: any;
 }
-

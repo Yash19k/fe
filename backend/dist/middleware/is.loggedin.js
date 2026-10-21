@@ -15,15 +15,38 @@ const isLoggedIn = async (req, res, next) => {
         const bearerToken = authHeader?.startsWith("Bearer ")
             ? authHeader.slice(7).trim()
             : undefined;
-        const token = req.cookies?.token || bearerToken;
-        if (!token || typeof token !== "string") {
+        const cookieToken = typeof req.cookies?.token === "string" ? req.cookies.token : undefined;
+        const candidateTokens = [];
+        if (bearerToken)
+            candidateTokens.push(bearerToken);
+        if (cookieToken && cookieToken !== bearerToken)
+            candidateTokens.push(cookieToken);
+        if (candidateTokens.length === 0) {
             throw new app_error_1.AppError("Authentication required. Please log in.", 401, "UNAUTHORIZED");
         }
-        const decoded = jsonwebtoken_1.default.verify(token, config_1.config.accessTokenSecret, { algorithms: ["HS256"] });
-        if (typeof decoded === "string" ||
-            typeof decoded.userId !== "string" ||
-            decoded.userId.length === 0 ||
-            decoded.type !== "ACCESS") {
+        let decoded = null;
+        let lastError = null;
+        for (const token of candidateTokens) {
+            try {
+                const candidate = jsonwebtoken_1.default.verify(token, config_1.config.accessTokenSecret, { algorithms: ["HS256"] });
+                if (typeof candidate !== "string" &&
+                    typeof candidate?.userId === "string" &&
+                    candidate.userId.length > 0 &&
+                    candidate.type === "ACCESS") {
+                    decoded = candidate;
+                    lastError = null;
+                    break;
+                }
+            }
+            catch (err) {
+                lastError = err;
+                decoded = null;
+            }
+        }
+        if (!decoded || typeof decoded.userId !== "string" || decoded.userId.length === 0) {
+            if (lastError instanceof jsonwebtoken_1.default.JsonWebTokenError) {
+                throw new app_error_1.AppError("Invalid or expired authentication token.", 401, "INVALID_TOKEN");
+            }
             throw new app_error_1.AppError("Invalid authentication token.", 401, "INVALID_TOKEN");
         }
         const payload = decoded;
