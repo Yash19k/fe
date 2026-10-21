@@ -6,7 +6,7 @@ import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { Organization } from "../entities/organization.entity";
 import { ProjectMember } from "../entities/project.member.entity";
 import { Project } from "../entities/project.entity";
-import { onboardingSchema } from "../validations/user.validator";
+import { invitedMembersSchema, onboardingSchema } from "../validations/user.validator";
 import { generateAccessToken, generateRefreshToken } from "../utils/auth.token";
 import Joi from "joi";
 import { UserSession } from "../entities/user.session.entity";
@@ -164,7 +164,7 @@ export async function addOrganizationMembers(
   res: Response,
   next: NextFunction,
 ) {
-  const { error, value } = invitedMemberSchema.validate(req.body, {
+  const { error, value } = invitedMembersSchema.validate(req.body, {
     abortEarly: false,
     stripUnknown: true,
   });

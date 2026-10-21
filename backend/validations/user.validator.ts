@@ -1,4 +1,5 @@
   import Joi from "joi";
+import { UserRole } from "../entities/user.entity";
   // const Joi = require("joi");
 const passwordSchema = Joi.string()
   .min(8)
@@ -39,7 +40,28 @@ const passwordSchema = Joi.string()
       "string.empty": "Password is required",
     }),
   });
-
+export const invitedMembersSchema = Joi.alternatives().try(
+  Joi.array().items(
+    Joi.object({
+      email: Joi.string().email().required(),
+      role: Joi.string()
+        .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
+        .default(UserRole.TEAMMATE),
+    }),
+  ),
+  Joi.object({
+    members: Joi.array()
+      .items(
+        Joi.object({
+          email: Joi.string().email().required(),
+          role: Joi.string()
+            .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
+            .default(UserRole.TEAMMATE),
+        }),
+      )
+      .required(),
+  }),
+);
 
 
 export const onboardingSchema = Joi.object({
