@@ -1696,13 +1696,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, tasks, currentProjectId, navigate, showToast]);
 
   // Project Members Management
-  const addProjectMember = useCallback((projectId: string, userId: string, role: Role = 'Teammate') => {
+  const addProjectMember = useCallback(async (projectId: string, userId: string, role: Role = 'Teammate', user?: User): Promise<boolean> => {
     const targetProj = projects.find((p) => p.id === projectId);
-    if (!targetProj) return;
+    if (!targetProj) return false;
 
     if ((targetProj.memberIds || []).includes(userId)) {
       showToast('User is already a project member', 'error');
-      return;
+      return false;
+    }
+
+    if (user) {
+      setAllUsers((prev) => {
+        if (prev.some((u) => u.id === user.id)) return prev;
+        return [...prev, user];
+      });
+    }
+
+    if (typeof projectId === 'string' && projectId.includes('-')) {
+      try {
+        await addProjectMemberApi(projectId, { memberId: userId, role: toBackendProjectRole(role) });
+      } catch (err: any) {
+        console.warn('TaskFlow: Backend add member error:', err.message);
+        showToast(err.message || 'Failed to add member to project', 'error');
+        return false;
+      }
     }
 
     setProjects((prev) =>
@@ -1723,16 +1740,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    const userObj = allUsers.find((u) => u.id === userId);
+    const userObj = user || allUsers.find((u) => u.id === userId);
     recordAudit('member_added', 'project', projectId, `Added ${userObj?.name || userId} (${role}) to project`, null, { userId, role }, false, projectId);
     showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
-
-    if (typeof projectId === 'string' && projectId.includes('-')) {
-      addProjectMemberApi(projectId, { memberId: userId, role: toBackendProjectRole(role) }).catch((err) => {
-        console.warn('TaskFlow: Backend add member notice:', err.message);
-        showToast(err.message || 'Failed to persist member addition', 'error');
-      });
-    }
+    return true;
   }, [projects, allUsers, recordAudit, showToast]);
 
   const removeProjectMember = useCallback((projectId: string, userId: string) => {

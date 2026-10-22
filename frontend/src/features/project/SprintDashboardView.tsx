@@ -270,17 +270,6 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
             />
           </div>
 
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={RefreshCw}
-            onClick={() => { loadSprints(); }}
-            className="h-8"
-            title="Refresh sprint metrics from database"
-          >
-            Refresh
-          </Button>
-
           {selectedSprint && onOpenCreateTask && (
             <Button
               variant="primary"

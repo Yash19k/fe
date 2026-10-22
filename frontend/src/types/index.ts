@@ -301,7 +301,7 @@ export interface AppContextValue {
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
   updateProjectKey: (projectId: string, key: string) => Promise<{ success: boolean; error?: string }>;
   deleteProject: (projectId: string) => boolean;
-  addProjectMember: (projectId: string, userId: string, role?: Role) => void;
+  addProjectMember: (projectId: string, userId: string, role?: Role, user?: User) => Promise<boolean>;
   removeProjectMember: (projectId: string, userId: string) => boolean;
   updateProjectMemberRole: (projectId: string, userId: string, role: Role) => boolean;
   currentProjectId: string;

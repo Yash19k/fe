@@ -3,7 +3,8 @@ import { useApp } from '../../hooks/useApp';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
-import { Plus, Trash2, Search, Crown, ShieldAlert } from 'lucide-react';
+import { Plus, Trash2, Search, ShieldAlert } from 'lucide-react';
+import { AddProjectMemberDialog } from '../../components/modals/AddProjectMemberDialog';
 import type { User, Task, Role } from '../../types';
 
 export function ProjectMembersView() {
@@ -18,6 +19,7 @@ export function ProjectMembersView() {
     showToast,
   } = useApp();
 
+  const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedRole, setSelectedRole] = useState<Role>('Teammate');
   const [memberToRemove, setMemberToRemove] = useState<User | null>(null);
@@ -91,53 +93,8 @@ export function ProjectMembersView() {
         </div>
       </div>
 
-      {/* Add Member Bar (if Manager or Admin) */}
-      {canManageMembers && nonMembers.length > 0 && (
-        <form
-          onSubmit={handleAddMember}
-          className="p-4 rounded-xl bg-surface border border-border flex flex-wrap items-end gap-3 text-xs"
-        >
-          <div className="flex-1 min-w-[220px]">
-            <label className="block text-xs font-medium text-text-secondary mb-1">
-              Add Member to Project
-            </label>
-            <select
-              value={selectedUserId}
-              onChange={(e) => setSelectedUserId(e.target.value)}
-              className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none"
-            >
-              <option value="">Select an available user...</option>
-              {nonMembers.map((u: User) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} — {u.email}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="w-36">
-            <label className="block text-xs font-medium text-text-secondary mb-1">
-              Project Role
-            </label>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value as Role)}
-              className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none"
-            >
-              <option value="Admin">Admin</option>
-              <option value="Manager">Manager</option>
-              <option value="Teammate">Teammate</option>
-            </select>
-          </div>
-
-          <Button variant="primary" size="md" type="submit" icon={Plus} disabled={!selectedUserId}>
-            Add Member
-          </Button>
-        </form>
-      )}
-
-      {/* Filter / Search Bar */}
-      <div className="flex items-center justify-between gap-3 text-xs">
+      {/* Action & Filter Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="relative w-full max-w-xs">
           <input
             type="search"
@@ -149,21 +106,36 @@ export function ProjectMembersView() {
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
         </div>
 
-        <div className="text-text-muted text-[11px] font-mono">
-          {members.length} {members.length === 1 ? 'member' : 'members'} in project
+        <div className="flex items-center gap-3">
+          <div className="text-text-muted text-[11px] font-mono">
+            {members.length} {members.length === 1 ? 'member' : 'members'} in project
+          </div>
+
+          {canManageMembers && (
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Plus}
+              onClick={() => setAddMemberModalOpen(true)}
+            >
+              Add Member
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Members Table */}
       <section className="bg-surface rounded-xl border border-border overflow-hidden">
-        <div className="hidden md:grid md:grid-cols-[2fr_130px_110px_110px_110px_50px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-          <span>Member</span>
-          <span>Role</span>
-          <span>Assigned Tasks</span>
-          <span>Completed</span>
-          <span>Workload</span>
-          <span className="text-right">Actions</span>
-        </div>
+        <div className="overflow-x-auto">
+          <div className="min-w-[780px]">
+            <div className="grid grid-cols-[minmax(220px,2fr)_140px_110px_100px_110px_70px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider select-none">
+              <span>Member</span>
+              <span>Project Role</span>
+              <span>Assigned Tasks</span>
+              <span>Completed</span>
+              <span>Workload</span>
+              <span className="text-right">Actions</span>
+            </div>
 
         <div className="divide-y divide-border/60">
           {filteredMembers.length === 0 ? (
@@ -189,7 +161,7 @@ export function ProjectMembersView() {
               return (
                 <div
                   key={member.id}
-                  className="grid grid-cols-1 md:grid-cols-[2fr_130px_110px_110px_110px_50px] gap-3 items-center px-5 py-3.5 hover:bg-surface-hover/70 transition-colors text-xs"
+                  className="grid grid-cols-[minmax(220px,2fr)_140px_110px_100px_110px_70px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
                 >
                   {/* Member Info */}
                   <div className="flex items-center gap-3 min-w-0">
@@ -205,15 +177,7 @@ export function ProjectMembersView() {
                             You
                           </span>
                         )}
-                        {isOwner && (
-                          <span
-                            className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-500/25 shrink-0"
-                            title="Project Owner"
-                          >
-                            <Crown size={10} />
-                            Owner
-                          </span>
-                        )}
+
                       </div>
                       <p className="text-[11px] text-text-muted truncate">{member.email}</p>
                     </div>
@@ -231,6 +195,7 @@ export function ProjectMembersView() {
                         onChange={(e) => handleRoleChange(member.id, e.target.value as Role)}
                         className="h-7 rounded-md bg-surface-elevated border border-border px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary cursor-pointer"
                         title="Change member role in project"
+                        aria-label={`Change role for ${member.name}`}
                       >
                         <option value="Admin">Admin</option>
                         <option value="Manager">Manager</option>
@@ -244,19 +209,19 @@ export function ProjectMembersView() {
                   </div>
 
                   {/* Assigned */}
-                  <div className="font-mono text-text-primary">
-                    {memberTasks.length} tasks
+                  <div className="font-mono text-text-primary truncate">
+                    {memberTasks.length} {memberTasks.length === 1 ? 'task' : 'tasks'}
                   </div>
 
                   {/* Completed */}
-                  <div className="font-mono text-emerald-400">
+                  <div className="font-mono text-emerald-500 dark:text-emerald-400 truncate">
                     {doneTasks.length} closed
                   </div>
 
                   {/* Workload Status */}
-                  <div>
+                  <div className="flex items-center">
                     <span
-                      className={`text-[10px] font-medium px-2 py-0.5 rounded ${
+                      className={`inline-flex items-center justify-center min-w-[76px] text-[10px] font-medium px-2 py-0.5 rounded ${
                         activeCount > 4
                           ? 'bg-rose-500/15 text-rose-300'
                           : activeCount > 2
@@ -294,7 +259,20 @@ export function ProjectMembersView() {
             })
           )}
         </div>
+          </div>
+        </div>
       </section>
+
+      {/* Add Member to Project Dialog */}
+      {addMemberModalOpen && currentProject && (
+        <AddProjectMemberDialog
+          isOpen={addMemberModalOpen}
+          onClose={() => setAddMemberModalOpen(false)}
+          projectId={currentProject.id}
+          existingMemberIds={currentMemberIds}
+          onAddMember={addProjectMember}
+        />
+      )}
 
       {/* Accessible Confirmation Dialog for Removing Member */}
       <Dialog
