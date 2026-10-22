@@ -91,6 +91,12 @@ function MainAppShell() {
     return <AuthView isSignup={true} />;
   }
 
+  // Route Guard: Block protected workspace screens when unauthenticated or signed out
+  const isAuthenticated = Boolean(currentUser && currentUser.id && currentUser.email);
+  if (!isAuthenticated) {
+    return <AuthView isSignup={false} />;
+  }
+
   // Dedicated Company Setup & Onboarding Guard:
   // Render CompanySetupView if the user has not completed onboarding,
   // or is explicitly on the /onboarding/company route and has not completed setup.

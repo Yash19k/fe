@@ -25,10 +25,12 @@ import {
   AlertCircle,
   Workflow,
   Network,
+  Eye,
 } from 'lucide-react';
 import type { User, ProjectVisibility, Role, Label, AuditLogEntry, Task } from '../../types';
 import { WorkflowBuilderView } from './WorkflowBuilderView';
 import { DependenciesView } from './DependenciesView';
+import { AuditEventDetailsDialog } from '../../components/activity/AuditEventDetailsDialog';
 
 export type SettingsSection = 'general' | 'members' | 'workflow' | 'dependencies' | 'labels' | 'activity' | 'danger';
 
@@ -430,6 +432,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   // ACTIVITY & AUDIT SECTION STATE (Feature 13)
   // ==========================================
   const [auditFilter, setAuditFilter] = useState('');
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLogEntry | null>(null);
 
   // Pre-calculate member lists and filtered members hook unconditionally at top level
   const currentMemberIds = currentProject?.memberIds || [];
@@ -663,19 +666,14 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <button
                 type="button"
                 onClick={() => handleSelectSection('members')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   activeSection === 'members'
                     ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
                     : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Users size={14} className={activeSection === 'members' ? 'text-brand-primary' : 'text-text-muted'} />
-                  <span>Members</span>
-                </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
-                  {projectMembers.length}
-                </span>
+                <Users size={14} className={activeSection === 'members' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Members</span>
               </button>
             </div>
 
@@ -713,19 +711,14 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <button
                 type="button"
                 onClick={() => handleSelectSection('labels')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   activeSection === 'labels'
                     ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
                     : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Tag size={14} className={activeSection === 'labels' ? 'text-brand-primary' : 'text-text-muted'} />
-                  <span>Labels</span>
-                </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
-                  {projectLabels.length}
-                </span>
+                <Tag size={14} className={activeSection === 'labels' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Labels</span>
               </button>
             </div>
 
@@ -777,38 +770,6 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       {/* ==================================================== */}
       {activeSection === 'general' && (
         <div className="space-y-6">
-          {/* Unsaved Changes Banner */}
-          {isGeneralDirty && (
-            <div className="p-3.5 rounded-xl bg-brand-primary/10 border border-brand-primary/30 flex items-center justify-between gap-3 text-xs text-brand-primary">
-              <div className="flex items-center gap-2">
-                <AlertCircle size={16} className="shrink-0" />
-                <span className="font-semibold text-text-primary">
-                  You have unsaved changes in project general settings.
-                </span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  icon={RotateCcw}
-                  onClick={handleCancelGeneral}
-                >
-                  Discard
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  type="button"
-                  icon={Save}
-                  onClick={handleSaveGeneral}
-                  disabled={isSavingGeneral}
-                >
-                  {isSavingGeneral ? 'Saving...' : 'Save Changes'}
-                </Button>
-              </div>
-            </div>
-          )}
 
           {generalError && (
             <div
@@ -1053,6 +1014,11 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                   const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
                   const activeCount = memberTasks.length - doneTasks.length;
                   const isOwner = member.id === currentProject.ownerId;
+                  const isSelf = Boolean(
+                    currentUser?.id &&
+                    (member.id === currentUser.id ||
+                     (member.email && currentUser.email && member.email.toLowerCase() === currentUser.email.toLowerCase()))
+                  );
                   const currentRole =
                     currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
 
@@ -1067,9 +1033,17 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <p className="font-semibold text-text-primary truncate">{member.name}</p>
+                            {isSelf && (
+                              <span
+                                className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.2 rounded bg-brand-primary/10 text-brand-primary border border-brand-primary/25 shrink-0"
+                                title="Currently logged-in user"
+                              >
+                                You
+                              </span>
+                            )}
                             {isOwner && (
                               <span
-                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/25 shrink-0"
+                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-500/25 shrink-0"
                                 title="Project Owner"
                               >
                                 <Crown size={10} />
@@ -1081,9 +1055,13 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                         </div>
                       </div>
 
-                      {/* Role Selector with Confirmation Trigger (Feature 6) */}
+                      {/* Role Selector with Confirmation Trigger */}
                       <div>
-                        {canManageMembers ? (
+                        {isSelf ? (
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary select-none">
+                            {currentRole}
+                          </span>
+                        ) : canManageMembers ? (
                           <select
                             value={currentRole}
                             onChange={(e) =>
@@ -1130,7 +1108,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
 
                       {/* Actions */}
                       <div className="text-right">
-                        {canManageMembers && !isOwner && (
+                        {canManageMembers && !isOwner && !isSelf && (
                           <button
                             type="button"
                             onClick={() => setMemberToRemove(member)}
@@ -1332,94 +1310,105 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
           </div>
 
           <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="hidden md:grid md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              <span>Action</span>
-              <span>Performed By</span>
-              <span>Entity</span>
-              <span>Description</span>
-              <span>Timestamp</span>
-              <span className="text-right">Action</span>
-            </div>
-
-            <div className="divide-y divide-border/60">
-              {projectAuditLog.length === 0 ? (
-                <div className="p-8 text-center text-xs text-text-muted space-y-2">
-                  <Activity size={24} className="mx-auto text-text-muted/60" />
-                  <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
-                  <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
+            <div className="overflow-x-auto">
+              <div className="min-w-[860px]">
+                <div className="hidden md:grid md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                  <span>Action</span>
+                  <span>Performed By</span>
+                  <span>Entity</span>
+                  <span>Description</span>
+                  <span>Timestamp</span>
+                  <span className="text-right">Action</span>
                 </div>
-              ) : (
-                projectAuditLog.map((log: AuditLogEntry) => {
-                  const actor = getAuditActor(log, allUsers);
-                  const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
-                  const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
-                  const actionInfo = formatAuditAction(log.action);
-                  const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
 
-                  return (
-                    <div
-                      key={log.id}
-                      className="grid grid-cols-1 md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
-                    >
-                      {/* Action */}
-                      <div>
-                        <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
-                          {actionInfo.label}
-                        </span>
-                      </div>
-
-                      {/* Performed By */}
-                      <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
-                        <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
-                          {initials}
-                        </div>
-                        <span className="font-medium text-text-primary truncate">
-                          {actor.name}
-                        </span>
-                      </div>
-
-                      {/* Entity */}
-                      <div
-                        className={`truncate font-medium ${
-                          entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
-                        }`}
-                        title={entity.label}
-                      >
-                        {entity.label}
-                      </div>
-
-                      {/* Description */}
-                      <div className="font-medium text-text-primary truncate" title={formattedDesc}>
-                        {formattedDesc}
-                      </div>
-
-                      {/* Timestamp */}
-                      <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
-                        {formatAuditTimestamp(log.timestamp)}
-                      </div>
-
-                      {/* Action */}
-                      <div className="flex justify-end items-center min-w-[100px]">
-                        {log.isUndone ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border">
-                            Change undone
-                          </span>
-                        ) : log.canUndo && currentUser.role !== 'Teammate' ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            icon={RotateCcw}
-                            onClick={() => undoAuditEntry(log.id)}
-                            title="Undo mutation"
-                          >
-                            Undo
-                          </Button>
-                        ) : null}
-                      </div>
+                <div className="divide-y divide-border/60">
+                  {projectAuditLog.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-text-muted space-y-2">
+                      <Activity size={24} className="mx-auto text-text-muted/60" />
+                      <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
+                      <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
                     </div>
-                  );
-                })
-              )}
+                  ) : (
+                    projectAuditLog.map((log: AuditLogEntry) => {
+                      const actor = getAuditActor(log, allUsers);
+                      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+                      const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
+                      const actionInfo = formatAuditAction(log.action);
+                      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
+
+                      return (
+                        <div
+                          key={log.id}
+                          className="grid grid-cols-1 md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
+                        >
+                          {/* Action */}
+                          <div>
+                            <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
+                              {actionInfo.label}
+                            </span>
+                          </div>
+
+                          {/* Performed By */}
+                          <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
+                            <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
+                              {initials}
+                            </div>
+                            <span className="font-medium text-text-primary truncate">
+                              {actor.name}
+                            </span>
+                          </div>
+
+                          {/* Entity */}
+                          <div
+                            className={`truncate font-medium ${
+                              entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
+                            }`}
+                            title={entity.label}
+                          >
+                            {entity.label}
+                          </div>
+
+                          {/* Description with Clickable Preview */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAuditLog(log)}
+                            className="font-medium text-text-primary text-left truncate hover:text-brand-primary group flex items-center gap-1.5 focus:outline-none focus:underline cursor-pointer"
+                            title="Click to view full event details"
+                          >
+                            <span className="truncate">{formattedDesc}</span>
+                            <Eye size={12} className="opacity-0 group-hover:opacity-100 text-brand-primary shrink-0 transition-opacity" />
+                          </button>
+
+                          {/* Timestamp */}
+                          <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
+                            {formatAuditTimestamp(log.timestamp)}
+                          </div>
+
+                          {/* Action */}
+                          <div className="w-[110px] flex justify-end items-center shrink-0">
+                            {log.isUndone ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border whitespace-nowrap">
+                                Change undone
+                              </span>
+                            ) : log.canUndo && currentUser.role !== 'Teammate' ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={RotateCcw}
+                                onClick={() => undoAuditEntry(log.id)}
+                                title="Undo mutation"
+                                className="whitespace-nowrap"
+                              >
+                                Undo
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -1441,28 +1430,28 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
 
           <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
             <div className="border-b border-rose-500/20 pb-3">
-              <div className="flex items-center gap-2 text-rose-400">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
                 <ShieldAlert size={18} />
-                <h3 className="text-sm font-bold tracking-tight text-rose-300">
+                <h3 className="text-sm font-bold tracking-tight text-rose-700 dark:text-rose-300">
                   Destructive Project Operations
                 </h3>
               </div>
-              <p className="text-xs text-rose-300/80 mt-1 leading-relaxed">
+              <p className="text-xs text-rose-700/90 dark:text-rose-300/80 mt-1 leading-relaxed">
                 Actions performed here are irreversible and have significant effects across your workspace. Please verify before proceeding.
               </p>
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
               <div className="space-y-1">
-                <h4 className="text-xs font-semibold text-rose-200">
+                <h4 className="text-xs font-semibold text-rose-800 dark:text-rose-200">
                   Delete Project
                 </h4>
-                <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
+                <p className="text-xs text-rose-700/90 dark:text-rose-300/80 leading-relaxed max-w-lg">
                   Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
                   sprints, dependencies, sections, labels, and associated data.
                 </p>
                 {!canDelete && (
-                  <p className="text-[11px] text-amber-300/90 font-mono mt-1">
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300/90 font-mono mt-1">
                     Only Project Admins have permission to delete this project.
                   </p>
                 )}
@@ -1517,8 +1506,8 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 space-y-1">
-              <p className="font-semibold text-amber-200">
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+              <p className="font-semibold text-amber-900 dark:text-amber-200">
                 Permission Implications:
               </p>
               <p className="leading-relaxed">
@@ -1681,6 +1670,16 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
           </div>
         </form>
       </Dialog>
+
+      {/* Audit Event Details Dialog */}
+      <AuditEventDetailsDialog
+        isOpen={Boolean(selectedAuditLog)}
+        onClose={() => setSelectedAuditLog(null)}
+        log={selectedAuditLog}
+        allUsers={allUsers}
+        projectTasks={projectTasks}
+        projectName={currentProject?.name}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, fallbackUser, DEFAULT_STANDARD_WORKFLOW } from './storage';
+import { loadInitialState, saveStateToStorage, fallbackUser, DEFAULT_STANDARD_WORKFLOW, STORAGE_KEYS } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
@@ -75,6 +75,8 @@ import {
   frontendPriorityToBackend,
   normalizeRole,
   toBackendRole,
+  toBackendProjectRole,
+  clearAuthToken,
   isPersistedWorkItemId,
 } from '../services/api';
 
@@ -182,8 +184,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => saveStateToStorage('CURRENT_USER', currentUser), [currentUser]);
   useEffect(() => saveStateToStorage('COMPANY', currentCompany), [currentCompany]);
 
+  const lastToastRef = useRef<{ message: string; type: ToastType; timestamp: number } | null>(null);
+
   // Toast helper
   const showToast = useCallback((message: string, type: ToastType = 'info') => {
+    const now = Date.now();
+    if (
+      lastToastRef.current &&
+      lastToastRef.current.message === message &&
+      lastToastRef.current.type === type &&
+      now - lastToastRef.current.timestamp < 1000
+    ) {
+      return;
+    }
+    lastToastRef.current = { message, type, timestamp: now };
     const id = Math.random().toString(36).substring(7);
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
@@ -734,49 +748,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser, currentProjectId, currentProject, projects, tasks, recordAudit, showToast]);
 
   const updateTask = useCallback((taskId: string, updates: any, snapshotVersion: number | null = null) => {
-    let validationError = null;
-    setTasks((prev) => {
-      const target = prev.find((t) => t.id === taskId);
-      if (!target) return prev;
+    const target = tasks.find((t) => t.id === taskId);
+    if (!target) return { success: false, reason: 'Task not found' };
 
-      // Version conflict check
-      if (snapshotVersion !== null && (target.version || 1) !== snapshotVersion) {
-        setConflictModalData({
-          taskId,
-          snapshotVersion,
-          latestTask: target,
-          pendingUpdates: updates,
-        });
-        return prev;
-      }
+    // Version conflict check
+    if (snapshotVersion !== null && (target.version || 1) !== snapshotVersion) {
+      setConflictModalData({
+        taskId,
+        snapshotVersion,
+        latestTask: target,
+        pendingUpdates: updates,
+      });
+      return { success: false, reason: 'Version conflict' };
+    }
 
-      // Hierarchy validation if type or parentId updated
-      if (updates.type !== undefined || updates.parentId !== undefined) {
-        const candidateData = {
-          ...target,
-          ...updates,
-          id: taskId,
-        };
-        const hierarchyCheck = validateHierarchy(candidateData, prev);
-        if (!hierarchyCheck.isValid) {
-          validationError = hierarchyCheck.error;
-          return prev;
-        }
-      }
-
-      const merged = { ...target, ...updates };
-      const sanitized = sanitizeWorkItemData(merged);
-
-      const updated = {
-        ...sanitized,
-        version: (target.version || 1) + 1,
-        updatedAt: new Date().toISOString(),
+    // Hierarchy validation if type or parentId updated
+    if (updates.type !== undefined || updates.parentId !== undefined) {
+      const candidateData = {
+        ...target,
+        ...updates,
+        id: taskId,
       };
+      const hierarchyCheck = validateHierarchy(candidateData, tasks);
+      if (!hierarchyCheck.isValid) {
+        showToast(hierarchyCheck.error || 'Invalid task hierarchy', 'error');
+        return { success: false, reason: hierarchyCheck.error };
+      }
+    }
 
-      recordAudit('updated', 'task', taskId, `Updated ${updated.type || 'task'} "${updated.title}"`, target, updated, true, updated.projectId);
-      broadcastEvent('TASK_UPDATED', updated);
-      showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
+    const merged = { ...target, ...updates };
+    const sanitized = sanitizeWorkItemData(merged);
 
+    const updated = {
+      ...sanitized,
+      version: (target.version || 1) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setTasks((prev) => {
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
 
       // If updated task is a Subtask, sync its parent's embedded subtasks array
@@ -797,10 +806,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return nextList;
     });
 
-    if (validationError) {
-      showToast(validationError, 'error');
-      return { success: false, reason: validationError };
-    }
+    recordAudit('updated', 'task', taskId, `Updated ${updated.type || 'task'} "${updated.title}"`, target, updated, true, updated.projectId);
+    broadcastEvent('TASK_UPDATED', updated);
+    showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
 
     if (typeof taskId === 'string' && taskId.includes('-')) {
       const backendUpdates: any = {};
@@ -861,7 +869,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     return { success: true };
-  }, [recordAudit, showToast, currentProjectId]);
+  }, [tasks, recordAudit, showToast, currentProjectId]);
 
   const deleteTask = useCallback((taskId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_TASK)) {
@@ -1720,8 +1728,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
 
     if (typeof projectId === 'string' && projectId.includes('-')) {
-      addProjectMemberApi(projectId, { memberId: userId, role: toBackendRole(role) }).catch((err) => {
+      addProjectMemberApi(projectId, { memberId: userId, role: toBackendProjectRole(role) }).catch((err) => {
         console.warn('TaskFlow: Backend add member notice:', err.message);
+        showToast(err.message || 'Failed to persist member addition', 'error');
       });
     }
   }, [projects, allUsers, recordAudit, showToast]);
@@ -1802,8 +1811,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast(`Role updated to ${newRole}`, 'success');
 
     if (typeof projectId === 'string' && projectId.includes('-')) {
-      updateProjectMemberRoleApi(projectId, userId, toBackendRole(newRole)).catch((err) => {
+      updateProjectMemberRoleApi(projectId, userId, toBackendProjectRole(newRole)).catch((err) => {
         console.warn('TaskFlow: Backend update member role notice:', err.message);
+        showToast(err.message || 'Failed to persist member role update', 'error');
       });
     }
 
@@ -1872,7 +1882,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutApi().catch(() => null);
-    // setCurrentUser(fallbackUser);
+    clearAuthToken();
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem(STORAGE_KEYS.COMPANY);
+    } catch {
+      // storage cleanup fallback
+    }
+    setCurrentUser(fallbackUser);
+    setCurrentCompany(null);
     showToast('Signed out successfully', 'info');
     navigate('/login');
   }, [navigate, showToast]);
@@ -2015,9 +2033,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Label operations
   const createLabel = useCallback((labelData: Partial<Label>): Label => {
-    const targetProjectId = labelData.projectId || currentProjectId;
+    const targetProjectId = labelData.projectId || currentProjectId || currentProject?.id || '';
+    const tempId = `lbl-${Date.now()}`;
     const newLabel: Label = {
-      id: `lbl-${Date.now()}`,
+      id: tempId,
       name: (labelData.name || '').trim(),
       color: labelData.color || '#3B82F6',
       projectId: targetProjectId,
@@ -2035,15 +2054,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }).then((res) => {
         const serverLabel = res?.data;
         if (serverLabel?.id) {
-          setLabels((prev) => prev.map((l) => (l.id === newLabel.id ? { ...l, id: serverLabel.id } : l)));
+          setLabels((prev) => prev.map((l) => (l.id === tempId ? { ...l, id: serverLabel.id } : l)));
         }
       }).catch((err) => {
         console.warn('TaskFlow: Backend label save notice:', err.message);
+        setLabels((prev) => prev.filter((l) => l.id !== tempId));
+        showToast(err.message || 'Failed to save label to backend', 'error');
       });
     }
 
     return newLabel;
-  }, [currentProjectId, recordAudit, showToast]);
+  }, [currentProjectId, currentProject, recordAudit, showToast]);
 
   const deleteLabel = useCallback((labelId: string) => {
     const target = labels.find((l) => l.id === labelId);
@@ -2055,14 +2076,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     if (target) {
       recordAudit('deleted', 'label', labelId, `Deleted label "${target.name}"`, target, null, false, target.projectId);
-      if (target.projectId && target.projectId.includes('-') && labelId.includes('-')) {
-        deleteProjectLabelApi(target.projectId, labelId).catch((err) => {
+      const projId = target.projectId || currentProjectId;
+      if (projId && !labelId.startsWith('lbl-')) {
+        deleteProjectLabelApi(projId, labelId).catch((err) => {
           console.warn('TaskFlow: Backend label delete notice:', err.message);
+          showToast(err.message || 'Failed to delete label on server', 'error');
         });
       }
     }
     showToast('Label removed', 'info');
-  }, [labels, recordAudit, showToast]);
+  }, [labels, currentProjectId, recordAudit, showToast]);
 
   const value: AppContextValue = {
     currentUser,

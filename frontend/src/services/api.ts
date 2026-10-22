@@ -881,6 +881,12 @@ export function toBackendRole(frontendRole: Role | string | null | undefined): s
   return 'TEAMMATE';
 }
 
+export function toBackendProjectRole(frontendRole: Role | string | null | undefined): string {
+  if (frontendRole === 'Admin') return 'ADMIN';
+  if (frontendRole === 'Manager') return 'LEAD';
+  return 'MEMBER';
+}
+
 export function backendWorkItemToTask(item: any, currentProjectId: string): Task {
   const status = backendStatusToFrontend(item.status);
   const type = backendTypeToFrontend(item.type);
