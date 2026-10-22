@@ -12,7 +12,7 @@ export interface TopbarProps {
 }
 
 export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, onOpenSearch }: TopbarProps) {
-  const { currentUser, notifications, navigate, logout } = useApp();
+  const { currentUser, notifications, navigate } = useApp();
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -124,14 +124,14 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
 
               <div className="border-t border-border pt-1">
                 <button
-                  onClick={async () => {
+                  onClick={() => {
+                    navigate('/login');
                     setProfileOpen(false);
-                    await logout();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-surface-hover transition-colors flex items-center gap-1.5 cursor-pointer"
+                  className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-surface-hover transition-colors flex items-center gap-1.5"
                 >
                   <LogOut size={13} />
-                  Sign Out
+                  Sign Out (Simulated)
                 </button>
               </div>
             </div>

@@ -34,7 +34,6 @@ import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { getWorkItemCommentsApi } from '../../services/api';
-import { LabelPicker } from '../ui/LabelPicker';
 
 interface TaskDetailsContentProps {
   task: Task;
@@ -294,6 +293,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       };
 
       updateTask(task.id, updates, snapshotVersion);
+      showToast('Work item changes saved successfully', 'success');
     } catch (err: any) {
       showToast(err.message || 'Failed to save work item changes', 'error');
     } finally {
@@ -626,15 +626,61 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
           )}
         </div>
 
-        {/* --- LABELS SELECTOR --- */}
-        <div className="p-3.5 rounded-xl bg-surface-elevated border border-border">
-          <LabelPicker
-            availableLabels={projectLabels}
-            selectedLabels={draft.labels}
-            onChange={(newLabels) => setDraft((prev) => ({ ...prev, labels: newLabels }))}
-            label="Work Item Labels"
-            placeholder="Assign labels to this work item..."
-          />
+        {/* --- LABELS SELECTOR (Section 13) --- */}
+        <div className="p-3.5 rounded-xl bg-surface-elevated border border-border space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <label className="font-semibold text-text-primary flex items-center gap-1.5">
+              <Tag size={14} className="text-brand-primary" />
+              <span>Labels</span>
+            </label>
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) handleToggleLabel(e.target.value);
+              }}
+              className="h-6 rounded bg-surface border border-border px-1 text-[11px] text-text-secondary focus:outline-none"
+            >
+              <option value="">+ Add label...</option>
+              {projectLabels.map((l) => (
+                <option
+                  key={l.id}
+                  value={l.name}
+                  disabled={draft.labels.includes(l.name)}
+                >
+                  {draft.labels.includes(l.name) ? '✓ ' : ''}{l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {draft.labels.length === 0 ? (
+            <p className="text-text-muted italic text-[11px]">No labels assigned to this work item.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {draft.labels.map((lbl) => {
+                const labelDef = projectLabels.find((l) => l.name === lbl);
+                const color = labelDef?.color || '#3B82F6';
+                return (
+                  <span
+                    key={lbl}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+                    style={{ backgroundColor: `${color}25`, borderColor: color, borderWidth: 1 }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+                    <span style={{ color }}>{lbl}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleLabel(lbl)}
+                      className="hover:opacity-75 text-text-muted ml-0.5"
+                      title="Remove label"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* --- TYPE-SPECIFIC FIELDS --- */}

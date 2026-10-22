@@ -1,21 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { TaskRow, TASK_GRID_COLUMNS } from '../../components/tasks/TaskRow';
+import { TaskRow } from '../../components/tasks/TaskRow';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
   Search,
   X,
   CheckSquare,
-  Plus,
 } from 'lucide-react';
-import { Button } from '../../components/ui/Button';
 import { Task } from '../../types';
 
-export interface MyTasksViewProps {
-  onOpenCreateTask?: () => void;
-}
-
-export function MyTasksView({ onOpenCreateTask }: MyTasksViewProps) {
+export function MyTasksView() {
   const { currentUser, myTasks, projects } = useApp();
 
   const [search, setSearch] = useState('');
@@ -133,9 +127,6 @@ export function MyTasksView({ onOpenCreateTask }: MyTasksViewProps) {
             Work items assigned to {currentUser.name} across all active projects.
           </p>
         </div>
-        <Button variant="primary" size="sm" icon={Plus} onClick={onOpenCreateTask}>
-          Create Work Item
-        </Button>
       </div>
 
       {/* Control Bar: Search, Filters, Grouping, Sorting */}
@@ -263,8 +254,8 @@ export function MyTasksView({ onOpenCreateTask }: MyTasksViewProps) {
               ? 'Try resetting your active filters to see all assigned tasks.'
               : 'You have no assigned tasks right now.'
           }
-          actionLabel={hasActiveFilters ? 'Clear Filters' : 'Create Task'}
-          onAction={hasActiveFilters ? resetFilters : onOpenCreateTask}
+          actionLabel={hasActiveFilters ? 'Clear Filters' : undefined}
+          onAction={hasActiveFilters ? resetFilters : undefined}
         />
       ) : (
         <div className="space-y-4">
@@ -279,24 +270,21 @@ export function MyTasksView({ onOpenCreateTask }: MyTasksViewProps) {
                 </span>
               </div>
 
-              <div className="overflow-x-auto min-w-0">
-                <div className="min-w-[780px]">
-                  {/* Header row for large screens */}
-                  <div className={`hidden md:grid ${TASK_GRID_COLUMNS} items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50`}>
-                    <span>Task Title</span>
-                    <span>Assignee</span>
-                    <span>Due Date</span>
-                    <span>Status</span>
-                    <span>Priority</span>
-                    <span className="text-right">Tags</span>
-                  </div>
+              {/* Header row for large screens */}
+              <div className="hidden md:grid md:grid-cols-[auto_1fr_130px_110px_100px_90px_auto] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50">
+                <span className="w-4" />
+                <span>Task Title</span>
+                <span>Assignee</span>
+                <span>Due Date</span>
+                <span>Status</span>
+                <span>Priority</span>
+                <span className="text-right">Tags</span>
+              </div>
 
-                  <div className="divide-y divide-border/40">
-                    {group.items.map((task) => (
-                      <TaskRow key={task.id} task={task} />
-                    ))}
-                  </div>
-                </div>
+              <div className="divide-y divide-border/40">
+                {group.items.map((task) => (
+                  <TaskRow key={task.id} task={task} />
+                ))}
               </div>
             </section>
           ))}

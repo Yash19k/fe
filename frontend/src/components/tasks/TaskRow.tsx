@@ -13,17 +13,10 @@ export interface TaskRowProps {
   task: Task;
 }
 
-export const TASK_GRID_COLUMNS = 'grid-cols-[minmax(240px,1fr)_140px_110px_120px_105px_80px]';
-
 export function TaskRow({ task }: TaskRowProps) {
-  const { openTaskDrawer, changeTaskStatus, allUsers, tasks, currentUser } = useApp();
+  const { openTaskDrawer, changeTaskStatus, allUsers, tasks } = useApp();
 
-  const assignee =
-    allUsers.find((u) => u.id === task.assigneeId) ||
-    task.assignees?.find((u) => u.id === task.assigneeId) ||
-    task.assignees?.[0] ||
-    (currentUser && task.assigneeId === currentUser.id ? currentUser : null) ||
-    (task.assigneeId ? { id: task.assigneeId, name: 'Assigned Member', email: '', role: 'Teammate' as const } : null);
+  const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
   const isDone = task.status === 'Done';
   const isBlocked = isTaskBlocked(task, tasks);
   const slaInfo = evaluateTaskSla(task);
@@ -45,7 +38,7 @@ export function TaskRow({ task }: TaskRowProps) {
   return (
     <div
       onClick={() => openTaskDrawer(task.id)}
-      className={`group grid ${TASK_GRID_COLUMNS} gap-3 items-center px-4 py-2.5 border-b border-border/60 hover:bg-surface-hover/70 transition-colors text-xs cursor-pointer select-none`}
+      className="group grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] gap-3 items-center px-4 py-2.5 border-b border-border/60 hover:bg-surface-hover/70 transition-colors text-xs cursor-pointer select-none"
     >
       {/* 1. Task Title (checkbox + type icon + parent link + title + indicators) */}
       <div className="flex items-center gap-2 min-w-0 pr-2">

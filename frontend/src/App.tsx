@@ -16,7 +16,6 @@ import { ConflictModal } from './components/modals/ConflictModal';
 import { ToastContainer } from './components/ui/ToastContainer';
 import { Lock } from 'lucide-react';
 import { canUserAccessProject } from './domain/permissions';
-import { getAuthToken } from './services/api';
 
 // Feature Views
 import { HomeView } from './features/home/HomeView';
@@ -62,7 +61,7 @@ function getSettingsSectionFromTab(tab: string): SettingsSection {
 }
 
 function MainAppShell() {
-  const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate, isLoadingBackend } = useApp();
+  const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate } = useApp();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -84,49 +83,12 @@ function MainAppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Import getAuthToken check
-  const isAuthenticated = Boolean(
-    currentUser &&
-    typeof currentUser.id === 'string' &&
-    currentUser.id.trim().length > 0 &&
-    getAuthToken()
-  );
-
-  // Loading state when initial auth verification is underway
-  if (isLoadingBackend) {
-    return (
-      <div className="min-h-screen bg-canvas flex items-center justify-center text-text-muted">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-brand-primary border-t-transparent animate-spin" />
-          <p className="text-xs font-medium">Verifying workspace session...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Auth routes handling
-  if (activeRoute === '/signup') {
-    if (isAuthenticated) {
-      navigate('/');
-      return null;
-    }
-    return <AuthView isSignup={true} />;
-  }
-
+  // Auth views
   if (activeRoute === '/login') {
-    if (isAuthenticated) {
-      navigate('/');
-      return null;
-    }
     return <AuthView isSignup={false} />;
   }
-
-  // Protected route guard: all other routes require authentic session
-  if (!isAuthenticated) {
-    if (activeRoute !== '/login') {
-      navigate('/login');
-    }
-    return <AuthView isSignup={false} />;
+  if (activeRoute === '/signup') {
+    return <AuthView isSignup={true} />;
   }
 
   // Dedicated Company Setup & Onboarding Guard:
@@ -244,7 +206,7 @@ function MainAppShell() {
               </>
             )
           ) : activeRoute === '/my-tasks' ? (
-            <MyTasksView onOpenCreateTask={() => setCreateTaskOpen(true)} />
+            <MyTasksView />
           ) : activeRoute === '/projects' ? (
             <ProjectsView onOpenCreateProject={() => setCreateProjectOpen(true)} />
           ) : activeRoute === '/settings' ? (

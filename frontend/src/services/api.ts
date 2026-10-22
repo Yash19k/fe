@@ -14,10 +14,7 @@ import type {
 } from '../types';
 
 export const API_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) ||
-  (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1'
-    ? 'http://127.0.0.1:3000'
-    : 'http://127.0.0.1:3000');
+  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
 
@@ -72,9 +69,6 @@ async function executeTokenRefresh(): Promise<string | null> {
 
       if (!res.ok) {
         clearAuthToken();
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('taskflow:auth-invalid'));
-        }
         return null;
       }
 
@@ -83,16 +77,9 @@ async function executeTokenRefresh(): Promise<string | null> {
         setAuthToken(data.token);
         return data.token;
       }
-      clearAuthToken();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('taskflow:auth-invalid'));
-      }
-      return null;
+      return getAuthToken() || 'active_session';
     } catch {
       clearAuthToken();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('taskflow:auth-invalid'));
-      }
       return null;
     } finally {
       refreshPromise = null;
@@ -142,27 +129,10 @@ async function request<T>(
       ) {
         const refreshedToken = await executeTokenRefresh();
         if (refreshedToken) {
-          const retryHeaders = {
-            ...(options.headers as Record<string, string>),
-            Authorization: `Bearer ${refreshedToken}`,
-          };
           return request<T>(endpoint, {
             ...options,
-            headers: retryHeaders,
             _retry: true,
           });
-        }
-      }
-
-      // If still 401 after refresh attempt (or unrefreshable route)
-      if (
-        res.status === 401 &&
-        !endpoint.includes('/users/login') &&
-        !endpoint.includes('/users/refresh')
-      ) {
-        clearAuthToken();
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('taskflow:auth-invalid'));
         }
       }
 
@@ -438,7 +408,6 @@ export interface CreateWorkItemApiInput {
   status?: string;
   dueDate?: string | null;
   assignees?: Array<{ userId: string; startDate?: string | null; estimatedHours?: number | null }>;
-  labels?: string[];
   recurrence?: any;
 }
 
@@ -907,11 +876,9 @@ export function normalizeRole(backendRole: string | null | undefined): Role {
 }
 
 export function toBackendRole(frontendRole: Role | string | null | undefined): string {
-  if (!frontendRole) return 'MEMBER';
-  const upper = String(frontendRole).toUpperCase();
-  if (upper === 'ADMIN') return 'ADMIN';
-  if (upper === 'MANAGER' || upper === 'LEAD') return 'LEAD';
-  return 'MEMBER';
+  if (frontendRole === 'Admin') return 'ADMIN';
+  if (frontendRole === 'Manager') return 'MANAGER';
+  return 'TEAMMATE';
 }
 
 export function backendWorkItemToTask(item: any, currentProjectId: string): Task {
