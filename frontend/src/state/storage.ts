@@ -246,21 +246,24 @@ export interface InitialAppState {
   labels: Label[];
 }
 
-export const fallbackUser: User = {
+export const unauthenticatedUser: User = {
   id: '',
-  name: 'Workspace Member',
-  email: 'admin@taskflow.pro',
-  role: 'Admin',
-  initials: 'AD',
-  avatarColor: '#4F46E5',
+  name: '',
+  email: '',
+  role: 'Teammate',
+  initials: '',
+  avatarColor: '#6B7280',
   onboardingCompleted: true,
 };
 
-export function loadInitialState(): InitialAppState {
+// Aliased for backward compatibility with existing imports
+export const fallbackUser: User = unauthenticatedUser;
 
+export function loadInitialState(): InitialAppState {
   try {
-    const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-    const savedCompany = localStorage.getItem(STORAGE_KEYS.COMPANY);
+    const token = typeof window !== 'undefined' ? localStorage.getItem('taskflow_auth_token') : null;
+    const savedUser = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.CURRENT_USER) : null;
+    const savedCompany = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.COMPANY) : null;
 
     // Clean up any legacy business records previously mirrored to localStorage
     const businessKeys = [
@@ -271,22 +274,31 @@ export function loadInitialState(): InitialAppState {
       STORAGE_KEYS.AUDIT_LOG,
       STORAGE_KEYS.SPRINTS,
       STORAGE_KEYS.LABELS,
+      'taskflow_current_user',
+      'taskflow_company',
     ];
     for (const bk of businessKeys) {
-      if (localStorage.getItem(bk)) {
+      if (typeof window !== 'undefined' && localStorage.getItem(bk)) {
         localStorage.removeItem(bk);
       }
     }
 
-    let initialUser: User = savedUser ? JSON.parse(savedUser) : fallbackUser;
-    if (initialUser && initialUser.onboardingCompleted === undefined) {
-      initialUser = {
-        ...initialUser,
-        onboardingCompleted: true,
-      };
+    let initialUser: User = unauthenticatedUser;
+    if (token && savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && typeof parsed.id === 'string' && parsed.id.trim().length > 0) {
+          initialUser = {
+            ...parsed,
+            onboardingCompleted: parsed.onboardingCompleted ?? true,
+          };
+        }
+      } catch {
+        initialUser = unauthenticatedUser;
+      }
     }
 
-    const initialCompany: Company | null = savedCompany ? JSON.parse(savedCompany) : null;
+    const initialCompany: Company | null = token && savedCompany ? JSON.parse(savedCompany) : null;
 
     return {
       currentUser: initialUser,
@@ -302,7 +314,7 @@ export function loadInitialState(): InitialAppState {
   } catch (err) {
     console.warn('TaskFlow: Error loading initial storage:', err);
     return {
-      currentUser: fallbackUser,
+      currentUser: unauthenticatedUser,
       currentCompany: null,
       projects: [],
       tasks: [],

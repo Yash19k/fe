@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { TaskRow } from '../../components/tasks/TaskRow';
+import { TaskRow, TASK_GRID_COLUMNS } from '../../components/tasks/TaskRow';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
   Search,
@@ -279,21 +279,24 @@ export function MyTasksView({ onOpenCreateTask }: MyTasksViewProps) {
                 </span>
               </div>
 
-              {/* Header row for large screens */}
-              <div className="hidden md:grid md:grid-cols-[auto_1fr_130px_110px_100px_90px_auto] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50">
-                <span className="w-4" />
-                <span>Task Title</span>
-                <span>Assignee</span>
-                <span>Due Date</span>
-                <span>Status</span>
-                <span>Priority</span>
-                <span className="text-right">Tags</span>
-              </div>
+              <div className="overflow-x-auto min-w-0">
+                <div className="min-w-[780px]">
+                  {/* Header row for large screens */}
+                  <div className={`hidden md:grid ${TASK_GRID_COLUMNS} items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50`}>
+                    <span>Task Title</span>
+                    <span>Assignee</span>
+                    <span>Due Date</span>
+                    <span>Status</span>
+                    <span>Priority</span>
+                    <span className="text-right">Tags</span>
+                  </div>
 
-              <div className="divide-y divide-border/40">
-                {group.items.map((task) => (
-                  <TaskRow key={task.id} task={task} />
-                ))}
+                  <div className="divide-y divide-border/40">
+                    {group.items.map((task) => (
+                      <TaskRow key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
               </div>
             </section>
           ))}

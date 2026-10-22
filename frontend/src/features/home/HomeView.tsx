@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { TaskRow } from '../../components/tasks/TaskRow';
+import { TaskRow, TASK_GRID_COLUMNS } from '../../components/tasks/TaskRow';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
   CheckSquare,
@@ -62,7 +62,12 @@ export function HomeView() {
 
   // Tasks assigned to current user
   const userTasks = useMemo(() => {
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
+    return tasks.filter(
+      (t) =>
+        t.assigneeId === currentUser.id ||
+        t.assigneeIds?.includes(currentUser.id) ||
+        t.assignees?.some((u) => u.id === currentUser.id)
+    );
   }, [tasks, currentUser.id]);
 
   // Personal metrics from backend or local fallback
@@ -83,9 +88,31 @@ export function HomeView() {
   // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
   const attentionTasks = useMemo(() => {
     if (personalData?.attentionTasks && Array.isArray(personalData.attentionTasks)) {
-      return personalData.attentionTasks.map((item: any) =>
-        backendWorkItemToTask(item, item.projectId)
-      );
+      return personalData.attentionTasks.map((item: any) => {
+        const canonical = tasks.find((t) => t.id === item.id);
+        const taskFromApi = backendWorkItemToTask(item, item.projectId);
+        if (canonical) {
+          return {
+            ...canonical,
+            ...taskFromApi,
+            assigneeId: canonical.assigneeId || taskFromApi.assigneeId || currentUser.id,
+            assignees:
+              canonical.assignees && canonical.assignees.length > 0
+                ? canonical.assignees
+                : taskFromApi.assignees && taskFromApi.assignees.length > 0
+                  ? taskFromApi.assignees
+                  : [currentUser],
+          };
+        }
+        return {
+          ...taskFromApi,
+          assigneeId: taskFromApi.assigneeId || currentUser.id,
+          assignees:
+            taskFromApi.assignees && taskFromApi.assignees.length > 0
+              ? taskFromApi.assignees
+              : [currentUser],
+        };
+      });
     }
     return userTasks
       .filter((t) => {
@@ -96,7 +123,7 @@ export function HomeView() {
         return date.isOverdue || date.isDueSoon || blocked || sla.isBreached || sla.isApproaching;
       })
       .slice(0, 6);
-  }, [personalData, userTasks, tasks]);
+  }, [personalData, userTasks, tasks, currentUser]);
 
   // SLA Warnings across all projects
   const atRiskTasks = useMemo(() => {
@@ -234,10 +261,22 @@ export function HomeView() {
                 className="border-0 rounded-none py-10"
               />
             ) : (
-              <div className="divide-y divide-border/60">
-                {attentionTasks.map((task) => (
-                  <TaskRow key={task.id} task={task} />
-                ))}
+              <div className="overflow-x-auto min-w-0">
+                <div className="min-w-[780px]">
+                  <div className={`hidden sm:grid ${TASK_GRID_COLUMNS} items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50`}>
+                    <span>Task Title</span>
+                    <span>Assignee</span>
+                    <span>Due Date</span>
+                    <span>Status</span>
+                    <span>Priority</span>
+                    <span className="text-right">Tags</span>
+                  </div>
+                  <div className="divide-y divide-border/60">
+                    {attentionTasks.map((task) => (
+                      <TaskRow key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </section>

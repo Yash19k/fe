@@ -3,7 +3,7 @@ import { useApp } from '../../hooks/useApp';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { ThemeToggle } from '../../components/ui/ThemeToggle';
-import { Layers, Eye, EyeOff } from 'lucide-react';
+import { Layers, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
 export interface AuthViewProps {
   isSignup?: boolean;
@@ -18,14 +18,26 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setGeneralError(null);
     const errs: Record<string, string> = {};
 
+    const cleanEmail = email.trim();
     if (isSignup && !name.trim()) errs.name = 'Full name is required';
-    if (!email.trim() || !email.includes('@')) errs.email = 'Valid email is required';
-    if (!password || password.length < 6) errs.password = 'Password must be at least 6 characters';
+    if (!cleanEmail) {
+      errs.email = 'Email address is required';
+    } else if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      errs.email = 'Please enter a valid email address';
+    }
+    if (!password) {
+      errs.password = 'Password is required';
+    } else if (password.length < 6) {
+      errs.password = 'Password must be at least 6 characters';
+    }
     if (isSignup && password !== confirmPassword) errs.confirm = 'Passwords do not match';
 
     if (Object.keys(errs).length > 0) {
@@ -35,18 +47,27 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
     if (isSignup) {
       setPendingSignupPassword?.(password);
-      registerUser({ name, email });
+      registerUser({ name, email: cleanEmail });
       showToast('Account created! Please set up your company workspace.', 'success');
       navigate('/onboarding/company');
     } else {
-      if (login) {
-        const ok = await login(email, password);
-        if (ok) {
+      setIsSubmitting(true);
+      try {
+        if (login) {
+          const res = await login(cleanEmail, password);
+          if (res?.success) {
+            navigate('/');
+          } else {
+            setGeneralError(res?.error || 'Invalid email or password. Please try again.');
+          }
+        } else {
+          showToast('Welcome back!', 'success');
           navigate('/');
         }
-      } else {
-        showToast('Welcome back!', 'success');
-        navigate('/');
+      } catch (err: any) {
+        setGeneralError('Invalid email or password. Please try again.');
+      } finally {
+        setIsSubmitting(false);
       }
     }
   }
@@ -72,6 +93,17 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
           </p>
         </div>
 
+        {/* Prominent Login/Auth Error Alert */}
+        {generalError && (
+          <div
+            role="alert"
+            className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger-border text-status-danger-text text-xs flex items-start gap-2.5 animate-in fade-in duration-150"
+          >
+            <AlertTriangle size={16} className="shrink-0 mt-0.5 text-status-danger" />
+            <span className="font-medium leading-relaxed">{generalError}</span>
+          </div>
+        )}
+
         {/* Standard Auth Form */}
         <form onSubmit={handleAuthSubmit} className="space-y-4">
           {isSignup && (
@@ -82,6 +114,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setName(e.target.value);
                 if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
+                if (generalError) setGeneralError(null);
               }}
               error={errors.name}
             />
@@ -95,6 +128,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             onChange={(e) => {
               setEmail(e.target.value);
               if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
+              if (generalError) setGeneralError(null);
             }}
             error={errors.email}
           />
@@ -117,6 +151,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setPassword(e.target.value);
                 if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
+                if (generalError) setGeneralError(null);
               }}
               error={errors.password}
             />
@@ -130,13 +165,26 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setConfirmPassword(e.target.value);
                 if (errors.confirm) setErrors((prev) => ({ ...prev, confirm: '' }));
+                if (generalError) setGeneralError(null);
               }}
               error={errors.confirm}
             />
           )}
 
-          <Button variant="primary" size="lg" className="w-full mt-2" type="submit">
-            {isSignup ? 'Create Account' : 'Sign In'}
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full mt-2"
+            type="submit"
+            disabled={isSubmitting}
+          >
+            {isSubmitting
+              ? isSignup
+                ? 'Creating account...'
+                : 'Signing in...'
+              : isSignup
+                ? 'Create Account'
+                : 'Sign In'}
           </Button>
         </form>
 

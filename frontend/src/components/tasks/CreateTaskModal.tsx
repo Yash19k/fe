@@ -13,6 +13,7 @@ import { formatRecurrenceRule } from '../../domain/recurrence';
 import { WorkItemType, Priority, BugSeverity, TaskAttachment } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { Repeat } from 'lucide-react';
+import { LabelPicker } from '../ui/LabelPicker';
 
 export interface CreateTaskModalProps {
   isOpen: boolean;
@@ -449,55 +450,14 @@ export function CreateTaskModal({
           </div>
         )}
 
-        {/* Labels Selector (Section 13) */}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Labels
-          </label>
-          <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-lg bg-surface border border-border min-h-[38px]">
-            {selectedLabels.map((lbl) => {
-              const labelDef = projectLabels.find((l) => l.name === lbl);
-              const color = labelDef?.color || '#3B82F6';
-              return (
-                <span
-                  key={lbl}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white"
-                  style={{ backgroundColor: `${color}30`, borderColor: color, borderWidth: 1 }}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
-                  <span style={{ color }}>{lbl}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleLabel(lbl)}
-                    className="hover:opacity-75 text-text-muted ml-0.5"
-                    title="Remove label"
-                  >
-                    ×
-                  </button>
-                </span>
-              );
-            })}
-            <select
-              value=""
-              onChange={(e) => {
-                if (e.target.value) handleToggleLabel(e.target.value);
-              }}
-              className="bg-transparent text-xs text-text-secondary focus:outline-none cursor-pointer py-0.5 px-1"
-            >
-              <option value="" className="bg-surface text-text-primary">+ Select label...</option>
-              {projectLabels.map((l) => (
-                <option
-                  key={l.id}
-                  value={l.name}
-                  disabled={selectedLabels.includes(l.name)}
-                  className="bg-surface text-text-primary"
-                >
-                  {selectedLabels.includes(l.name) ? '✓ ' : ''}{l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        {/* Labels Selector */}
+        <LabelPicker
+          availableLabels={projectLabels}
+          selectedLabels={selectedLabels}
+          onChange={setSelectedLabels}
+          label="Labels"
+          placeholder="Select labels for this work item..."
+        />
 
         {/* Status, Priority, Start Date, Due Date */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">

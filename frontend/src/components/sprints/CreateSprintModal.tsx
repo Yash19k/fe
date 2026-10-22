@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Dialog } from '../ui/Dialog';
 import { Input, Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -35,6 +35,30 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
+
+  const resetForm = useCallback(() => {
+    setSprintName('');
+    setGoal('');
+    setStartDate('');
+    setEndDate('');
+    setSelectedTaskIds(new Set());
+    setTaskSearch('');
+    setErrors({});
+    setServerError(null);
+    setIsSubmitting(false);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    resetForm();
+    onClose();
+  }, [resetForm, onClose]);
+
+  // Clean form state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      resetForm();
+    }
+  }, [isOpen, resetForm]);
 
   // Eligible Backlog Tasks for current project (not already assigned to active sprint or in backlog)
   const eligibleTasks = useMemo(() => {
@@ -124,11 +148,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
       });
 
       if (res.success) {
-        onClose();
-        // Reset form
-        setSprintName('');
-        setGoal('');
-        setSelectedTaskIds(new Set());
+        handleClose();
       } else {
         setServerError(res.reason || 'Failed to create sprint. Please try again.');
       }
@@ -142,7 +162,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
   return (
     <Dialog
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Create Sprint"
       description="Define the sprint and choose the work to include."
       maxWidth="max-w-2xl"
@@ -340,7 +360,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
             variant="secondary"
             size="md"
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             disabled={isSubmitting}
           >
             Cancel

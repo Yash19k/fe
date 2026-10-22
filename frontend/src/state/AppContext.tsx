@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, fallbackUser, DEFAULT_STANDARD_WORKFLOW } from './storage';
+import { loadInitialState, saveStateToStorage, fallbackUser, unauthenticatedUser, STORAGE_KEYS, DEFAULT_STANDARD_WORKFLOW } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
@@ -45,6 +45,8 @@ import {
   deleteWorkItemApi,
   getProjectSprintsApi,
   currentUserApi,
+  getAuthToken,
+  clearAuthToken,
   loginApi,
   logoutApi,
   getOrganizationUsersApi,
@@ -191,12 +193,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 4000);
   }, []);
 
+  // Invalidate session and prompt user to login if token is expired or unauthorized
+  useEffect(() => {
+    function handleAuthInvalid() {
+      clearAuthToken();
+      setCurrentUser(unauthenticatedUser);
+      setCurrentCompany(null);
+      setProjects([]);
+      setTasks([]);
+      setSprints([]);
+      setLabels([]);
+      setNotifications([]);
+      setAuditLog([]);
+      setAllUsers([]);
+      setCurrentProjectId('');
+
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem(STORAGE_KEYS.COMPANY);
+      localStorage.removeItem('taskflow_current_user');
+      localStorage.removeItem('taskflow_current_user_v2');
+      localStorage.removeItem('taskflow_company');
+      localStorage.removeItem('taskflow_company_v2');
+
+      const hash = window.location.hash.replace(/^#/, '') || '/';
+      if (hash !== '/login' && hash !== '/signup') {
+        navigate('/login');
+      }
+    }
+    window.addEventListener('taskflow:auth-invalid', handleAuthInvalid);
+    return () => window.removeEventListener('taskflow:auth-invalid', handleAuthInvalid);
+  }, [navigate]);
+
   // Load authenticated backend data on boot
   useEffect(() => {
     let isCancelled = false;
 
     async function initBackend() {
       try {
+        const token = getAuthToken();
+        if (!token) {
+          if (!isCancelled) {
+            setCurrentUser(unauthenticatedUser);
+            setCurrentCompany(null);
+            setProjects([]);
+            setTasks([]);
+            setIsLoadingBackend(false);
+          }
+          return;
+        }
+
         let authRes = await currentUserApi().catch(() => null);
         if (authRes?.user && !isCancelled) {
           const u = authRes.user;
@@ -219,6 +264,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               createdAt: org.createdAt || new Date().toISOString(),
             });
           }
+        } else if (!authRes?.user && !isCancelled) {
+          // Token is stale/invalid/expired and refresh failed: clear invalid session and require login
+          clearAuthToken();
+          setCurrentUser(unauthenticatedUser);
+          setCurrentCompany(null);
+          setProjects([]);
+          setTasks([]);
+          setSprints([]);
+          setLabels([]);
+          setNotifications([]);
+          setAuditLog([]);
+          setAllUsers([]);
+          setCurrentProjectId('');
+
+          localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+          localStorage.removeItem(STORAGE_KEYS.COMPANY);
+          localStorage.removeItem('taskflow_current_user');
+          localStorage.removeItem('taskflow_current_user_v2');
+          localStorage.removeItem('taskflow_company');
+          localStorage.removeItem('taskflow_company_v2');
+
+          const currentHash = window.location.hash.replace(/^#/, '') || '/';
+          if (currentHash !== '/login' && currentHash !== '/signup') {
+            navigate('/login');
+          }
+          setIsLoadingBackend(false);
+          return;
         }
 
         // Fetch organization users from backend
@@ -246,6 +318,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               const exists = mapped.some((p) => p.id === prev);
               return exists ? prev : mapped[0].id;
             });
+
+            // Pre-load work items across projects into tasks state
+            try {
+              const allItemResponses = await Promise.all(
+                mapped.map((p) => getProjectWorkItemsApi(p.id, 1, 100).catch(() => null))
+              );
+              if (!isCancelled) {
+                const combinedTasks: Task[] = [];
+                allItemResponses.forEach((res, idx) => {
+                  if (res?.data?.workItems && Array.isArray(res.data.workItems)) {
+                    combinedTasks.push(
+                      ...res.data.workItems.map((item: any) =>
+                        backendWorkItemToTask(item, mapped[idx].id)
+                      )
+                    );
+                  }
+                });
+                if (combinedTasks.length > 0) {
+                  setTasks(combinedTasks);
+                }
+              }
+            } catch {
+              // Gracefully continue
+            }
           } else {
             // Clean empty workspace
             setProjects([]);
@@ -283,7 +379,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [navigate]);
 
   // Fetch real project details (work items, sprints, members, labels, workflow, audit logs) whenever active project changes
   useEffect(() => {
@@ -364,7 +460,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             name: l.name,
             color: l.color,
             description: l.description,
-            projectId: l.projectId,
+            projectId: l.projectId || l.project_id || currentProjectId,
           }));
           setLabels((prev) => {
             const otherLabels = prev.filter((l) => l.projectId && l.projectId !== currentProjectId);
@@ -430,7 +526,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             newValue: a.newState || a.newValue,
             previousState: a.previousState || a.previousValue,
             newState: a.newState || a.newValue,
-            canUndo: Boolean(a.canUndo),
+            canUndo:
+              a.canUndo !== undefined
+                ? Boolean(a.canUndo)
+                : Boolean(
+                    (a.previousState || a.previousValue) &&
+                      !a.isUndone &&
+                      a.action?.toLowerCase() !== 'undone' &&
+                      a.action?.toLowerCase() !== 'deleted'
+                  ),
             isUndone: Boolean(a.isUndone),
             undoneAt: a.undoneAt || null,
             reversalLogId: a.reversalLogId || null,
@@ -590,9 +694,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return tasks.filter((t) => t.projectId === currentProject.id);
   }, [tasks, currentProject]);
 
-  // Tasks assigned to current user
+  // Tasks assigned to current user (supports single assignee, assigneeIds list, and assignees array)
   const myTasks = useMemo(() => {
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
+    if (!currentUser?.id) return [];
+    return tasks.filter(
+      (t) =>
+        t.assigneeId === currentUser.id ||
+        (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(currentUser.id)) ||
+        (Array.isArray(t.assignees) && t.assignees.some((u: any) => u.id === currentUser.id))
+    );
   }, [tasks, currentUser.id]);
 
   // Sprints for current project
@@ -717,6 +827,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         status: frontendStatusToBackend(newTask.status),
         dueDate: newTask.dueDate || null,
         assignees: (newTask.assigneeIds || []).map((userId) => ({ userId })),
+        labels: newTask.labels || [],
       }).then((res) => {
         const serverItem = res?.data || res?.workItem;
         if (serverItem?.id) {
@@ -735,6 +846,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateTask = useCallback((taskId: string, updates: any, snapshotVersion: number | null = null) => {
     let validationError = null;
+    let sideEffectTask: any = null;
+    let previousTaskSnapshot: any = null;
+
     setTasks((prev) => {
       const target = prev.find((t) => t.id === taskId);
       if (!target) return prev;
@@ -773,9 +887,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updatedAt: new Date().toISOString(),
       };
 
-      recordAudit('updated', 'task', taskId, `Updated ${updated.type || 'task'} "${updated.title}"`, target, updated, true, updated.projectId);
-      broadcastEvent('TASK_UPDATED', updated);
-      showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
+      previousTaskSnapshot = target;
+      sideEffectTask = updated;
 
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
 
@@ -802,6 +915,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, reason: validationError };
     }
 
+    if (sideEffectTask) {
+      recordAudit('updated', 'task', taskId, `Updated ${sideEffectTask.type || 'task'} "${sideEffectTask.title}"`, previousTaskSnapshot, sideEffectTask, true, sideEffectTask.projectId);
+      broadcastEvent('TASK_UPDATED', sideEffectTask);
+      showToast(`${sideEffectTask.type || 'Task'} "${sideEffectTask.title}" updated`, 'success');
+    }
+
     if (typeof taskId === 'string' && taskId.includes('-')) {
       const backendUpdates: any = {};
       if (updates.sprintId !== undefined) backendUpdates.sprintId = updates.sprintId || null;
@@ -812,6 +931,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
       if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = updates.parentId || null;
+      if (updates.labels !== undefined) {
+        backendUpdates.labels = Array.isArray(updates.labels) ? updates.labels : [];
+      }
       if (updates.assignees !== undefined) {
         const mapped = Array.isArray(updates.assignees)
           ? updates.assignees
@@ -983,15 +1105,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     // No downstream cascade, apply directly
+    const targetTask = tasks.find((t) => t.id === taskId);
+    const previousSnapshot = { dueDate: targetTask?.dueDate || null };
     const updatedTasks = applyScheduleChanges(impact, tasks);
     setTasks(updatedTasks);
-    recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, null, { dueDate: newDueDate }, true);
+    recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, previousSnapshot, { dueDate: newDueDate }, true);
     broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
     showToast(`Rescheduled to ${newDueDate}`, 'success');
   }, [tasks, recordAudit, showToast]);
 
   const confirmRescheduleImpact = useCallback(() => {
     if (!impactModalData) return;
+    const previousSnapshot = {
+      dueDate: tasks.find((t) => t.id === impactModalData.taskId)?.dueDate || null,
+      affected: (impactModalData.affectedTasks || []).map((t: any) => ({
+        id: t.id,
+        dueDate: tasks.find((item) => item.id === t.id)?.dueDate || null,
+      })),
+    };
     const updatedTasks = applyScheduleChanges(impactModalData, tasks);
     setTasks(updatedTasks);
     recordAudit(
@@ -999,7 +1130,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       'task',
       impactModalData.taskId,
       `Rescheduled "${impactModalData.taskTitle}" and cascade-shifted ${impactModalData.affectedTasks.length} dependent tasks`,
-      null,
+      previousSnapshot,
       impactModalData,
       true
     );
@@ -1688,41 +1819,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, tasks, currentProjectId, navigate, showToast]);
 
   // Project Members Management
-  const addProjectMember = useCallback((projectId: string, userId: string, role: Role = 'Teammate') => {
+  const addProjectMember = useCallback(async (projectId: string, userId: string, role: Role = 'Teammate'): Promise<{ success: boolean; message?: string }> => {
     const targetProj = projects.find((p) => p.id === projectId);
-    if (!targetProj) return;
+    if (!targetProj) return { success: false, message: 'Project not found' };
 
     if ((targetProj.memberIds || []).includes(userId)) {
-      showToast('User is already a project member', 'error');
-      return;
+      showToast('User is already a member of this project', 'error');
+      return { success: false, message: 'User is already a member of this project' };
     }
 
-    setProjects((prev) =>
-      prev.map((p) => {
-        if (p.id === projectId) {
-          const currentMembers = p.memberIds || [];
-          return {
-            ...p,
-            memberIds: [...currentMembers, userId],
-            memberRoles: {
-              ...(p.memberRoles || {}),
-              [userId]: role,
-            },
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return p;
-      })
-    );
+    try {
+      if (typeof projectId === 'string' && projectId.includes('-')) {
+        await addProjectMemberApi(projectId, { memberId: userId, role: toBackendRole(role) });
+      }
 
-    const userObj = allUsers.find((u) => u.id === userId);
-    recordAudit('member_added', 'project', projectId, `Added ${userObj?.name || userId} (${role}) to project`, null, { userId, role }, false, projectId);
-    showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id === projectId) {
+            const currentMembers = p.memberIds || [];
+            return {
+              ...p,
+              memberIds: [...currentMembers, userId],
+              memberRoles: {
+                ...(p.memberRoles || {}),
+                [userId]: role,
+              },
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return p;
+        })
+      );
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
-      addProjectMemberApi(projectId, { memberId: userId, role: toBackendRole(role) }).catch((err) => {
-        console.warn('TaskFlow: Backend add member notice:', err.message);
-      });
+      const userObj = allUsers.find((u) => u.id === userId);
+      recordAudit('member_added', 'project', projectId, `Added ${userObj?.name || userId} (${role}) to project`, null, { userId, role }, false, projectId);
+      showToast(`Added ${userObj?.name || 'member'} to project`, 'success');
+      return { success: true };
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to add member to project';
+      showToast(msg, 'error');
+      return { success: false, message: msg };
     }
   }, [projects, allUsers, recordAudit, showToast]);
 
@@ -1829,9 +1965,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   // Authentication & Session helpers
-  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+  // Authentication & Session helpers
+  const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const res = await loginApi({ email, password });
+      const res = await loginApi({ email: email.trim().toLowerCase(), password });
       if (res?.user) {
         const u = res.user;
         const org = res.organization;
@@ -1853,26 +1990,118 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             createdAt: org.createdAt || new Date().toISOString(),
           });
         }
+        // Fetch organization users from backend
+        const usersRes = await getOrganizationUsersApi().catch(() => null);
+        if (usersRes?.data && Array.isArray(usersRes.data)) {
+          const mappedUsers: User[] = usersRes.data.map((usr: any) => ({
+            id: usr.id,
+            name: usr.fullName || usr.name || usr.email.split('@')[0],
+            email: usr.email,
+            role: normalizeRole(usr.role),
+            initials: (usr.fullName || usr.email || 'U').slice(0, 2).toUpperCase(),
+            companyId: usr.organizationId,
+          }));
+          setAllUsers(mappedUsers);
+        }
         // Fetch projects from backend
         const projs = await getProjectsApi().catch(() => null);
         if (projs?.data && Array.isArray(projs.data) && projs.data.length > 0) {
           const mapped = projs.data.map(backendProjectToFrontend);
           setProjects(mapped);
           setCurrentProjectId(mapped[0].id);
+
+          // Preload tasks across workspace
+          try {
+            const allItemResponses = await Promise.all(
+              mapped.map((p) => getProjectWorkItemsApi(p.id, 1, 100).catch(() => null))
+            );
+            const combinedTasks: Task[] = [];
+            allItemResponses.forEach((r, idx) => {
+              if (r?.data?.workItems && Array.isArray(r.data.workItems)) {
+                combinedTasks.push(
+                  ...r.data.workItems.map((item: any) =>
+                    backendWorkItemToTask(item, mapped[idx].id)
+                  )
+                );
+              }
+            });
+            if (combinedTasks.length > 0) {
+              setTasks(combinedTasks);
+            }
+          } catch {
+            // Gracefully continue
+          }
+        }
+        // Fetch notifications
+        const notifsRes = await getUserNotificationsApi().catch(() => null);
+        if (notifsRes?.data && Array.isArray(notifsRes.data)) {
+          setNotifications(notifsRes.data.map((n: any) => ({
+            id: n.id,
+            userId: n.userId,
+            title: n.title,
+            message: n.message,
+            description: n.message,
+            type: n.type || 'system',
+            read: Boolean(n.read),
+            createdAt: n.createdAt,
+            timestamp: n.createdAt,
+            actionUrl: n.link,
+          })));
         }
         showToast(`Welcome back, ${u.name}!`, 'success');
-        return true;
+        return { success: true };
       }
-      return false;
+      return { success: false, error: 'Invalid email or password. Please try again.' };
     } catch (err: any) {
-      showToast(err.message || 'Login failed', 'error');
-      return false;
+      const isConnectionError =
+        err?.status === 0 ||
+        err?.code === 'SERVER_UNREACHABLE' ||
+        err?.message?.includes('Unable to reach backend server') ||
+        err?.message?.includes('fetch') ||
+        err?.message?.includes('NetworkError');
+
+      const isInvalidCreds =
+        err?.status === 401 ||
+        err?.code === 'INVALID_CREDENTIALS' ||
+        err?.message?.toLowerCase().includes('invalid email or password') ||
+        err?.message?.toLowerCase().includes('invalid credentials');
+
+      let userFacingError = 'Invalid email or password. Please try again.';
+      if (isConnectionError) {
+        userFacingError = 'Unable to reach backend server. Please verify your connection or service.';
+      } else if (!isInvalidCreds && err?.message && err.status !== 401) {
+        userFacingError = err.message;
+      }
+
+      return { success: false, error: userFacingError };
     }
   }, [showToast]);
 
   const logout = useCallback(async () => {
-    await logoutApi().catch(() => null);
-    // setCurrentUser(fallbackUser);
+    try {
+      await logoutApi();
+    } catch {
+      // Ignore network errors on logout
+    }
+    clearAuthToken();
+    setCurrentUser(unauthenticatedUser);
+    setCurrentCompany(null);
+    setProjects([]);
+    setTasks([]);
+    setSprints([]);
+    setLabels([]);
+    setNotifications([]);
+    setAuditLog([]);
+    setAllUsers([]);
+    setCurrentProjectId('');
+
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    localStorage.removeItem(STORAGE_KEYS.COMPANY);
+    localStorage.removeItem('taskflow_current_user');
+    localStorage.removeItem('taskflow_current_user_v2');
+    localStorage.removeItem('taskflow_company');
+    localStorage.removeItem('taskflow_company_v2');
+
     showToast('Signed out successfully', 'info');
     navigate('/login');
   }, [navigate, showToast]);
@@ -2035,10 +2264,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }).then((res) => {
         const serverLabel = res?.data;
         if (serverLabel?.id) {
-          setLabels((prev) => prev.map((l) => (l.id === newLabel.id ? { ...l, id: serverLabel.id } : l)));
+          setLabels((prev) => prev.map((l) => (l.id === newLabel.id ? { ...l, id: serverLabel.id, projectId: serverLabel.projectId || serverLabel.project_id || targetProjectId } : l)));
         }
       }).catch((err) => {
         console.warn('TaskFlow: Backend label save notice:', err.message);
+        setLabels((prev) => prev.filter((l) => l.id !== newLabel.id));
+        showToast(err.message || 'Failed to save label to server', 'error');
       });
     }
 

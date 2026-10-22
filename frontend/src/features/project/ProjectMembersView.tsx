@@ -178,6 +178,7 @@ export function ProjectMembersView() {
               const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
               const activeCount = memberTasks.length - doneTasks.length;
               const isOwner = member.id === currentProject.ownerId;
+              const isCurrentUser = Boolean(currentUser?.id && member.id === currentUser.id);
               const effectiveRole =
                 currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
 
@@ -192,13 +193,12 @@ export function ProjectMembersView() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="font-semibold text-text-primary truncate">{member.name}</p>
-                        {isOwner && (
+                        {isCurrentUser && (
                           <span
-                            className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/25 shrink-0"
-                            title="Project Owner"
+                            className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.2 rounded bg-brand-primary/10 text-brand-primary border border-brand-primary/25 shrink-0"
+                            title="You"
                           >
-                            <Crown size={10} />
-                            Owner
+                            You
                           </span>
                         )}
                       </div>
@@ -208,7 +208,7 @@ export function ProjectMembersView() {
 
                   {/* Role Selector or Display */}
                   <div>
-                    {canManageMembers ? (
+                    {canManageMembers && !isCurrentUser ? (
                       <select
                         value={effectiveRole}
                         onChange={(e) => handleRoleChange(member.id, e.target.value as Role)}
@@ -220,7 +220,7 @@ export function ProjectMembersView() {
                         <option value="Teammate">Teammate</option>
                       </select>
                     ) : (
-                      <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary">
+                      <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary select-none">
                         {effectiveRole}
                       </span>
                     )}

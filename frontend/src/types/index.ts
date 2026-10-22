@@ -301,7 +301,7 @@ export interface AppContextValue {
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
   updateProjectKey: (projectId: string, key: string) => Promise<{ success: boolean; error?: string }>;
   deleteProject: (projectId: string) => boolean;
-  addProjectMember: (projectId: string, userId: string, role?: Role) => void;
+  addProjectMember: (projectId: string, userId: string, role?: Role) => Promise<{ success: boolean; message?: string }>;
   removeProjectMember: (projectId: string, userId: string) => boolean;
   updateProjectMemberRole: (projectId: string, userId: string, role: Role) => boolean;
   currentProjectId: string;
@@ -359,9 +359,8 @@ export interface AppContextValue {
   labels: Label[];
   projectLabels: Label[];
   createLabel: (labelData: Partial<Label>) => Label;
-  deleteLabel: (labelId: string) => void;
-  login?: (email: string, password: string) => Promise<boolean>;
-  logout?: () => Promise<void>;
+  login?: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
   isLoadingBackend?: boolean;
   [key: string]: any;
 }
