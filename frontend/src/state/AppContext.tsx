@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, fallbackUser, DEFAULT_STANDARD_WORKFLOW, STORAGE_KEYS } from './storage';
+import { loadInitialState, saveStateToStorage, DEFAULT_STANDARD_WORKFLOW, STORAGE_KEYS, emptyUser } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
@@ -76,6 +76,7 @@ import {
   normalizeRole,
   toBackendRole,
   toBackendProjectRole,
+  getAuthToken,
   clearAuthToken,
   isPersistedWorkItemId,
 } from '../services/api';
@@ -94,6 +95,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<Label[]>(initial.labels || []);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
+  const [isInitializingAuth, setIsInitializingAuth] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return Boolean(getAuthToken() || localStorage.getItem(STORAGE_KEYS.CURRENT_USER));
+    }
+    return false;
+  });
 
   // Navigation & UI state
   const [activeRoute, setActiveRoute] = useState<string>(() => {
@@ -211,6 +218,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     async function initBackend() {
       try {
+        const token = getAuthToken();
+        const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        if (!token && !savedUser) {
+          setCurrentUser(emptyUser);
+          setCurrentCompany(null);
+          if (!isCancelled) {
+            setIsInitializingAuth(false);
+            setIsLoadingBackend(false);
+          }
+          return;
+        }
+
         let authRes = await currentUserApi().catch(() => null);
         if (authRes?.user && !isCancelled) {
           const u = authRes.user;
@@ -233,6 +252,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               createdAt: org.createdAt || new Date().toISOString(),
             });
           }
+        } else if (!isCancelled) {
+          // Verification failed - clear stale tokens and state
+          clearAuthToken();
+          try {
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+            localStorage.removeItem(STORAGE_KEYS.COMPANY);
+          } catch {}
+          setCurrentUser(emptyUser);
+          setCurrentCompany(null);
         }
 
         // Fetch organization users from backend
@@ -289,7 +317,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch (err: any) {
         console.warn('TaskFlow: Backend initialization notice:', err?.message);
       } finally {
-        if (!isCancelled) setIsLoadingBackend(false);
+        if (!isCancelled) {
+          setIsInitializingAuth(false);
+          setIsLoadingBackend(false);
+        }
       }
     }
 
@@ -518,9 +549,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const entry: AuditLogEntry = {
       id: `aud-${Date.now()}-${Math.random().toString(36).substring(5)}`,
-      actorId: currentUser.id,
-      actorName: currentUser.name || currentUser.email || 'Unknown user',
-      userEmail: currentUser.email,
+      actorId: currentUser?.id || 'system',
+      actorName: currentUser?.name || currentUser?.email || 'Unknown user',
+      userEmail: currentUser?.email || '',
       entityType,
       entityId,
       entityTitle: taskTitle,
@@ -606,8 +637,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Tasks assigned to current user
   const myTasks = useMemo(() => {
+    if (!currentUser?.id) return [];
     return tasks.filter((t) => t.assigneeId === currentUser.id);
-  }, [tasks, currentUser.id]);
+  }, [tasks, currentUser?.id]);
 
   // Sprints for current project
   const projectSprints = useMemo(() => {
@@ -653,7 +685,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : (sanitized.assigneeId ? [sanitized.assigneeId] : []),
       labels: Array.isArray(sanitized.labels) ? sanitized.labels : [],
       sprintId: sanitized.sprintId || null,
-      creatorId: currentUser.id,
+      creatorId: currentUser?.id || '',
       startDate: sanitized.startDate || null,
       dueDate: sanitized.dueDate || null,
       estimateHours: sanitized.estimateHours !== undefined ? sanitized.estimateHours : null,
@@ -924,6 +956,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return false;
 
+    if (!currentUser) return false;
     const transitionCheck = canTransitionStatus(currentUser.role, target.status, newStatus, currentWorkflow);
     if (!transitionCheck.allowed) {
       showToast(transitionCheck.reason || 'Status transition not allowed', 'error');
@@ -1108,7 +1141,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       status: 'Backlog',
       priority: parentTask.priority || 'Medium',
       assigneeId: assigneeId || parentTask.assigneeId,
-      creatorId: currentUser.id,
+      creatorId: currentUser?.id || '',
       startDate: parentTask.startDate,
       dueDate: parentTask.dueDate,
       estimateHours: 2,
@@ -1227,8 +1260,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const newComment = {
         id: commentId,
-        userId: currentUser.id,
-        authorId: currentUser.id,
+        userId: currentUser?.id || '',
+        authorId: currentUser?.id || '',
         body: trimmed,
         text: trimmed,
         createdAt,
@@ -1244,14 +1277,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(errMsg, 'error');
       throw err;
     }
-  }, [currentUser.id, recordAudit, showToast]);
+  }, [currentUser?.id, recordAudit, showToast]);
 
   // Time tracking
   const logTimeEntry = useCallback((taskId: string, durationMinutes: number, description: string = '') => {
     const hours = Number((durationMinutes / 60).toFixed(2));
     const entry = {
       id: `te-${Date.now()}`,
-      userId: currentUser.id,
+      userId: currentUser?.id || '',
       durationMinutes: Number(durationMinutes),
       hours,
       description: description.trim(),
@@ -1302,7 +1335,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('TaskFlow: Backend time entry save notice:', err.message);
       });
     }
-  }, [currentUser.id, showToast]);
+  }, [currentUser?.id, showToast]);
 
   // SLA Escalation
   const escalateTask = useCallback(async (taskId: string, reason?: string) => {
@@ -1388,9 +1421,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const rev = res.data.reversalLog;
             const reversalEntry: AuditLogEntry = {
               id: rev.id,
-              actorId: currentUser.id,
-              actorName: currentUser.name || currentUser.fullName || 'User',
-              userEmail: currentUser.email,
+              actorId: currentUser?.id || 'system',
+              actorName: currentUser?.name || 'User',
+              userEmail: currentUser?.email || '',
               action: 'undone',
               entityType: rev.entityType || entry.entityType,
               entityId: rev.entityId || entry.entityId,
@@ -1481,7 +1514,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser, recordAudit, showToast]);
 
   const updateProject = useCallback((projectId: string, updates: Partial<Project>) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
       showToast('Permission denied: Only Managers and Admins can edit project settings', 'error');
       return false;
     }
@@ -1518,7 +1551,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, recordAudit, showToast]);
 
   const renameProject = useCallback((projectId: string, newName: string) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
       showToast('Permission denied: Only Managers and Admins can rename projects', 'error');
       return false;
     }
@@ -1554,7 +1587,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, recordAudit, showToast]);
 
   const updateProjectVisibility = useCallback((projectId: string, visibility: ProjectVisibility) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
       showToast('Permission denied: Only Managers and Admins can update project settings', 'error');
       return false;
     }
@@ -1595,7 +1628,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, recordAudit, showToast]);
 
   const updateProjectKey = useCallback(async (projectId: string, newKey: string): Promise<{ success: boolean; error?: string }> => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
       showToast('Permission denied: Only Managers and Admins can update project identifiers', 'error');
       return { success: false, error: 'Permission denied' };
     }
@@ -1646,7 +1679,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, recordAudit, showToast]);
 
   const deleteProject = useCallback((projectId: string) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_PROJECT)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.DELETE_PROJECT)) {
       showToast('Permission denied: Only Managers and Admins can delete projects', 'error');
       return false;
     }
@@ -1747,7 +1780,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [projects, allUsers, recordAudit, showToast]);
 
   const removeProjectMember = useCallback((projectId: string, userId: string) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
       showToast('Permission denied: Only Managers and Admins can remove members', 'error');
       return false;
     }
@@ -1791,7 +1824,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser.role, projects, allUsers, recordAudit, showToast]);
 
   const updateProjectMemberRole = useCallback((projectId: string, userId: string, newRole: Role) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
+    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
       showToast('Permission denied: Only Managers and Admins can change member roles', 'error');
       return false;
     }
@@ -1813,7 +1846,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     // If updating current user's role, sync currentUser state
-    if (currentUser.id === userId) {
+    if (currentUser?.id === userId) {
       setCurrentUser((prev) => ({ ...prev, role: newRole }));
     }
 
@@ -1851,44 +1884,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Authentication & Session helpers
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
-    try {
-      const res = await loginApi({ email, password });
-      if (res?.user) {
-        const u = res.user;
-        const org = res.organization;
-        const mappedUser: User = {
-          id: u.id,
-          name: u.name,
-          email: u.email,
-          role: normalizeRole(u.role),
-          companyId: org?.id,
-          companyName: org?.name,
-          onboardingCompleted: true,
-        };
-        setCurrentUser(mappedUser);
-        if (org) {
-          setCurrentCompany({
-            id: org.id,
-            name: org.name,
-            createdByUserId: org.createdByUserId || u.id,
-            createdAt: org.createdAt || new Date().toISOString(),
-          });
-        }
-        // Fetch projects from backend
-        const projs = await getProjectsApi().catch(() => null);
-        if (projs?.data && Array.isArray(projs.data) && projs.data.length > 0) {
-          const mapped = projs.data.map(backendProjectToFrontend);
-          setProjects(mapped);
-          setCurrentProjectId(mapped[0].id);
-        }
-        showToast(`Welcome back, ${u.name}!`, 'success');
-        return true;
+    const res = await loginApi({ email, password });
+    if (res?.user) {
+      const u = res.user;
+      const org = res.organization;
+      const mappedUser: User = {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: normalizeRole(u.role),
+        companyId: org?.id,
+        companyName: org?.name,
+        onboardingCompleted: true,
+      };
+      setCurrentUser(mappedUser);
+      if (org) {
+        setCurrentCompany({
+          id: org.id,
+          name: org.name,
+          createdByUserId: org.createdByUserId || u.id,
+          createdAt: org.createdAt || new Date().toISOString(),
+        });
       }
-      return false;
-    } catch (err: any) {
-      showToast(err.message || 'Login failed', 'error');
-      return false;
+      // Fetch projects from backend
+      const projs = await getProjectsApi().catch(() => null);
+      if (projs?.data && Array.isArray(projs.data) && projs.data.length > 0) {
+        const mapped = projs.data.map(backendProjectToFrontend);
+        setProjects(mapped);
+        setCurrentProjectId(mapped[0].id);
+      }
+      showToast(`Welcome back, ${u.name}!`, 'success');
+      return true;
     }
+    return false;
   }, [showToast]);
 
   const logout = useCallback(async () => {
@@ -1900,8 +1928,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // storage cleanup fallback
     }
-    setCurrentUser(fallbackUser);
+    setCurrentUser(emptyUser);
     setCurrentCompany(null);
+    setProjects([]);
+    setTasks([]);
+    setSprints([]);
+    setLabels([]);
+    setAllUsers([]);
     showToast('Signed out successfully', 'info');
     navigate('/login');
   }, [navigate, showToast]);
@@ -1939,7 +1972,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const newCompany: Company = {
         id: `comp-${Date.now()}`,
         name: trimmed,
-        createdByUserId: currentUser.id,
+        createdByUserId: currentUser?.id || '',
         createdAt: new Date().toISOString(),
       };
 
@@ -1964,7 +1997,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const finishOnboarding = useCallback(() => {
     setCurrentUser((prev) => {
-      const updated = {
+      const updated: User = {
         ...prev,
         onboardingCompleted: true,
       };
@@ -2166,6 +2199,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     isLoadingBackend,
+    isInitializingAuth,
     sprints,
     projectSprints,
     createSprint,

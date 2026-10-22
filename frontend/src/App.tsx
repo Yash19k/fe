@@ -61,7 +61,7 @@ function getSettingsSectionFromTab(tab: string): SettingsSection {
 }
 
 function MainAppShell() {
-  const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate } = useApp();
+  const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate, isInitializingAuth } = useApp();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -83,6 +83,15 @@ function MainAppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const isAuthenticated = Boolean(currentUser && currentUser.id && currentUser.email);
+
+  // Sync route to /login if unauthenticated user attempts direct navigation to protected routes
+  useEffect(() => {
+    if (!isInitializingAuth && !isAuthenticated && activeRoute !== '/login' && activeRoute !== '/signup') {
+      navigate('/login');
+    }
+  }, [isInitializingAuth, isAuthenticated, activeRoute, navigate]);
+
   // Auth views
   if (activeRoute === '/login') {
     return <AuthView isSignup={false} />;
@@ -91,8 +100,19 @@ function MainAppShell() {
     return <AuthView isSignup={true} />;
   }
 
+  // Loading state while verifying authentication session
+  if (isInitializingAuth) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-canvas text-text-primary">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-brand-primary border-t-transparent animate-spin" />
+          <span className="text-xs text-text-muted">Loading workspace...</span>
+        </div>
+      </div>
+    );
+  }
+
   // Route Guard: Block protected workspace screens when unauthenticated or signed out
-  const isAuthenticated = Boolean(currentUser && currentUser.id && currentUser.email);
   if (!isAuthenticated) {
     return <AuthView isSignup={false} />;
   }
@@ -106,7 +126,7 @@ function MainAppShell() {
   }
 
   const isProjectRoute = activeRoute.startsWith('/project/');
-  const hasProjectAccess = currentProject ? canUserAccessProject(currentProject, currentUser.id) : true;
+  const hasProjectAccess = currentProject && currentUser?.id ? canUserAccessProject(currentProject, currentUser.id) : true;
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas text-text-primary antialiased">

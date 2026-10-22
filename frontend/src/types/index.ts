@@ -363,5 +363,6 @@ export interface AppContextValue {
   login?: (email: string, password: string) => Promise<boolean>;
   logout?: () => Promise<void>;
   isLoadingBackend?: boolean;
+  isInitializingAuth?: boolean;
   [key: string]: any;
 }
