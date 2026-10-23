@@ -234,6 +234,15 @@ export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
   });
 }
 
+export const emptyUser: User = {
+  id: '',
+  name: '',
+  email: '',
+  role: 'Teammate',
+  initials: '',
+  onboardingCompleted: false,
+};
+
 export interface InitialAppState {
   currentUser: User;
   currentCompany: Company | null;
@@ -246,18 +255,7 @@ export interface InitialAppState {
   labels: Label[];
 }
 
-export const fallbackUser: User = {
-  id: '',
-  name: 'Workspace Member',
-  email: 'admin@taskflow.pro',
-  role: 'Admin',
-  initials: 'AD',
-  avatarColor: '#4F46E5',
-  onboardingCompleted: true,
-};
-
 export function loadInitialState(): InitialAppState {
-
   try {
     const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     const savedCompany = localStorage.getItem(STORAGE_KEYS.COMPANY);
@@ -278,15 +276,31 @@ export function loadInitialState(): InitialAppState {
       }
     }
 
-    let initialUser: User = savedUser ? JSON.parse(savedUser) : fallbackUser;
-    if (initialUser && initialUser.onboardingCompleted === undefined) {
-      initialUser = {
-        ...initialUser,
-        onboardingCompleted: true,
-      };
+    let initialUser: User = emptyUser;
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && typeof parsed === 'object' && parsed.id && parsed.email) {
+          initialUser = {
+            ...parsed,
+            onboardingCompleted: parsed.onboardingCompleted ?? true,
+          };
+        } else {
+          localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      }
     }
 
-    const initialCompany: Company | null = savedCompany ? JSON.parse(savedCompany) : null;
+    let initialCompany: Company | null = null;
+    if (savedCompany && initialUser.id) {
+      try {
+        initialCompany = JSON.parse(savedCompany);
+      } catch {
+        localStorage.removeItem(STORAGE_KEYS.COMPANY);
+      }
+    }
 
     return {
       currentUser: initialUser,
@@ -302,7 +316,7 @@ export function loadInitialState(): InitialAppState {
   } catch (err) {
     console.warn('TaskFlow: Error loading initial storage:', err);
     return {
-      currentUser: fallbackUser,
+      currentUser: emptyUser,
       currentCompany: null,
       projects: [],
       tasks: [],
@@ -322,10 +336,15 @@ export function saveStateToStorage(key: StorageKeyName, data: any): void {
   }
   try {
     const storageKey = STORAGE_KEYS[key];
-    if (storageKey) {
+    if (!storageKey) return;
+
+    if (data === null || data === undefined || (key === 'CURRENT_USER' && (!data?.id || !data?.email))) {
+      localStorage.removeItem(storageKey);
+    } else {
       localStorage.setItem(storageKey, JSON.stringify(data));
     }
   } catch (err) {
     console.warn(`TaskFlow: Failed to save ${key} to localStorage:`, err);
   }
 }
+

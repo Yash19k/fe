@@ -18,6 +18,7 @@ import { isTaskBlocked } from '../../domain/dependencyGraph';
 import { evaluateTaskSla } from '../../domain/sla';
 import { canUserAccessProject } from '../../domain/permissions';
 import { getPersonalDashboardApi, backendWorkItemToTask } from '../../services/api';
+import type { User } from '../../types';
 
 export function HomeView() {
   const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer } = useApp();
@@ -83,9 +84,28 @@ export function HomeView() {
   // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
   const attentionTasks = useMemo(() => {
     if (personalData?.attentionTasks && Array.isArray(personalData.attentionTasks)) {
-      return personalData.attentionTasks.map((item: any) =>
-        backendWorkItemToTask(item, item.projectId)
-      );
+      return personalData.attentionTasks.map((item: any) => {
+        const existing = tasks.find((t) => t.id === item.id);
+        const mapped = backendWorkItemToTask(item, item.projectId || existing?.projectId || '');
+        const userFallback: User[] = currentUser?.id
+          ? [
+              {
+                id: currentUser.id,
+                name: currentUser.name,
+                email: currentUser.email,
+                role: currentUser.role,
+              },
+            ]
+          : [];
+        return {
+          ...mapped,
+          assigneeId: mapped.assigneeId || existing?.assigneeId || currentUser?.id,
+          assignees:
+            mapped.assignees && mapped.assignees.length > 0
+              ? mapped.assignees
+              : existing?.assignees || userFallback,
+        };
+      });
     }
     return userTasks
       .filter((t) => {
@@ -96,7 +116,7 @@ export function HomeView() {
         return date.isOverdue || date.isDueSoon || blocked || sla.isBreached || sla.isApproaching;
       })
       .slice(0, 6);
-  }, [personalData, userTasks, tasks]);
+  }, [personalData, userTasks, tasks, currentUser]);
 
   // SLA Warnings across all projects
   const atRiskTasks = useMemo(() => {
@@ -234,10 +254,22 @@ export function HomeView() {
                 className="border-0 rounded-none py-10"
               />
             ) : (
-              <div className="divide-y divide-border/60">
-                {attentionTasks.map((task) => (
-                  <TaskRow key={task.id} task={task} />
-                ))}
+              <div className="overflow-x-auto">
+                <div className="min-w-[780px]">
+                  <div className="hidden md:grid md:grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface-elevated/40">
+                    <span>Task</span>
+                    <span>Assignee</span>
+                    <span>Due Date</span>
+                    <span>Status</span>
+                    <span>Priority</span>
+                    <span className="text-right">SLA</span>
+                  </div>
+                  <div className="divide-y divide-border/60">
+                    {attentionTasks.map((task) => (
+                      <TaskRow key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </section>

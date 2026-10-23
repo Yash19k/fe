@@ -270,21 +270,27 @@ export function MyTasksView() {
                 </span>
               </div>
 
-              {/* Header row for large screens */}
-              <div className="hidden md:grid md:grid-cols-[auto_1fr_130px_110px_100px_90px_auto] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50">
-                <span className="w-4" />
-                <span>Task Title</span>
-                <span>Assignee</span>
-                <span>Due Date</span>
-                <span>Status</span>
-                <span>Priority</span>
-                <span className="text-right">Tags</span>
-              </div>
+              <div className="overflow-x-auto">
+                <div className="min-w-[860px]">
+                  {/* Header row matching TaskRow 6-column grid */}
+                  <div className="grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/50 select-none">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-4 shrink-0" />
+                      <span>Task</span>
+                    </div>
+                    <span>Assignee</span>
+                    <span>Due Date</span>
+                    <span className="text-center">Status</span>
+                    <span>Priority</span>
+                    <span className="text-right">Tags</span>
+                  </div>
 
-              <div className="divide-y divide-border/40">
-                {group.items.map((task) => (
-                  <TaskRow key={task.id} task={task} />
-                ))}
+                  <div className="divide-y divide-border/40">
+                    {group.items.map((task) => (
+                      <TaskRow key={task.id} task={task} />
+                    ))}
+                  </div>
+                </div>
               </div>
             </section>
           ))}

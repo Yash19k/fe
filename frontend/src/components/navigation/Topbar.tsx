@@ -12,7 +12,7 @@ export interface TopbarProps {
 }
 
 export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, onOpenSearch }: TopbarProps) {
-  const { currentUser, notifications, navigate } = useApp();
+  const { currentUser, notifications, navigate, logout } = useApp();
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -102,11 +102,11 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
             <div className="absolute right-0 top-full mt-2 w-56 bg-surface rounded-xl shadow-overlay border border-border py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
               <div className="px-3 py-2 border-b border-border">
                 <p className="text-xs font-semibold text-text-primary truncate">
-                  {currentUser.name}
+                  {currentUser?.name || 'Workspace User'}
                 </p>
-                <p className="text-[11px] text-text-muted truncate">{currentUser.email}</p>
+                <p className="text-[11px] text-text-muted truncate">{currentUser?.email || ''}</p>
                 <span className="inline-block mt-1 text-[10px] font-semibold text-brand-primary uppercase tracking-wider">
-                  {currentUser.role} Access
+                  {currentUser?.role || 'Member'} Access
                 </span>
               </div>
 
@@ -124,14 +124,14 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
 
               <div className="border-t border-border pt-1">
                 <button
-                  onClick={() => {
-                    navigate('/login');
+                  onClick={async () => {
                     setProfileOpen(false);
+                    await logout?.();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-surface-hover transition-colors flex items-center gap-1.5"
+                  className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-surface-hover transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <LogOut size={13} />
-                  Sign Out (Simulated)
+                  Sign Out
                 </button>
               </div>
             </div>

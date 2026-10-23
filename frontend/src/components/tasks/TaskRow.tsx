@@ -41,7 +41,7 @@ export function TaskRow({ task }: TaskRowProps) {
       className="group grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] gap-3 items-center px-4 py-2.5 border-b border-border/60 hover:bg-surface-hover/70 transition-colors text-xs cursor-pointer select-none"
     >
       {/* 1. Task Title (checkbox + type icon + parent link + title + indicators) */}
-      <div className="flex items-center gap-2 min-w-0 pr-2">
+      <div className="flex items-center gap-2 min-w-0 pr-2 overflow-hidden">
         <button
           type="button"
           onClick={handleToggleDone}
@@ -115,7 +115,7 @@ export function TaskRow({ task }: TaskRowProps) {
       </div>
 
       {/* 3. Due Date */}
-      <div className="flex items-center min-w-0" title={dateInfo.label}>
+      <div className="flex items-center min-w-0 overflow-hidden" title={dateInfo.label}>
         <span
           className={`truncate text-xs ${
             dateInfo.isOverdue
@@ -130,7 +130,7 @@ export function TaskRow({ task }: TaskRowProps) {
       </div>
 
       {/* 4. Status Badge */}
-      <div className="flex items-center min-w-0">
+      <div className="flex items-center justify-center min-w-0">
         <StatusBadge status={task.status} size="sm" />
       </div>
 

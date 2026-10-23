@@ -20,15 +20,17 @@ import {
   History,
   Plus,
   Search,
-  Crown,
   Activity,
   AlertCircle,
   Workflow,
   Network,
+  Eye,
 } from 'lucide-react';
 import type { User, ProjectVisibility, Role, Label, AuditLogEntry, Task } from '../../types';
 import { WorkflowBuilderView } from './WorkflowBuilderView';
 import { DependenciesView } from './DependenciesView';
+import { AuditEventDetailsDialog } from '../../components/activity/AuditEventDetailsDialog';
+import { AddProjectMemberDialog } from '../../components/modals/AddProjectMemberDialog';
 
 export type SettingsSection = 'general' | 'members' | 'workflow' | 'dependencies' | 'labels' | 'activity' | 'danger';
 
@@ -322,45 +324,88 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     showToast,
   } = useApp();
 
+  const isAdmin = useMemo(() => {
+    if (currentUser?.role === 'Admin') return true;
+    if (currentProject?.memberRoles && currentUser?.id) {
+      if (currentProject.memberRoles[currentUser.id] === 'Admin') return true;
+    }
+    return false;
+  }, [currentUser, currentProject]);
+
   // Active section inside Settings
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
-    if (initialSection) return initialSection;
-    if (typeof window !== 'undefined') {
+    let sec: SettingsSection = 'general';
+    if (initialSection) sec = initialSection;
+    else if (typeof window !== 'undefined') {
       const hash = window.location.hash;
-      if (hash.includes('#workflow') || hash.endsWith('/workflow')) return 'workflow';
-      if (hash.includes('#dependencies') || hash.endsWith('/dependencies')) return 'dependencies';
-      if (hash.includes('#members') || hash.endsWith('/members')) return 'members';
-      if (hash.includes('#activity') || hash.endsWith('/activity')) return 'activity';
-      if (hash.includes('#labels') || hash.endsWith('/labels')) return 'labels';
-      if (hash.includes('#danger') || hash.includes('#security')) return 'danger';
+      if (hash.includes('#workflow') || hash.endsWith('/workflow')) sec = 'workflow';
+      else if (hash.includes('#dependencies') || hash.endsWith('/dependencies')) sec = 'dependencies';
+      else if (hash.includes('#members') || hash.endsWith('/members')) sec = 'members';
+      else if (hash.includes('#activity') || hash.endsWith('/activity')) sec = 'activity';
+      else if (hash.includes('#labels') || hash.endsWith('/labels')) sec = 'labels';
+      else if (hash.includes('#danger') || hash.includes('#security')) sec = 'danger';
     }
-    return 'general';
+    const userIsAdmin =
+      currentUser?.role === 'Admin' ||
+      Boolean(currentProject?.memberRoles && currentUser?.id && currentProject.memberRoles[currentUser.id] === 'Admin');
+    if (sec === 'danger' && !userIsAdmin) {
+      return 'general';
+    }
+    return sec;
   });
 
   // Sync active section if initialSection prop changes
   useEffect(() => {
     if (initialSection) {
-      setActiveSection(initialSection);
+      if (initialSection === 'danger' && !isAdmin) {
+        setActiveSection('general');
+      } else {
+        setActiveSection(initialSection);
+      }
     }
-  }, [initialSection]);
+  }, [initialSection, isAdmin]);
 
   // Listen for hash changes to sync internal section
   useEffect(() => {
     function handleHash() {
       const hash = window.location.hash;
+      const userIsAdmin =
+        currentUser?.role === 'Admin' ||
+        Boolean(currentProject?.memberRoles && currentUser?.id && currentProject.memberRoles[currentUser.id] === 'Admin');
+
       if (hash.includes('#workflow') || hash.endsWith('/workflow')) setActiveSection('workflow');
       else if (hash.includes('#dependencies') || hash.endsWith('/dependencies')) setActiveSection('dependencies');
       else if (hash.includes('#members') || hash.endsWith('/members')) setActiveSection('members');
       else if (hash.includes('#activity') || hash.endsWith('/activity')) setActiveSection('activity');
       else if (hash.includes('#labels') || hash.endsWith('/labels')) setActiveSection('labels');
-      else if (hash.includes('#danger') || hash.includes('#security')) setActiveSection('danger');
+      else if (hash.includes('#danger') || hash.includes('#security')) {
+        if (userIsAdmin) {
+          setActiveSection('danger');
+        } else {
+          setActiveSection('general');
+          if (currentProject) {
+            window.location.hash = `/project/${currentProject.id}/settings#general`;
+          }
+        }
+      }
       else if (hash.includes('#general') || hash.endsWith('/general')) setActiveSection('general');
     }
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
-  }, []);
+  }, [currentUser, currentProject]);
+
+  // Non-admin redirect guard for danger zone
+  useEffect(() => {
+    if (activeSection === 'danger' && !isAdmin) {
+      setActiveSection('general');
+      if (currentProject) {
+        window.location.hash = `/project/${currentProject.id}/settings#general`;
+      }
+    }
+  }, [activeSection, isAdmin, currentProject]);
 
   function handleSelectSection(sec: SettingsSection) {
+    if (sec === 'danger' && !isAdmin) return;
     setActiveSection(sec);
     if (currentProject) {
       window.location.hash = `/project/${currentProject.id}/settings#${sec}`;
@@ -402,6 +447,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   // ==========================================
   // MEMBERS SECTION STATE (Feature 6 & 14)
   // ==========================================
+  const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedAddRole, setSelectedAddRole] = useState<Role>('Teammate');
   const [memberSearch, setMemberSearch] = useState('');
@@ -430,6 +476,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   // ACTIVITY & AUDIT SECTION STATE (Feature 13)
   // ==========================================
   const [auditFilter, setAuditFilter] = useState('');
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLogEntry | null>(null);
 
   // Pre-calculate member lists and filtered members hook unconditionally at top level
   const currentMemberIds = currentProject?.memberIds || [];
@@ -663,19 +710,14 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <button
                 type="button"
                 onClick={() => handleSelectSection('members')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   activeSection === 'members'
                     ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
                     : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Users size={14} className={activeSection === 'members' ? 'text-brand-primary' : 'text-text-muted'} />
-                  <span>Members</span>
-                </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
-                  {projectMembers.length}
-                </span>
+                <Users size={14} className={activeSection === 'members' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Members</span>
               </button>
             </div>
 
@@ -713,19 +755,14 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <button
                 type="button"
                 onClick={() => handleSelectSection('labels')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   activeSection === 'labels'
                     ? 'bg-surface-elevated border border-border text-text-primary font-semibold shadow-xs'
                     : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Tag size={14} className={activeSection === 'labels' ? 'text-brand-primary' : 'text-text-muted'} />
-                  <span>Labels</span>
-                </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-text-secondary">
-                  {projectLabels.length}
-                </span>
+                <Tag size={14} className={activeSection === 'labels' ? 'text-brand-primary' : 'text-text-muted'} />
+                <span>Labels</span>
               </button>
             </div>
 
@@ -748,24 +785,26 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               </button>
             </div>
 
-            {/* Group 5: SECURITY */}
-            <div className="space-y-1">
-              <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
-                Security
-              </span>
-              <button
-                type="button"
-                onClick={() => handleSelectSection('danger')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                  activeSection === 'danger'
-                    ? 'bg-rose-500/10 border border-rose-500/30 text-rose-300 font-semibold shadow-xs'
-                    : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/5 border border-transparent'
-                }`}
-              >
-                <ShieldAlert size={14} className={activeSection === 'danger' ? 'text-rose-400' : 'text-rose-400/70'} />
-                <span>Security & Danger Zone</span>
-              </button>
-            </div>
+            {/* Group 5: SECURITY (Admin-Only Visibility) */}
+            {isAdmin && (
+              <div className="space-y-1">
+                <span className="px-3 text-[10px] font-bold text-text-muted tracking-wider uppercase">
+                  Security
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('danger')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                    activeSection === 'danger'
+                      ? 'bg-rose-500/10 border border-rose-500/30 text-rose-300 font-semibold shadow-xs'
+                      : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/5 border border-transparent'
+                  }`}
+                >
+                  <ShieldAlert size={14} className={activeSection === 'danger' ? 'text-rose-400' : 'text-rose-400/70'} />
+                  <span>Security & Danger Zone</span>
+                </button>
+              </div>
+            )}
           </nav>
         </aside>
 
@@ -777,38 +816,6 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       {/* ==================================================== */}
       {activeSection === 'general' && (
         <div className="space-y-6">
-          {/* Unsaved Changes Banner */}
-          {isGeneralDirty && (
-            <div className="p-3.5 rounded-xl bg-brand-primary/10 border border-brand-primary/30 flex items-center justify-between gap-3 text-xs text-brand-primary">
-              <div className="flex items-center gap-2">
-                <AlertCircle size={16} className="shrink-0" />
-                <span className="font-semibold text-text-primary">
-                  You have unsaved changes in project general settings.
-                </span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  icon={RotateCcw}
-                  onClick={handleCancelGeneral}
-                >
-                  Discard
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  type="button"
-                  icon={Save}
-                  onClick={handleSaveGeneral}
-                  disabled={isSavingGeneral}
-                >
-                  {isSavingGeneral ? 'Saving...' : 'Save Changes'}
-                </Button>
-              </div>
-            </div>
-          )}
 
           {generalError && (
             <div
@@ -958,59 +965,8 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       {/* ==================================================== */}
       {activeSection === 'members' && (
         <div className="space-y-6">
-          {/* Add Member Bar */}
-          {canManageMembers && nonMembers.length > 0 && (
-            <form
-              onSubmit={handleAddMemberSubmit}
-              className="p-4 rounded-xl bg-surface border border-border flex flex-wrap items-end gap-3 text-xs"
-            >
-              <div className="flex-1 min-w-[220px]">
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Add Member to Project
-                </label>
-                <select
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none"
-                >
-                  <option value="">Select an available user...</option>
-                  {nonMembers.map((u: User) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} — {u.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="w-36">
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Project Role
-                </label>
-                <select
-                  value={selectedAddRole}
-                  onChange={(e) => setSelectedAddRole(e.target.value as Role)}
-                  className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none cursor-pointer"
-                >
-                  <option value="Admin">Admin</option>
-                  <option value="Manager">Manager</option>
-                  <option value="Teammate">Teammate</option>
-                </select>
-              </div>
-
-              <Button
-                variant="primary"
-                size="md"
-                type="submit"
-                icon={Plus}
-                disabled={!selectedUserId}
-              >
-                Add Member
-              </Button>
-            </form>
-          )}
-
-          {/* Filter Bar */}
-          <div className="flex items-center justify-between gap-3 text-xs">
+          {/* Action & Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="relative w-full max-w-xs">
               <input
                 type="search"
@@ -1022,130 +978,156 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
             </div>
 
-            <div className="text-text-muted text-[11px] font-mono">
-              {projectMembers.length} {projectMembers.length === 1 ? 'member' : 'members'} in project
+            <div className="flex items-center gap-3">
+              <div className="text-text-muted text-[11px] font-mono">
+                {projectMembers.length} {projectMembers.length === 1 ? 'member' : 'members'} in project
+              </div>
+
+              {canManageMembers && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Plus}
+                  onClick={() => setAddMemberModalOpen(true)}
+                >
+                  Add Member
+                </Button>
+              )}
             </div>
           </div>
 
           {/* Members Table */}
           <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="hidden md:grid md:grid-cols-[2fr_140px_110px_110px_110px_50px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              <span>Member</span>
-              <span>Project Role</span>
-              <span>Assigned Tasks</span>
-              <span>Completed</span>
-              <span>Workload</span>
-              <span className="text-right">Actions</span>
-            </div>
-
-            <div className="divide-y divide-border/60">
-              {filteredMembers.length === 0 ? (
-                <div className="p-6 text-center text-xs text-text-muted italic">
-                  {projectMembers.length === 0
-                    ? 'No members currently in this project.'
-                    : 'No members match the search query.'}
+            <div className="overflow-x-auto">
+              <div className="min-w-[780px]">
+                <div className="grid grid-cols-[minmax(220px,2fr)_140px_110px_100px_110px_70px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider select-none">
+                  <span>Member</span>
+                  <span>Project Role</span>
+                  <span>Assigned Tasks</span>
+                  <span>Completed</span>
+                  <span>Workload</span>
+                  <span className="text-right">Actions</span>
                 </div>
-              ) : (
-                filteredMembers.map((member: User) => {
-                  const memberTasks = projectTasks.filter(
-                    (t: Task) => t.assigneeId === member.id || t.assigneeIds?.includes(member.id)
-                  );
-                  const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
-                  const activeCount = memberTasks.length - doneTasks.length;
-                  const isOwner = member.id === currentProject.ownerId;
-                  const currentRole =
-                    currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
 
-                  return (
-                    <div
-                      key={member.id}
-                      className="grid grid-cols-1 md:grid-cols-[2fr_140px_110px_110px_110px_50px] gap-3 items-center px-5 py-3.5 hover:bg-surface-hover/70 transition-colors text-xs"
-                    >
-                      {/* Member Info */}
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar user={member} size="md" />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="font-semibold text-text-primary truncate">{member.name}</p>
-                            {isOwner && (
-                              <span
-                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/25 shrink-0"
-                                title="Project Owner"
+                <div className="divide-y divide-border/60">
+                  {filteredMembers.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-text-muted italic">
+                      {projectMembers.length === 0
+                        ? 'No members currently in this project.'
+                        : 'No members match the search query.'}
+                    </div>
+                  ) : (
+                    filteredMembers.map((member: User) => {
+                      const memberTasks = projectTasks.filter(
+                        (t: Task) => t.assigneeId === member.id || t.assigneeIds?.includes(member.id)
+                      );
+                      const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
+                      const activeCount = memberTasks.length - doneTasks.length;
+                      const isOwner = member.id === currentProject.ownerId;
+                      const isSelf = Boolean(
+                        currentUser?.id &&
+                        (member.id === currentUser.id ||
+                         (member.email && currentUser.email && member.email.toLowerCase() === currentUser.email.toLowerCase()))
+                      );
+                      const currentRole =
+                        currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
+
+                      return (
+                        <div
+                          key={member.id}
+                          className="grid grid-cols-[minmax(220px,2fr)_140px_110px_100px_110px_70px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
+                        >
+                          {/* 1. Member Info */}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar user={member} size="md" />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <p className="font-semibold text-text-primary truncate">{member.name}</p>
+                                {isSelf && (
+                                  <span
+                                    className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand-primary/10 text-brand-primary border border-brand-primary/25 shrink-0"
+                                    title="Currently logged-in user"
+                                  >
+                                    You
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-text-muted truncate">{member.email}</p>
+                            </div>
+                          </div>
+
+                          {/* 2. Role Selector or Display */}
+                          <div className="min-w-0">
+                            {isSelf ? (
+                              <span className="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary select-none">
+                                {currentRole}
+                              </span>
+                            ) : canManageMembers ? (
+                              <select
+                                value={currentRole}
+                                onChange={(e) =>
+                                  handleInitiateRoleChange(member, currentRole, e.target.value as Role)
+                                }
+                                className="h-7 w-full max-w-[120px] rounded-md bg-surface-elevated border border-border px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary cursor-pointer"
+                                title="Change member role in project (requires confirmation)"
+                                aria-label={`Change role for ${member.name}`}
                               >
-                                <Crown size={10} />
-                                Owner
+                                <option value="Admin">Admin</option>
+                                <option value="Manager">Manager</option>
+                                <option value="Teammate">Teammate</option>
+                              </select>
+                            ) : (
+                              <span className="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary">
+                                {currentRole}
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-text-muted truncate">{member.email}</p>
+
+                          {/* 3. Assigned Tasks */}
+                          <div className="font-mono text-text-primary truncate">
+                            {memberTasks.length} {memberTasks.length === 1 ? 'task' : 'tasks'}
+                          </div>
+
+                          {/* 4. Completed Tasks */}
+                          <div className="font-mono text-emerald-500 dark:text-emerald-400 truncate">
+                            {doneTasks.length} closed
+                          </div>
+
+                          {/* 5. Workload Status */}
+                          <div className="flex items-center">
+                            <span
+                              className={`inline-flex items-center justify-center min-w-[76px] text-[10px] font-medium px-2 py-0.5 rounded ${
+                                activeCount > 4
+                                  ? 'bg-rose-500/15 text-rose-300'
+                                  : activeCount > 2
+                                    ? 'bg-amber-500/15 text-amber-300'
+                                    : 'bg-emerald-500/15 text-emerald-300'
+                              }`}
+                            >
+                              {activeCount > 4 ? 'High Load' : activeCount > 2 ? 'Normal' : 'Available'}
+                            </span>
+                          </div>
+
+                          {/* 6. Actions */}
+                          <div className="flex items-center justify-end">
+                            {canManageMembers && !isOwner && !isSelf && (
+                              <button
+                                type="button"
+                                onClick={() => setMemberToRemove(member)}
+                                className="text-text-muted hover:text-rose-400 p-1 rounded hover:bg-surface-elevated transition-colors cursor-pointer"
+                                title="Remove member from project"
+                                aria-label={`Remove ${member.name} from project`}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-
-                      {/* Role Selector with Confirmation Trigger (Feature 6) */}
-                      <div>
-                        {canManageMembers ? (
-                          <select
-                            value={currentRole}
-                            onChange={(e) =>
-                              handleInitiateRoleChange(member, currentRole, e.target.value as Role)
-                            }
-                            className="h-7 rounded-md bg-surface-elevated border border-border px-2 text-[11px] text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary cursor-pointer"
-                            title="Change member role in project (requires confirmation)"
-                          >
-                            <option value="Admin">Admin</option>
-                            <option value="Manager">Manager</option>
-                            <option value="Teammate">Teammate</option>
-                          </select>
-                        ) : (
-                          <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-surface-active border border-border text-text-secondary">
-                            {currentRole}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Assigned Tasks */}
-                      <div className="font-mono text-text-primary">
-                        {memberTasks.length} tasks
-                      </div>
-
-                      {/* Completed Tasks */}
-                      <div className="font-mono text-emerald-400">
-                        {doneTasks.length} closed
-                      </div>
-
-                      {/* Workload Status */}
-                      <div>
-                        <span
-                          className={`text-[10px] font-medium px-2 py-0.5 rounded ${
-                            activeCount > 4
-                              ? 'bg-rose-500/15 text-rose-300'
-                              : activeCount > 2
-                                ? 'bg-amber-500/15 text-amber-300'
-                                : 'bg-emerald-500/15 text-emerald-300'
-                          }`}
-                        >
-                          {activeCount > 4 ? 'High Load' : activeCount > 2 ? 'Normal' : 'Available'}
-                        </span>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="text-right">
-                        {canManageMembers && !isOwner && (
-                          <button
-                            type="button"
-                            onClick={() => setMemberToRemove(member)}
-                            className="text-text-muted hover:text-rose-400 p-1 rounded hover:bg-surface-elevated transition-colors cursor-pointer"
-                            title="Remove member from project"
-                            aria-label={`Remove ${member.name} from project`}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -1332,94 +1314,105 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
           </div>
 
           <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="hidden md:grid md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              <span>Action</span>
-              <span>Performed By</span>
-              <span>Entity</span>
-              <span>Description</span>
-              <span>Timestamp</span>
-              <span className="text-right">Action</span>
-            </div>
-
-            <div className="divide-y divide-border/60">
-              {projectAuditLog.length === 0 ? (
-                <div className="p-8 text-center text-xs text-text-muted space-y-2">
-                  <Activity size={24} className="mx-auto text-text-muted/60" />
-                  <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
-                  <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
+            <div className="overflow-x-auto">
+              <div className="min-w-[860px]">
+                <div className="hidden md:grid md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                  <span>Action</span>
+                  <span>Performed By</span>
+                  <span>Entity</span>
+                  <span>Description</span>
+                  <span>Timestamp</span>
+                  <span className="text-right">Action</span>
                 </div>
-              ) : (
-                projectAuditLog.map((log: AuditLogEntry) => {
-                  const actor = getAuditActor(log, allUsers);
-                  const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
-                  const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
-                  const actionInfo = formatAuditAction(log.action);
-                  const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
 
-                  return (
-                    <div
-                      key={log.id}
-                      className="grid grid-cols-1 md:grid-cols-[120px_140px_180px_1fr_150px_80px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
-                    >
-                      {/* Action */}
-                      <div>
-                        <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
-                          {actionInfo.label}
-                        </span>
-                      </div>
-
-                      {/* Performed By */}
-                      <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
-                        <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
-                          {initials}
-                        </div>
-                        <span className="font-medium text-text-primary truncate">
-                          {actor.name}
-                        </span>
-                      </div>
-
-                      {/* Entity */}
-                      <div
-                        className={`truncate font-medium ${
-                          entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
-                        }`}
-                        title={entity.label}
-                      >
-                        {entity.label}
-                      </div>
-
-                      {/* Description */}
-                      <div className="font-medium text-text-primary truncate" title={formattedDesc}>
-                        {formattedDesc}
-                      </div>
-
-                      {/* Timestamp */}
-                      <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
-                        {formatAuditTimestamp(log.timestamp)}
-                      </div>
-
-                      {/* Action */}
-                      <div className="flex justify-end items-center min-w-[100px]">
-                        {log.isUndone ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border">
-                            Change undone
-                          </span>
-                        ) : log.canUndo && currentUser.role !== 'Teammate' ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            icon={RotateCcw}
-                            onClick={() => undoAuditEntry(log.id)}
-                            title="Undo mutation"
-                          >
-                            Undo
-                          </Button>
-                        ) : null}
-                      </div>
+                <div className="divide-y divide-border/60">
+                  {projectAuditLog.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-text-muted space-y-2">
+                      <Activity size={24} className="mx-auto text-text-muted/60" />
+                      <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
+                      <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
                     </div>
-                  );
-                })
-              )}
+                  ) : (
+                    projectAuditLog.map((log: AuditLogEntry) => {
+                      const actor = getAuditActor(log, allUsers);
+                      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+                      const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
+                      const actionInfo = formatAuditAction(log.action);
+                      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
+
+                      return (
+                        <div
+                          key={log.id}
+                          className="grid grid-cols-1 md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
+                        >
+                          {/* Action */}
+                          <div>
+                            <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
+                              {actionInfo.label}
+                            </span>
+                          </div>
+
+                          {/* Performed By */}
+                          <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
+                            <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
+                              {initials}
+                            </div>
+                            <span className="font-medium text-text-primary truncate">
+                              {actor.name}
+                            </span>
+                          </div>
+
+                          {/* Entity */}
+                          <div
+                            className={`truncate font-medium ${
+                              entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
+                            }`}
+                            title={entity.label}
+                          >
+                            {entity.label}
+                          </div>
+
+                          {/* Description with Clickable Preview */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAuditLog(log)}
+                            className="font-medium text-text-primary text-left truncate hover:text-brand-primary group flex items-center gap-1.5 focus:outline-none focus:underline cursor-pointer"
+                            title="Click to view full event details"
+                          >
+                            <span className="truncate">{formattedDesc}</span>
+                            <Eye size={12} className="opacity-0 group-hover:opacity-100 text-brand-primary shrink-0 transition-opacity" />
+                          </button>
+
+                          {/* Timestamp */}
+                          <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
+                            {formatAuditTimestamp(log.timestamp)}
+                          </div>
+
+                          {/* Action */}
+                          <div className="w-[110px] flex justify-end items-center shrink-0">
+                            {log.isUndone ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border whitespace-nowrap">
+                                Change undone
+                              </span>
+                            ) : log.canUndo && currentUser.role !== 'Teammate' ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={RotateCcw}
+                                onClick={() => undoAuditEntry(log.id)}
+                                title="Undo mutation"
+                                className="whitespace-nowrap"
+                              >
+                                Undo
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -1428,7 +1421,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
       {/* ==================================================== */}
       {/* 5. SECURITY & DANGER ZONE SECTION                    */}
       {/* ==================================================== */}
-      {activeSection === 'danger' && (
+      {activeSection === 'danger' && isAdmin && (
         <div className="space-y-6">
           <div className="border-b border-border pb-3">
             <h2 className="text-sm font-semibold text-text-primary">
@@ -1441,28 +1434,28 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
 
           <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 space-y-4">
             <div className="border-b border-rose-500/20 pb-3">
-              <div className="flex items-center gap-2 text-rose-400">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
                 <ShieldAlert size={18} />
-                <h3 className="text-sm font-bold tracking-tight text-rose-300">
+                <h3 className="text-sm font-bold tracking-tight text-rose-700 dark:text-rose-300">
                   Destructive Project Operations
                 </h3>
               </div>
-              <p className="text-xs text-rose-300/80 mt-1 leading-relaxed">
+              <p className="text-xs text-rose-700/90 dark:text-rose-300/80 mt-1 leading-relaxed">
                 Actions performed here are irreversible and have significant effects across your workspace. Please verify before proceeding.
               </p>
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
               <div className="space-y-1">
-                <h4 className="text-xs font-semibold text-rose-200">
+                <h4 className="text-xs font-semibold text-rose-800 dark:text-rose-200">
                   Delete Project
                 </h4>
-                <p className="text-xs text-rose-300/80 leading-relaxed max-w-lg">
+                <p className="text-xs text-rose-700/90 dark:text-rose-300/80 leading-relaxed max-w-lg">
                   Permanently removes &quot;{currentProject.name}&quot;, including all tasks,
                   sprints, dependencies, sections, labels, and associated data.
                 </p>
                 {!canDelete && (
-                  <p className="text-[11px] text-amber-300/90 font-mono mt-1">
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300/90 font-mono mt-1">
                     Only Project Admins have permission to delete this project.
                   </p>
                 )}
@@ -1517,8 +1510,8 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 space-y-1">
-              <p className="font-semibold text-amber-200">
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+              <p className="font-semibold text-amber-900 dark:text-amber-200">
                 Permission Implications:
               </p>
               <p className="leading-relaxed">
@@ -1550,6 +1543,17 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
             </div>
           </div>
         </Dialog>
+      )}
+
+      {/* Add Member to Project Dialog */}
+      {addMemberModalOpen && currentProject && (
+        <AddProjectMemberDialog
+          isOpen={addMemberModalOpen}
+          onClose={() => setAddMemberModalOpen(false)}
+          projectId={currentProject.id}
+          existingMemberIds={currentMemberIds}
+          onAddMember={addProjectMember}
+        />
       )}
 
       {/* Remove Member Confirmation Dialog */}
@@ -1681,6 +1685,16 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
           </div>
         </form>
       </Dialog>
+
+      {/* Audit Event Details Dialog */}
+      <AuditEventDetailsDialog
+        isOpen={Boolean(selectedAuditLog)}
+        onClose={() => setSelectedAuditLog(null)}
+        log={selectedAuditLog}
+        allUsers={allUsers}
+        projectTasks={projectTasks}
+        projectName={currentProject?.name}
+      />
     </div>
   );
 }

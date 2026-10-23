@@ -3,7 +3,7 @@ import { useApp } from '../../hooks/useApp';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { ThemeToggle } from '../../components/ui/ThemeToggle';
-import { Layers, Eye, EyeOff } from 'lucide-react';
+import { Layers, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 export interface AuthViewProps {
   isSignup?: boolean;
@@ -18,6 +18,8 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,15 +42,47 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
       navigate('/onboarding/company');
     } else {
       if (login) {
-        const ok = await login(email, password);
-        if (ok) {
-          navigate('/');
+        setIsSubmitting(true);
+        setAuthError(null);
+        try {
+          const ok = await login(email, password);
+          if (ok) {
+            navigate('/');
+          } else {
+            setAuthError('Invalid email or password.');
+          }
+        } catch (err: any) {
+          if (
+            err?.code === 'INVALID_CREDENTIALS' ||
+            err?.status === 401 ||
+            err?.message?.toLowerCase().includes('invalid email or password')
+          ) {
+            setAuthError('Invalid email or password.');
+          } else if (
+            err?.code === 'SERVER_UNREACHABLE' ||
+            err?.status === 0 ||
+            err?.message?.toLowerCase().includes('unable to reach') ||
+            err?.message?.toLowerCase().includes('failed to fetch') ||
+            err?.message?.toLowerCase().includes('network')
+          ) {
+            setAuthError('Unable to connect. Please check your internet connection and try again.');
+          } else {
+            setAuthError('Something went wrong. Please try again later.');
+          }
+        } finally {
+          setIsSubmitting(false);
         }
       } else {
         showToast('Welcome back!', 'success');
         navigate('/');
       }
     }
+  }
+
+  function handleSwitchMode(targetRoute: string) {
+    setAuthError(null);
+    setErrors({});
+    navigate(targetRoute);
   }
 
   return (
@@ -74,6 +108,17 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
         {/* Standard Auth Form */}
         <form onSubmit={handleAuthSubmit} className="space-y-4">
+          {authError && (
+            <div
+              role="alert"
+              aria-live="polite"
+              className="p-3 rounded-xl bg-status-danger-bg border border-status-danger-border text-status-danger-text text-xs flex items-center gap-2 animate-in fade-in duration-150"
+            >
+              <AlertCircle size={15} className="shrink-0" />
+              <span>{authError}</span>
+            </div>
+          )}
+
           {isSignup && (
             <Input
               label="Full Name"
@@ -82,6 +127,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setName(e.target.value);
                 if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
+                if (authError) setAuthError(null);
               }}
               error={errors.name}
             />
@@ -95,6 +141,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             onChange={(e) => {
               setEmail(e.target.value);
               if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
+              if (authError) setAuthError(null);
             }}
             error={errors.email}
           />
@@ -117,6 +164,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setPassword(e.target.value);
                 if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
+                if (authError) setAuthError(null);
               }}
               error={errors.password}
             />
@@ -130,13 +178,26 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               onChange={(e) => {
                 setConfirmPassword(e.target.value);
                 if (errors.confirm) setErrors((prev) => ({ ...prev, confirm: '' }));
+                if (authError) setAuthError(null);
               }}
               error={errors.confirm}
             />
           )}
 
-          <Button variant="primary" size="lg" className="w-full mt-2" type="submit">
-            {isSignup ? 'Create Account' : 'Sign In'}
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full mt-2"
+            type="submit"
+            disabled={isSubmitting}
+          >
+            {isSubmitting
+              ? isSignup
+                ? 'Creating Account...'
+                : 'Signing In...'
+              : isSignup
+                ? 'Create Account'
+                : 'Sign In'}
           </Button>
         </form>
 
@@ -147,7 +208,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               Already have an account?{' '}
               <button
                 type="button"
-                onClick={() => navigate('/login')}
+                onClick={() => handleSwitchMode('/login')}
                 className="text-brand-primary hover:underline font-semibold"
               >
                 Sign In
@@ -158,7 +219,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               Don&apos;t have an account?{' '}
               <button
                 type="button"
-                onClick={() => navigate('/signup')}
+                onClick={() => handleSwitchMode('/signup')}
                 className="text-brand-primary hover:underline font-semibold"
               >
                 Create Account
