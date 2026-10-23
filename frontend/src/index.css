@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+@theme {
+  /* Dynamic semantic tokens defined in :root / [data-theme] below */
+  --color-canvas: #0B1020;
+  --color-background: #0B1020;
+  --color-surface: #151D32;
+  --color-surface-hover: #222E4A;
+  --color-surface-active: #2A3859;
+  --color-surface-elevated: #1B2540;
+
+  /* Global rail and workspace sidebar */
+  --color-rail-bg: #0B1020;
+  --color-sidebar: #10172A;
+  --color-sidebar-bg: #10172A;
+  --color-sidebar-hover: #19233C;
+  --color-sidebar-active: #222E4A;
+
+  /* Borders & Dividers */
+  --color-border: #293652;
+  --color-border-subtle: #1C263B;
+  --color-border-strong: #39486A;
+  --color-border-muted: #202B42;
+
+  /* Typography */
+  --color-text-primary: #F1F4FC;
+  --color-text-secondary: #A5B1CA;
+  --color-text-muted: #7E8BA8;
+  --color-text-disabled: #4D5A75;
+  --color-text-inverse: #0B1020;
+
+  /* Primary Brand Accent — Purple */
+  --color-primary: #7465F6;
+  --color-primary-hover: #887BFF;
+  --color-brand-primary: #7465F6;
+  --color-brand-hover: #887BFF;
+  --color-brand-pressed: #5F4FE6;
+  --color-brand-subtle: #211D48;
+  --color-brand-border: rgba(116, 101, 246, 0.35);
+  --color-brand-text: #B8B0FF;
+
+  /* Secondary Accent — Cyan */
+  --color-accent-cyan: #35D5F2;
+  --color-accent-cyan-hover: #5CE0F6;
+  --color-accent-cyan-subtle: rgba(53, 213, 242, 0.12);
+  --color-accent-cyan-border: rgba(53, 213, 242, 0.28);
+  --color-accent-cyan-text: #8DE9F8;
+
+  /* Semantic status colors */
+  --color-success: #36C98F;
+  --color-warning: #F2BA55;
+  --color-danger: #F07187;
+  --color-info: #35D5F2;
+
+  --color-status-success: #36C98F;
+  --color-status-success-bg: rgba(54, 201, 143, 0.14);
+  --color-status-success-border: rgba(54, 201, 143, 0.28);
+  --color-status-success-text: #75E2B6;
+
+  --color-status-warning: #F2BA55;
+  --color-status-warning-bg: rgba(242, 186, 85, 0.14);
+  --color-status-warning-border: rgba(242, 186, 85, 0.28);
+  --color-status-warning-text: #F7D28B;
+
+  --color-status-danger: #F07187;
+  --color-status-danger-bg: rgba(240, 113, 135, 0.14);
+  --color-status-danger-border: rgba(240, 113, 135, 0.28);
+  --color-status-danger-text: #F8A4B3;
+
+  --color-status-info: #35D5F2;
+  --color-status-info-bg: rgba(53, 213, 242, 0.14);
+  --color-status-info-border: rgba(53, 213, 242, 0.28);
+  --color-status-info-text: #8DE9F8;
+
+  --color-status-purple: #7465F6;
+  --color-status-purple-bg: #211D48;
+  --color-status-purple-border: rgba(116, 101, 246, 0.35);
+  --color-status-purple-text: #B8B0FF;
+
+  --color-input-bg: #151D32;
+  --color-input-border: #293652;
+  --color-modal-backdrop: rgba(5, 8, 16, 0.75);
+
+  /* Shadows - restrained */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 20px 25px -5px rgba(0, 0, 0, 0.75), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+
+  /* Font */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ======================================================== */
+/* 1. DARK THEME — PRESERVE EXISTING TASKIFY DESIGN         */
+/* ======================================================== */
+:root,
+:root[data-theme="dark"],
+.dark {
+  color-scheme: dark;
+
+  /* Canvas and Core Surfaces */
+  --color-canvas: #0B1020;
+  --color-background: #0B1020;
+  --color-surface: #151D32;
+  --color-surface-hover: #222E4A;
+  --color-surface-active: #2A3859;
+  --color-surface-elevated: #1B2540;
+
+  /* Global rail and workspace sidebar */
+  --color-rail-bg: #0B1020;
+  --color-sidebar: #10172A;
+  --color-sidebar-bg: #10172A;
+  --color-sidebar-hover: #19233C;
+  --color-sidebar-active: #222E4A;
+
+  /* Borders & Dividers */
+  --color-border: #293652;
+  --color-border-subtle: #1C263B;
+  --color-border-strong: #39486A;
+  --color-border-muted: #202B42;
+
+  /* Typography */
+  --color-text-primary: #F1F4FC;
+  --color-text-secondary: #A5B1CA;
+  --color-text-muted: #7E8BA8;
+  --color-text-disabled: #4D5A75;
+  --color-text-inverse: #0B1020;
+
+  /* Primary Brand Accent — Purple */
+  --color-primary: #7465F6;
+  --color-primary-hover: #887BFF;
+  --color-brand-primary: #7465F6;
+  --color-brand-hover: #887BFF;
+  --color-brand-pressed: #5F4FE6;
+  --color-brand-subtle: #211D48;
+  --color-brand-border: rgba(116, 101, 246, 0.35);
+  --color-brand-text: #B8B0FF;
+
+  /* Secondary Accent — Cyan */
+  --color-accent-cyan: #35D5F2;
+  --color-accent-cyan-hover: #5CE0F6;
+  --color-accent-cyan-subtle: rgba(53, 213, 242, 0.12);
+  --color-accent-cyan-border: rgba(53, 213, 242, 0.28);
+  --color-accent-cyan-text: #8DE9F8;
+
+  /* Semantic status colors */
+  --color-success: #36C98F;
+  --color-warning: #F2BA55;
+  --color-danger: #F07187;
+  --color-info: #35D5F2;
+
+  --color-status-success: #36C98F;
+  --color-status-success-bg: rgba(54, 201, 143, 0.14);
+  --color-status-success-border: rgba(54, 201, 143, 0.28);
+  --color-status-success-text: #75E2B6;
+
+  --color-status-warning: #F2BA55;
+  --color-status-warning-bg: rgba(242, 186, 85, 0.14);
+  --color-status-warning-border: rgba(242, 186, 85, 0.28);
+  --color-status-warning-text: #F7D28B;
+
+  --color-status-danger: #F07187;
+  --color-status-danger-bg: rgba(240, 113, 135, 0.14);
+  --color-status-danger-border: rgba(240, 113, 135, 0.28);
+  --color-status-danger-text: #F8A4B3;
+
+  --color-status-info: #35D5F2;
+  --color-status-info-bg: rgba(53, 213, 242, 0.14);
+  --color-status-info-border: rgba(53, 213, 242, 0.28);
+  --color-status-info-text: #8DE9F8;
+
+  --color-status-purple: #7465F6;
+  --color-status-purple-bg: #211D48;
+  --color-status-purple-border: rgba(116, 101, 246, 0.35);
+  --color-status-purple-text: #B8B0FF;
+
+  --color-input-bg: #151D32;
+  --color-input-border: #293652;
+  --color-modal-backdrop: rgba(5, 8, 16, 0.75);
+
+  /* Shadows - restrained */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 20px 25px -5px rgba(0, 0, 0, 0.75), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+}
+
+/* ======================================================== */
+/* 2. LIGHT THEME — PURPOSE-DESIGNED PREMIUM LIGHT PALETTE  */
+/* ======================================================== */
+:root[data-theme="light"],
+.light {
+  color-scheme: light;
+
+  /* Canvas and Core Surfaces */
+  --color-canvas: #F6F8FC;
+  --color-background: #F6F8FC;
+  --color-surface: #FFFFFF;
+  --color-surface-hover: #F0F3FA;
+  --color-surface-active: #E9E7FF;
+  --color-surface-elevated: #FFFFFF;
+
+  /* Global rail and workspace sidebar */
+  --color-rail-bg: #FFFFFF;
+  --color-sidebar: #F1F4FA;
+  --color-sidebar-bg: #F1F4FA;
+  --color-sidebar-hover: #E8EDF6;
+  --color-sidebar-active: #E2E7F2;
+
+  /* Borders & Dividers */
+  --color-border: #E0E6F0;
+  --color-border-subtle: #E8EDF5;
+  --color-border-strong: #C8D1E2;
+  --color-border-muted: #E8EDF5;
+
+  /* Typography */
+  --color-text-primary: #172033;
+  --color-text-secondary: #526078;
+  --color-text-muted: #718096;
+  --color-text-disabled: #94A3B8;
+  --color-text-inverse: #FFFFFF;
+
+  /* Primary Brand Accent — Purple */
+  --color-primary: #6655E8;
+  --color-primary-hover: #5947D8;
+  --color-brand-primary: #6655E8;
+  --color-brand-hover: #5947D8;
+  --color-brand-pressed: #4E3BC7;
+  --color-brand-subtle: #EEEBFF;
+  --color-brand-border: #D4CCFF;
+  --color-brand-text: #5443CE;
+
+  /* Secondary Accent — Cyan */
+  --color-accent-cyan: #087F97;
+  --color-accent-cyan-hover: #066A80;
+  --color-accent-cyan-subtle: #E1F7FB;
+  --color-accent-cyan-border: #B6EAF4;
+  --color-accent-cyan-text: #08687C;
+
+  /* Semantic status colors for Light surfaces */
+  --color-success: #15803D;
+  --color-warning: #B45309;
+  --color-danger: #DC2626;
+  --color-info: #087F97;
+
+  --color-status-success: #15803D;
+  --color-status-success-bg: #E8F8F0;
+  --color-status-success-border: #A8E8CC;
+  --color-status-success-text: #167448;
+
+  --color-status-warning: #B45309;
+  --color-status-warning-bg: #FEF8E7;
+  --color-status-warning-border: #FADCA5;
+  --color-status-warning-text: #9A6700;
+
+  --color-status-danger: #DC2626;
+  --color-status-danger-bg: #FDECEF;
+  --color-status-danger-border: #F8B4C0;
+  --color-status-danger-text: #C5223D;
+
+  --color-status-info: #087F97;
+  --color-status-info-bg: #E1F7FB;
+  --color-status-info-border: #B6EAF4;
+  --color-status-info-text: #08687C;
+
+  --color-status-purple: #6655E8;
+  --color-status-purple-bg: #EEEBFF;
+  --color-status-purple-border: #D4CCFF;
+  --color-status-purple-text: #5443CE;
+
+  --color-input-bg: #FFFFFF;
+  --color-input-border: #D0D7E3;
+  --color-modal-backdrop: rgba(15, 23, 42, 0.45);
+
+  /* Light Shadows - restrained & elegant */
+  --shadow-sm: 0 1px 2px 0 rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(16, 24, 40, 0.08), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(16, 24, 40, 0.08), 0 4px 6px -4px rgba(16, 24, 40, 0.04);
+  --shadow-overlay: 0 20px 25px -5px rgba(16, 24, 40, 0.12), 0 8px 10px -6px rgba(16, 24, 40, 0.08);
+}
+
+/* Base styles */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background-color: var(--color-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+/* Theme-adaptive scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-muted);
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 1px;
+}
+
+/* Modal Backdrop */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-modal-backdrop);
+  backdrop-filter: blur(4px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
