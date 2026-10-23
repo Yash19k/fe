@@ -47,12 +47,13 @@ export function startScheduler(): void {
     },
   );
 
-  // Check due recurrence rules every minute. Each due occurrence is created
-  // inside its own transaction and nextRunAt is advanced only after processing.
+  // Generate recurring tasks at 09:00 Asia/Kolkata each day. The recurrence
+  // service filters by each rule's nextRunAt, so only eligible tasks are created.
   recurrenceScheduler = new Cron(
-    "* * * * *",
+    "0 9 * * *",
     {
       name: "recurring-work-item-processor",
+      timezone: "Asia/Kolkata",
       protect: true,
     },
     async () => {

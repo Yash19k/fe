@@ -25,7 +25,9 @@ import {
   MonthlyPattern,
 } from "../entities/work.item.recurrence.entity";
 import {
-  getRecurrenceRunAt,
+  DEFAULT_RECURRENCE_TIMEZONE,
+  RECURRENCE_TIME_OF_DAY,
+  getInitialOccurrenceRunAt,
   validateRecurrence,
   type RecurrenceInput,
 } from "../services/recurrence.service";
@@ -578,41 +580,41 @@ export const createWorkItem = async (
     let savedRecurrence: WorkItemRecurrence | null = null;
 
     if (recurrence) {
-      const timezone = recurrence.timezone ?? "UTC";
+      const recurrenceRepository = manager.getRepository(WorkItemRecurrence);
+      const timezone = DEFAULT_RECURRENCE_TIMEZONE;
+      const recurrenceRule = recurrenceRepository.create({
+        workItem: savedWorkItem,
+        frequency: recurrence.frequency,
+        interval: recurrence.interval ?? 1,
+        daysOfWeek:
+          recurrence.frequency === RecurrenceFrequency.WEEKLY
+            ? recurrence.daysOfWeek ?? []
+            : null,
+        monthlyPattern:
+          recurrence.frequency === RecurrenceFrequency.MONTHLY
+            ? recurrence.monthlyPattern ?? null
+            : null,
+        dayOfMonth:
+          recurrence.frequency === RecurrenceFrequency.MONTHLY &&
+          recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
+            ? recurrence.dayOfMonth ?? null
+            : null,
+        startsOn: recurrence.startsOn,
+        endsOn: recurrence.endsOn ?? null,
+        nextRunAt: null,
+        timezone,
+        timeOfDay: RECURRENCE_TIME_OF_DAY,
+        weekdaysOnly:
+          recurrence.frequency === RecurrenceFrequency.DAILY &&
+          Boolean(recurrence.weekdaysOnly),
+        isActive: true,
+      });
 
-      savedRecurrence = await manager
-        .getRepository(WorkItemRecurrence)
-        .save(
-          manager.getRepository(WorkItemRecurrence).create({
-            workItem: savedWorkItem,
-            frequency: recurrence.frequency,
-            interval: recurrence.interval ?? 1,
-            daysOfWeek:
-              recurrence.frequency === RecurrenceFrequency.WEEKLY
-                ? recurrence.daysOfWeek ?? []
-                : null,
-            monthlyPattern:
-              recurrence.frequency === RecurrenceFrequency.MONTHLY
-                ? recurrence.monthlyPattern ?? null
-                : null,
-            dayOfMonth:
-              recurrence.frequency === RecurrenceFrequency.MONTHLY &&
-              recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
-                ? recurrence.dayOfMonth ?? null
-                : null,
-            startsOn: recurrence.startsOn,
-            endsOn: recurrence.endsOn ?? null,
-
-            nextRunAt: getRecurrenceRunAt(
-              recurrence.startsOn,
-              timezone,
-              recurrence.timeOfDay ?? "09:00",
-            ),
-            timezone,
-            timeOfDay: recurrence.timeOfDay ?? "09:00",
-            isActive: true,
-          }),
-        );
+      // If today's 09:00 has passed, begin with the next eligible date instead
+      // of generating a stale occurrence tomorrow for today's date.
+      recurrenceRule.nextRunAt = getInitialOccurrenceRunAt(recurrenceRule);
+      recurrenceRule.isActive = recurrenceRule.nextRunAt !== null;
+      savedRecurrence = await recurrenceRepository.save(recurrenceRule);
     }
 
     const assignments = await manager

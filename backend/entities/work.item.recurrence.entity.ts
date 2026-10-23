@@ -91,12 +91,16 @@ export class WorkItemRecurrence {
   })
   nextRunAt: Date | null;
 
-  @Column({ type: "varchar", length: 100, default: "UTC" })
+  @Column({ type: "varchar", length: 100, default: "Asia/Kolkata" })
   timezone: string;
 
-  // Local execution time in 24-hour HH:mm format, interpreted in timezone.
+  // Kept in the schema for compatibility; recurring tasks always run at 09:00.
   @Column({ name: "time_of_day", type: "varchar", length: 5, default: "09:00" })
   timeOfDay: string;
+
+  // For DAILY recurrence, skip Saturday and Sunday when true.
+  @Column({ name: "weekdays_only", type: "boolean", default: false })
+  weekdaysOnly: boolean;
 
   @Column({ name: "is_active", type: "boolean", default: true })
   isActive: boolean;

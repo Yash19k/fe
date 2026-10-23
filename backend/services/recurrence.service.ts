@@ -16,6 +16,9 @@ import {
   writeSlaAudit,
 } from "./sla.service";
 
+export const RECURRENCE_TIME_OF_DAY = "09:00";
+export const DEFAULT_RECURRENCE_TIMEZONE = "Asia/Kolkata";
+
 export interface RecurrenceInput {
   frequency: RecurrenceFrequency;
   interval?: number;
@@ -25,8 +28,8 @@ export interface RecurrenceInput {
   startsOn: string;
   endsOn?: string | null;
   timezone?: string;
-  /** Local execution time in HH:mm format. Defaults to 09:00. */
-  timeOfDay?: string;
+  /** When enabled for DAILY recurrence, skip Saturday and Sunday. */
+  weekdaysOnly?: boolean;
 }
 
 const isValidDateOnly = (value: unknown): value is string => {
@@ -60,21 +63,17 @@ export const validateRecurrence = (input: RecurrenceInput, workItemType?: WorkIt
     throw new AppError("endsOn must be a valid date on or after startsOn", 400, "INVALID_RECURRENCE_END_DATE");
   }
 
-  const timezone = input.timezone ?? "UTC";
-  // Use the runtime's supported timezone list to avoid try/catch for validation.
-  const supportedTimezones = new Set((Intl as unknown as { supportedValuesOf: (key: "timeZone") => string[] }).supportedValuesOf("timeZone"));
-  supportedTimezones.add("UTC");
-  if (!supportedTimezones.has(timezone)) {
-    throw new AppError("Invalid IANA timezone", 400, "INVALID_RECURRENCE_TIMEZONE");
+  const timezone = input.timezone ?? DEFAULT_RECURRENCE_TIMEZONE;
+  if (timezone !== DEFAULT_RECURRENCE_TIMEZONE) {
+    throw new AppError(
+      "Recurring work items are scheduled at 09:00 Asia/Kolkata time",
+      400,
+      "INVALID_RECURRENCE_TIMEZONE",
+    );
   }
 
-  const timeOfDay = input.timeOfDay ?? "09:00";
-  if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(timeOfDay)) {
-    throw new AppError(
-      "timeOfDay must be a valid 24-hour time in HH:mm format",
-      400,
-      "INVALID_RECURRENCE_TIME",
-    );
+  if (input.frequency !== RecurrenceFrequency.DAILY && input.weekdaysOnly) {
+    throw new AppError("weekdaysOnly is only valid for daily recurrence", 400, "INVALID_RECURRENCE_FIELDS");
   }
 
   if (input.frequency === RecurrenceFrequency.WEEKLY) {
@@ -124,13 +123,12 @@ const getDateOnlyInTimezone = (date: Date, timezone: string): string => {
   return `${values.year}-${values.month}-${values.day}`;
 };
 
-/** Convert a local calendar date and HH:mm time into its UTC instant. */
+/** Convert a local calendar date at the fixed 09:00 time into its UTC instant. */
 export const getRecurrenceRunAt = (
   dateOnly: string,
   timezone: string,
-  timeOfDay = "09:00",
 ): Date => {
-  const [hour, minute] = timeOfDay.split(":").map(Number);
+  const [hour, minute] = RECURRENCE_TIME_OF_DAY.split(":").map(Number);
   const date = toUtcDate(dateOnly);
   date.setUTCHours(hour, minute, 0, 0);
   const desiredLocalAsUtc = date.getTime();
@@ -180,7 +178,8 @@ const isEligibleDate = (rule: WorkItemRecurrence, dateOnly: string): boolean => 
 
   if (rule.frequency === RecurrenceFrequency.DAILY) {
     const dayDifference = Math.floor((date.getTime() - start.getTime()) / 86_400_000);
-    return dayDifference >= 0 && dayDifference % interval === 0;
+    const isWeekend = date.getUTCDay() === 0 || date.getUTCDay() === 6;
+    return dayDifference >= 0 && dayDifference % interval === 0 && !(rule.weekdaysOnly && isWeekend);
   }
 
   if (rule.frequency === RecurrenceFrequency.WEEKLY) {
@@ -211,6 +210,28 @@ export const getNextOccurrenceDate = (rule: WorkItemRecurrence, afterDate: strin
     const candidate = addDays(afterDate, offset);
     if (rule.endsOn && candidate > rule.endsOn) return null;
     if (isEligibleDate(rule, candidate)) return candidate;
+  }
+  return null;
+};
+
+/** Find the first eligible 09:00 occurrence that has not already passed. */
+export const getInitialOccurrenceRunAt = (
+  rule: WorkItemRecurrence,
+  now = new Date(),
+): Date | null => {
+  const timezone = rule.timezone || DEFAULT_RECURRENCE_TIMEZONE;
+  const todayInTimezone = getDateOnlyInTimezone(now, timezone);
+
+  for (let offset = 0; offset <= 36_600; offset += 1) {
+    const candidate = addDays(rule.startsOn, offset);
+    if (rule.endsOn && candidate > rule.endsOn) return null;
+
+    // The original task already exists. Do not create a duplicate occurrence
+    // for today; the first generated instance must be on a future date.
+    if (candidate <= todayInTimezone || !isEligibleDate(rule, candidate)) continue;
+
+    const runAt = getRecurrenceRunAt(candidate, timezone);
+    if (runAt.getTime() > now.getTime()) return runAt;
   }
   return null;
 };
@@ -255,7 +276,7 @@ const processOneDueRecurrence = async (): Promise<boolean> => AppDataSource.tran
 
   if (!recurrence) return false;
 
-  const scheduledFor = getDateOnlyInTimezone(recurrence.nextRunAt as Date, recurrence.timezone);
+  const scheduledFor = getDateOnlyInTimezone(recurrence.nextRunAt as Date, recurrence.timezone || DEFAULT_RECURRENCE_TIMEZONE);
   const template = recurrence.workItem;
 
   // Existing occurrence means this date has already been processed; still advance the rule.
@@ -319,9 +340,9 @@ const processOneDueRecurrence = async (): Promise<boolean> => AppDataSource.tran
   } else {
     recurrence.nextRunAt = getRecurrenceRunAt(
       nextDate,
-      recurrence.timezone,
-      recurrence.timeOfDay,
+      recurrence.timezone || DEFAULT_RECURRENCE_TIMEZONE,
     );
+    recurrence.timeOfDay = RECURRENCE_TIME_OF_DAY;
   }
   await manager.getRepository(WorkItemRecurrence).save(recurrence);
   return true;

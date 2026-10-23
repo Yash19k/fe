@@ -11,8 +11,9 @@ import {
   Index,
 } from "typeorm";
 
-import { WorkItem } from "./work.item.entity";
+import { WorkItem, WorkItemPriority } from "./work.item.entity";
 import { WorkItemRecurrence } from "./work.item.recurrence.entity";
+
 
 @Entity("work_item_occurrences")
 @Unique("UQ_occurrence_recurrence_date", ["recurrenceId", "scheduledFor"])
