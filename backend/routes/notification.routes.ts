@@ -1,20 +1,21 @@
+
 import { Router } from "express";
 import { isLoggedIn } from "../middleware/is.loggedin";
 import { asyncHandler } from "../middleware/async.handler";
 import {
   getUserNotifications,
+  getUnreadNotificationCount,
   markNotificationRead,
   markAllNotificationsRead,
-  createNotification,
-} from "../controllers/feature-persistence.controller";
+} from "../controllers/notification.controller";
 
 const router = Router();
 
-router.get("/", isLoggedIn, asyncHandler(getUserNotifications));
-router.patch("/read-all", isLoggedIn, asyncHandler(markAllNotificationsRead));
-router.patch("/mark-all-read", isLoggedIn, asyncHandler(markAllNotificationsRead));
-router.post("/mark-all-read", isLoggedIn, asyncHandler(markAllNotificationsRead));
-router.patch("/:id/read", isLoggedIn, asyncHandler(markNotificationRead));
-router.post("/", isLoggedIn, asyncHandler(createNotification));
+router.use(isLoggedIn);
+
+router.get("/", asyncHandler(getUserNotifications));
+router.get("/unread-count", asyncHandler(getUnreadNotificationCount));
+router.patch("/read-all", asyncHandler(markAllNotificationsRead));
+router.patch("/:id/read", asyncHandler(markNotificationRead));
 
 export default router;

@@ -65,7 +65,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             err?.message?.toLowerCase().includes('failed to fetch') ||
             err?.message?.toLowerCase().includes('network')
           ) {
-            setAuthError('Unable to connect. Please check your internet connection and try again.');
+            setAuthError('Internal Server Error');
           } else {
             setAuthError('Something went wrong. Please try again later.');
           }

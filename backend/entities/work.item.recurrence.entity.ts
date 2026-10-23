@@ -94,6 +94,10 @@ export class WorkItemRecurrence {
   @Column({ type: "varchar", length: 100, default: "UTC" })
   timezone: string;
 
+  // Local execution time in 24-hour HH:mm format, interpreted in timezone.
+  @Column({ name: "time_of_day", type: "varchar", length: 5, default: "09:00" })
+  timeOfDay: string;
+
   @Column({ name: "is_active", type: "boolean", default: true })
   isActive: boolean;
 

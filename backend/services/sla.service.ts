@@ -42,9 +42,14 @@ export function calculateSlaDeadline(
 }
 
 export function calculateSlaStatus(
-  workItem: Pick<WorkItem, "status" | "slaDeadline" | "escalatedAt" | "slaStatus" | "createdAt">,
+  workItem: Pick<
+    WorkItem,
+    "status" | "priority" | "slaDeadline" | "escalatedAt" | "slaStatus" | "createdAt"
+  >,
   now = new Date(),
 ): SlaStatus {
+  // A work item without a priority does not participate in the SLA workflow.
+  if (!workItem.priority) return SlaStatus.ON_TRACK;
   if (resolvedStatuses.has(workItem.status)) return SlaStatus.RESOLVED;
   if (workItem.escalatedAt || workItem.slaStatus === SlaStatus.ESCALATED) {
     return SlaStatus.ESCALATED;
@@ -59,6 +64,20 @@ export function calculateSlaStatus(
 }
 
 export function getSlaSnapshot(workItem: WorkItem, now = new Date()): SlaSnapshot {
+  if (!workItem.priority) {
+    return {
+      status: SlaStatus.ON_TRACK,
+      deadline: null,
+      remainingHours: null,
+      overdueHours: null,
+      isEscalated: false,
+      escalatedAt: null,
+      escalationReason: null,
+      breachedAt: null,
+      resolvedAt: null,
+    };
+  }
+
   const status = calculateSlaStatus(workItem, now);
   const remainingHours = workItem.slaDeadline
     ? (workItem.slaDeadline.getTime() - now.getTime()) / 3600000
@@ -76,7 +95,25 @@ export function getSlaSnapshot(workItem: WorkItem, now = new Date()): SlaSnapsho
   };
 }
 
+function clearSlaState(workItem: WorkItem): void {
+  workItem.slaDeadline = null;
+  workItem.slaDeadlineIsCustom = false;
+  workItem.slaStatus = null;
+  workItem.escalatedAt = null;
+  workItem.escalatedById = null;
+  workItem.escalationReason = null;
+  workItem.slaBreachedAt = null;
+  workItem.slaResolvedAt = null;
+}
+
 export function applySlaState(workItem: WorkItem, now = new Date()): SlaStatus {
+  if (!workItem.priority) {
+    clearSlaState(workItem);
+    // ON_TRACK is the service's non-null return value; the persisted SLA status
+    // remains null because this work item has no SLA.
+    return SlaStatus.ON_TRACK;
+  }
+
   const nextStatus = calculateSlaStatus(workItem, now);
   if (nextStatus === SlaStatus.BREACHED && !workItem.slaBreachedAt) {
     workItem.slaBreachedAt = now;
@@ -92,6 +129,11 @@ export async function ensureSlaData(
   workItem: WorkItem,
   manager: EntityManager,
 ): Promise<WorkItem> {
+  if (!workItem.priority) {
+    clearSlaState(workItem);
+    return manager.getRepository(WorkItem).save(workItem);
+  }
+
   if (!workItem.slaDeadline) {
     workItem.slaDeadline = calculateSlaDeadline(workItem.createdAt, workItem.priority);
     workItem.slaDeadlineIsCustom = false;
@@ -132,16 +174,42 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
     .take(500)
     .setLock("pessimistic_write")
     .getMany();
+
   let changed = 0;
+
   for (const item of candidates) {
+    const previous = item.slaStatus;
+
+    if (!item.priority) {
+      const hadSlaState = Boolean(
+        item.slaDeadline ||
+        item.slaDeadlineIsCustom ||
+        item.slaStatus ||
+        item.escalatedAt ||
+        item.escalatedById ||
+        item.escalationReason ||
+        item.slaBreachedAt ||
+        item.slaResolvedAt
+      );
+
+      if (hadSlaState) {
+        clearSlaState(item);
+        await manager.getRepository(WorkItem).save(item);
+        changed += 1;
+      }
+      continue;
+    }
+
     if (!item.slaDeadline) {
       item.slaDeadline = calculateSlaDeadline(item.createdAt, item.priority);
       item.slaDeadlineIsCustom = false;
     }
-    const previous = item.slaStatus;
+
     const next = applySlaState(item);
+
     if (previous !== next) {
       await manager.getRepository(WorkItem).save(item);
+
       if (next === SlaStatus.BREACHED && previous !== SlaStatus.BREACHED) {
         await writeSlaAudit(
           manager,
@@ -153,8 +221,10 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
           { status: next, breachedAt: item.slaBreachedAt, deadline: item.slaDeadline },
         );
       }
+
       changed += 1;
     }
   }
+
   return changed;
 }

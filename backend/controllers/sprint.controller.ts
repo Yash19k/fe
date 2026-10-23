@@ -20,6 +20,8 @@ import {
   getPaginationMeta,
 } from "../utils/pagination";
 import { Sprint } from "../entities/sprint.entities";
+import { NotificationType } from "../entities/notification.entity";
+import { notificationService } from "../services/notification.service";
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -361,6 +363,43 @@ export const createSprint = async (
       workItems: returnedWorkItems,
     };
   });
+
+  const notifications = new Map<
+    string,
+    { workItemId: string; workItemTitle: string }
+  >();
+
+  for (const workItem of result.workItems) {
+    for (const assignment of workItem.assignments ?? []) {
+      const assigneeId = assignment.userId ?? assignment.user?.id;
+
+      if (!assigneeId || assigneeId === userId) continue;
+
+      notifications.set(assigneeId, {
+        workItemId: workItem.id,
+        workItemTitle: workItem.title,
+      });
+    }
+  }
+
+  await Promise.all(
+    [...notifications.entries()].map(([assigneeId, item]) =>
+      notificationService.createNotification({
+        userId: assigneeId,
+        organizationId,
+        type: NotificationType.TASK_UPDATED,
+        title: "Task added to a sprint",
+        message: `"${item.workItemTitle}" has been added to sprint "${result.sprint.name}".`,
+        workItemId: item.workItemId,
+        projectId,
+        link: `/projects/${projectId}/sprints`,
+        metadata: {
+          sprintId: result.sprint.id,
+          sprintName: result.sprint.name,
+        },
+      }),
+    ),
+  );
 
   res.status(201).json({
     success: true,

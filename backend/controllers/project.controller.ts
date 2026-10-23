@@ -8,6 +8,8 @@ import {
 import { User, UserRole } from "../entities/user.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { AppError } from "../errors/app.error";
+import { NotificationType } from "../entities/notification.entity";
+import { notificationService } from "../services/notification.service";
 
 type Actor = {
   id: string;
@@ -365,8 +367,26 @@ export const addProjectMember = async (req: Request, res: Response) => {
       email: targetUser.email,
       role: membership.role,
       joinedAt: membership.joinedAt,
+      projectName: project.name,
+      projectKey: project.key,
     };
   });
+
+  if (result.userId !== actor.id) {
+    await notificationService.createNotification({
+      userId: result.userId,
+      organizationId: actor.organizationId,
+      type: NotificationType.PROJECT_MEMBER_ADDED,
+      title: "Added to a project",
+      message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
+      projectId,
+      link: `/projects/${projectId}`,
+      metadata: {
+        addedByUserId: actor.id,
+        role: result.role,
+      },
+    });
+  }
 
   res.status(201).json({
     success: true,

@@ -1,11 +1,14 @@
-
 import { Cron } from "croner";
+
 import { AppDataSource } from "../config/data.source";
 import { AppError } from "../errors/app.error";
+import { processDueRecurrences } from "./recurrence.service";
 import { refreshSlaStatuses } from "./sla.service";
 
 let slaScheduler: Cron | undefined;
+let recurrenceScheduler: Cron | undefined;
 let isSlaJobRunning = false;
+let isRecurrenceJobRunning = false;
 
 export function startScheduler(): void {
   if (!AppDataSource.isInitialized) {
@@ -15,10 +18,11 @@ export function startScheduler(): void {
     );
   }
 
-  if (slaScheduler) {
+  if (slaScheduler || recurrenceScheduler) {
     return;
   }
 
+  // SLA state is refreshed every minute.
   slaScheduler = new Cron(
     "* * * * *",
     {
@@ -26,12 +30,9 @@ export function startScheduler(): void {
       protect: true,
     },
     async () => {
-      if (isSlaJobRunning) {
-        return;
-      }
+      if (isSlaJobRunning) return;
 
       isSlaJobRunning = true;
-
       try {
         const updatedCount = await AppDataSource.transaction(
           async (manager) => refreshSlaStatuses(manager),
@@ -46,12 +47,40 @@ export function startScheduler(): void {
     },
   );
 
-  console.info("[Scheduler] SLA scheduler started.");
+  // Check due recurrence rules every minute. Each due occurrence is created
+  // inside its own transaction and nextRunAt is advanced only after processing.
+  recurrenceScheduler = new Cron(
+    "* * * * *",
+    {
+      name: "recurring-work-item-processor",
+      protect: true,
+    },
+    async () => {
+      if (isRecurrenceJobRunning) return;
+
+      isRecurrenceJobRunning = true;
+      try {
+        const processedCount = await processDueRecurrences(25);
+        if (processedCount > 0) {
+          console.info(
+            `[Recurrence Scheduler] Completed. Processed ${processedCount} due recurrences.`,
+          );
+        }
+      } finally {
+        isRecurrenceJobRunning = false;
+      }
+    },
+  );
+
+  console.info("[Scheduler] SLA and recurrence schedulers started.");
 }
 
 export function stopScheduler(): void {
   slaScheduler?.stop();
-  slaScheduler = undefined;
+  recurrenceScheduler?.stop();
 
-  console.info("[Scheduler] SLA scheduler stopped.")
+  slaScheduler = undefined;
+  recurrenceScheduler = undefined;
+
+  console.info("[Scheduler] SLA and recurrence schedulers stopped.");
 }

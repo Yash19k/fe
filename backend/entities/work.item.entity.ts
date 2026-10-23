@@ -101,12 +101,12 @@ export class WorkItem {
 status: WorkItemStatus;
 
   @Column({
-    type: "enum",
-    enum: WorkItemPriority,
-    enumName: "work_items_priority_enum",
-    default: WorkItemPriority.MEDIUM,
-  })
-  priority: WorkItemPriority;
+  type: "enum",
+  enum: WorkItemPriority,
+  enumName: "work_items_priority_enum",
+  nullable: true,
+})
+priority: WorkItemPriority | null;
 
   @Column({
     name: "due_date",
