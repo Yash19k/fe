@@ -52,22 +52,34 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             setAuthError('Invalid email or password.');
           }
         } catch (err: any) {
-          if (
+          const isNetwork =
+            err?.code === 'SERVER_UNREACHABLE' ||
+            err?.status === 0 ||
+            err?.message?.toLowerCase().includes('unable to reach') ||
+            err?.message?.toLowerCase().includes('failed to fetch') ||
+            err?.message?.toLowerCase().includes('network');
+
+          if (isNetwork) {
+            setAuthError('Unable to connect. Please check your internet connection and try again.');
+          } else if (
             err?.code === 'INVALID_CREDENTIALS' ||
             err?.status === 401 ||
             err?.message?.toLowerCase().includes('invalid email or password')
           ) {
             setAuthError('Invalid email or password.');
           } else if (
-            err?.code === 'SERVER_UNREACHABLE' ||
-            err?.status === 0 ||
-            err?.message?.toLowerCase().includes('unable to reach') ||
-            err?.message?.toLowerCase().includes('failed to fetch') ||
-            err?.message?.toLowerCase().includes('network')
+            err?.message &&
+            typeof err.message === 'string' &&
+            !err.message.startsWith('Request failed with status')
           ) {
+            setAuthError(err.message.replace(/^password:\s*/i, ''));
+          } else if (err?.status && err.status >= 500) {
             setAuthError('Internal Server Error');
           } else {
-            setAuthError('Something went wrong. Please try again later.');
+            setAuthError(
+              (err?.message ? String(err.message).replace(/^password:\s*/i, '') : null) ||
+                'Authentication failed. Please check your credentials.'
+            );
           }
         } finally {
           setIsSubmitting(false);
@@ -90,7 +102,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>
-      <div className="w-full max-w-md bg-surface rounded-2xl border border-border p-6 sm:p-8 shadow-overlay space-y-6">
+      <div className="w-full max-w-md bg-surface rounded-2xl border border-border-subtle p-6 sm:p-8 shadow-overlay space-y-6">
         {/* Brand */}
         <div className="text-center space-y-2">
           <div className="w-10 h-10 rounded-xl bg-brand-primary/15 border border-brand-primary/30 flex items-center justify-center text-brand-primary mx-auto">
@@ -124,6 +136,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               label="Full Name"
               placeholder="e.g. Yash Kshatriya"
               value={name}
+              focusVariant="subtle"
               onChange={(e) => {
                 setName(e.target.value);
                 if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
@@ -138,6 +151,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             type="email"
             placeholder="name@taskflow.pro"
             value={email}
+            focusVariant="subtle"
             onChange={(e) => {
               setEmail(e.target.value);
               if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
@@ -146,35 +160,41 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             error={errors.email}
           />
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-text-secondary">
-              <label>Password</label>
+          <Input
+            label="Password"
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            focusVariant="subtle"
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
+              if (authError) setAuthError(null);
+            }}
+            error={errors.password}
+            rightElement={
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="text-text-muted hover:text-text-primary flex items-center gap-1 text-[11px]"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                className="text-text-muted hover:text-text-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded p-1 transition-colors flex items-center justify-center cursor-pointer"
               >
-                {showPassword ? <EyeOff size={12} /> : <Eye size={12} />}
-                {showPassword ? 'Hide' : 'Show'}
+                {showPassword ? (
+                  <EyeOff size={16} aria-hidden="true" />
+                ) : (
+                  <Eye size={16} aria-hidden="true" />
+                )}
+                <span className="sr-only">{showPassword ? 'Hide password' : 'Show password'}</span>
               </button>
-            </div>
-            <Input
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
-                if (authError) setAuthError(null);
-              }}
-              error={errors.password}
-            />
-          </div>
+            }
+          />
 
           {isSignup && (
             <Input
               label="Confirm Password"
               type="password"
               value={confirmPassword}
+              focusVariant="subtle"
               onChange={(e) => {
                 setConfirmPassword(e.target.value);
                 if (errors.confirm) setErrors((prev) => ({ ...prev, confirm: '' }));

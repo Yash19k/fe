@@ -83,105 +83,104 @@ export function ProjectActivityView() {
       </div>
 
       {/* Audit Log Table */}
+      {/* Audit Log Table */}
       <section className="bg-surface rounded-xl border border-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <div className="min-w-[860px]">
-            <div className="hidden md:grid md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 px-5 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              <span>Action</span>
-              <span>Performed By</span>
-              <span>Entity</span>
-              <span>Description</span>
-              <span>Timestamp</span>
-              <span className="text-right">Action</span>
-            </div>
+        <div className="w-full">
+          <div className="hidden md:grid md:grid-cols-[100px_120px_120px_minmax(0,1fr)_125px_105px] gap-2.5 px-4 py-2.5 border-b border-border bg-surface-elevated text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            <span>Action</span>
+            <span>Performed By</span>
+            <span>Entity</span>
+            <span>Description</span>
+            <span>Timestamp</span>
+            <span className="text-right">Actions</span>
+          </div>
 
-            <div className="divide-y divide-border/60">
-              {projectAuditLog.length === 0 ? (
-                <div className="p-8 text-center text-xs text-text-muted space-y-2">
-                  <Activity size={24} className="mx-auto text-text-muted/60" />
-                  <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
-                  <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
-                </div>
-              ) : (
-                projectAuditLog.map((log: AuditLogEntry) => {
-                  const actor = getAuditActor(log, allUsers);
-                  const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
-                  const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
-                  const actionInfo = formatAuditAction(log.action);
-                  const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
+          <div className="divide-y divide-border/60">
+            {projectAuditLog.length === 0 ? (
+              <div className="p-8 text-center text-xs text-text-muted space-y-2">
+                <Activity size={24} className="mx-auto text-text-muted/60" />
+                <p className="font-medium text-text-secondary">No activity recorded for this project yet</p>
+                <p className="text-[11px]">Mutations, task updates, and membership actions in this project will appear here.</p>
+              </div>
+            ) : (
+              projectAuditLog.map((log: AuditLogEntry) => {
+                const actor = getAuditActor(log, allUsers);
+                const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+                const initials = (actor.name || 'U').slice(0, 2).toUpperCase();
+                const actionInfo = formatAuditAction(log.action);
+                const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
 
-                  return (
-                    <div
-                      key={log.id}
-                      className="grid grid-cols-1 md:grid-cols-[120px_140px_160px_minmax(180px,1fr)_150px_110px] gap-3 items-center px-5 py-3 hover:bg-surface-hover/70 transition-colors text-xs"
-                    >
-                      {/* Action Badge */}
-                      <div>
-                        <span className={`inline-block font-medium text-[11px] px-2 py-0.5 rounded-md border ${actionInfo.badgeClass}`}>
-                          {actionInfo.label}
-                        </span>
-                      </div>
-
-                      {/* Performed By */}
-                      <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
-                        <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
-                          {initials}
-                        </div>
-                        <span className="font-medium text-text-primary truncate">
-                          {actor.name}
-                        </span>
-                      </div>
-
-                      {/* Entity */}
-                      <div
-                        className={`truncate font-medium ${
-                          entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
-                        }`}
-                        title={entity.label}
-                      >
-                        {entity.label}
-                      </div>
-
-                      {/* Description with Clickable Preview */}
-                      <button
-                        type="button"
-                        onClick={() => setSelectedAuditLog(log)}
-                        className="font-medium text-text-primary text-left truncate hover:text-brand-primary group flex items-center gap-1.5 focus:outline-none focus:underline cursor-pointer"
-                        title="Click to view full event details"
-                      >
-                        <span className="truncate">{formattedDesc}</span>
-                        <Eye size={12} className="opacity-0 group-hover:opacity-100 text-brand-primary shrink-0 transition-opacity" />
-                      </button>
-
-                      {/* Timestamp */}
-                      <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
-                        {formatAuditTimestamp(log.timestamp)}
-                      </div>
-
-                      {/* Undo Button / Status */}
-                      <div className="w-[110px] flex justify-end items-center shrink-0">
-                        {log.isUndone ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-surface-elevated text-text-muted border border-border whitespace-nowrap">
-                            Change undone
-                          </span>
-                        ) : log.canUndo && currentUser.role !== 'Teammate' ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            icon={RotateCcw}
-                            onClick={() => undoAuditEntry(log.id)}
-                            title="Undo this mutation and revert state"
-                            className="whitespace-nowrap"
-                          >
-                            Undo
-                          </Button>
-                        ) : null}
-                      </div>
+                return (
+                  <div
+                    key={log.id}
+                    className="grid grid-cols-1 md:grid-cols-[100px_120px_120px_minmax(0,1fr)_125px_105px] gap-2.5 items-center px-4 py-2.5 hover:bg-surface-hover/70 transition-colors text-xs"
+                  >
+                    {/* Action Badge */}
+                    <div className="min-w-0">
+                      <span className={`inline-block font-medium text-[10px] px-2 py-0.5 rounded-md border truncate max-w-full ${actionInfo.badgeClass}`}>
+                        {actionInfo.label}
+                      </span>
                     </div>
-                  );
-                })
-              )}
-            </div>
+
+                    {/* Performed By */}
+                    <div className="flex items-center gap-1.5 min-w-0" title={actor.email ? `${actor.name} (${actor.email})` : actor.name}>
+                      <div className="w-5 h-5 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-[9px] font-semibold text-text-secondary shrink-0">
+                        {initials}
+                      </div>
+                      <span className="font-medium text-text-primary truncate">
+                        {actor.name}
+                      </span>
+                    </div>
+
+                    {/* Entity */}
+                    <div
+                      className={`truncate font-medium ${
+                        entity.isDeleted ? 'text-text-muted italic' : 'text-text-secondary'
+                      }`}
+                      title={entity.label}
+                    >
+                      {entity.label}
+                    </div>
+
+                    {/* Description with Clickable Preview */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAuditLog(log)}
+                      className="font-medium text-text-primary text-left truncate hover:text-brand-primary group flex items-center gap-1.5 focus:outline-none focus:underline cursor-pointer min-w-0"
+                      title="Click to view full event details"
+                    >
+                      <span className="truncate">{formattedDesc}</span>
+                      <Eye size={12} className="opacity-0 group-hover:opacity-100 text-brand-primary shrink-0 transition-opacity" />
+                    </button>
+
+                    {/* Timestamp */}
+                    <div className="text-[11px] text-text-muted font-mono whitespace-nowrap">
+                      {formatAuditTimestamp(log.timestamp)}
+                    </div>
+
+                    {/* Actions Column */}
+                    <div className="flex justify-end items-center">
+                      {log.isUndone ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-surface-elevated text-text-muted border border-border whitespace-nowrap">
+                          Change undone
+                        </span>
+                      ) : log.canUndo && currentUser.role !== 'Teammate' ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={RotateCcw}
+                          onClick={() => undoAuditEntry(log.id)}
+                          title="Undo this mutation and revert state"
+                          className="whitespace-nowrap h-7 text-xs px-2"
+                        >
+                          Undo
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </section>

@@ -459,28 +459,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Fetch project audit logs
         const auditRes = await getProjectAuditLogsApi(currentProjectId).catch(() => null);
         if (auditRes?.data && Array.isArray(auditRes.data) && !isCancelled) {
-          const mappedAudit: AuditLogEntry[] = auditRes.data.map((a: any) => ({
-            id: a.id,
-            actorId: a.userId || a.actorId,
-            actorName: a.actorName || a.userName,
-            userEmail: a.userEmail,
-            action: a.action,
-            entityType: a.entityType || 'task',
-            entityId: a.entityId,
-            entityTitle: a.entityTitle || null,
-            projectId: a.projectId,
-            description: a.description || a.details?.description || `${a.action} ${a.entityType}`,
-            timestamp: a.timestamp || a.createdAt || a.created_at || new Date().toISOString(),
-            previousValue: a.previousState || a.previousValue,
-            newValue: a.newState || a.newValue,
-            previousState: a.previousState || a.previousValue,
-            newState: a.newState || a.newValue,
-            canUndo: Boolean(a.canUndo),
-            isUndone: Boolean(a.isUndone),
-            undoneAt: a.undoneAt || null,
-            reversalLogId: a.reversalLogId || null,
-            details: a.details,
-          }));
+          const mappedAudit: AuditLogEntry[] = auditRes.data.map((a: any) => {
+            const isReversibleAction =
+              a.action &&
+              !['undone', 'deleted', 'sla_initialized'].includes(a.action.toLowerCase());
+            const hasPrev = Boolean(a.previousState || a.previousValue);
+            const isAlreadyUndone = Boolean(a.isUndone);
+            const canUndoAuthoritative =
+              !isAlreadyUndone && hasPrev && isReversibleAction;
+
+            return {
+              id: a.id,
+              actorId: a.userId || a.actorId,
+              actorName: a.actorName || a.userName,
+              userEmail: a.userEmail,
+              action: a.action,
+              entityType: a.entityType || 'task',
+              entityId: a.entityId,
+              entityTitle: a.entityTitle || null,
+              projectId: a.projectId,
+              description: a.description || a.details?.description || `${a.action} ${a.entityType}`,
+              timestamp: a.timestamp || a.createdAt || a.created_at || new Date().toISOString(),
+              previousValue: a.previousState || a.previousValue,
+              newValue: a.newState || a.newValue,
+              previousState: a.previousState || a.previousValue,
+              newState: a.newState || a.newValue,
+              canUndo: a.canUndo !== undefined ? Boolean(a.canUndo) || canUndoAuthoritative : canUndoAuthoritative,
+              isUndone: isAlreadyUndone,
+              undoneAt: a.undoneAt || null,
+              reversalLogId: a.reversalLogId || null,
+              details: a.details,
+            };
+          });
           setAuditLog((prev) => {
             const otherAudit = prev.filter((a) => a.projectId && a.projectId !== currentProjectId);
             return [...mappedAudit, ...otherAudit];
@@ -565,10 +575,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     setAuditLog((prev) => [entry, ...prev]);
 
-    if (resolvedProjectId && resolvedProjectId.includes('-')) {
+    const isTempId = typeof entityId === 'string' && entityId.startsWith('tf-');
+    if (resolvedProjectId && resolvedProjectId.includes('-') && !isTempId) {
       createAuditLogApi({
         projectId: resolvedProjectId,
-        workItemId: entityType === 'task' && entityId.includes('-') ? entityId : undefined,
+        workItemId: entityType === 'task' ? entityId : undefined,
         action,
         entityType,
         entityId,
@@ -770,6 +781,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setTasks((prev) => prev.map((t) => (
             t.id === newTask.id ? { ...t, ...authoritativeTask } : t
           )));
+          if (authoritativeTask.projectId && authoritativeTask.projectId.includes('-')) {
+            createAuditLogApi({
+              projectId: authoritativeTask.projectId,
+              workItemId: serverItem.id,
+              action: 'created',
+              entityType: 'task',
+              entityId: serverItem.id,
+              description: `Created ${authoritativeTask.type || 'Task'} "${authoritativeTask.title}"`,
+              previousState: null,
+              newState: authoritativeTask,
+            }).catch(() => null);
+          }
         }
       }).catch((err) => {
         console.warn('TaskFlow: Backend task creation notice:', err.message);

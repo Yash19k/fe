@@ -937,6 +937,7 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
   return {
     id: item.id,
     projectId: item.projectId || currentProjectId,
+    sectionId: item.sectionId || item.section_id || item.section || undefined,
     parentId: item.parentWorkItemId || null,
     title: item.title,
     description: item.description || '',

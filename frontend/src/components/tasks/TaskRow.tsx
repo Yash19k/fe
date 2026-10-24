@@ -11,9 +11,11 @@ import { Task } from '../../types';
 
 export interface TaskRowProps {
   task: Task;
+  gridColsClassName?: string;
+  className?: string;
 }
 
-export function TaskRow({ task }: TaskRowProps) {
+export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProps) {
   const { openTaskDrawer, changeTaskStatus, allUsers, tasks } = useApp();
 
   const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
@@ -35,10 +37,13 @@ export function TaskRow({ task }: TaskRowProps) {
     changeTaskStatus(task.id, isDone ? 'Backlog' : 'Done');
   }
 
+  const defaultGrid = 'grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px]';
+  const activeGrid = gridColsClassName || defaultGrid;
+
   return (
     <div
       onClick={() => openTaskDrawer(task.id)}
-      className="group grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] gap-3 items-center px-4 py-2.5 border-b border-border/60 hover:bg-surface-hover/70 transition-colors text-xs cursor-pointer select-none"
+      className={`group grid ${activeGrid} gap-2.5 items-center px-4 py-2.5 border-b border-border/60 hover:bg-surface-hover/70 transition-colors text-xs cursor-pointer select-none ${className}`}
     >
       {/* 1. Task Title (checkbox + type icon + parent link + title + indicators) */}
       <div className="flex items-center gap-2 min-w-0 pr-2 overflow-hidden">

@@ -113,12 +113,36 @@ export function ProjectTimelineView() {
     }, 50);
   }
 
-  const sections = currentProject?.sections || [
-    { id: 'sec-1', name: 'Discovery & Architecture' },
-    { id: 'sec-2', name: 'Core Engine & Scheduling' },
-    { id: 'sec-3', name: 'Interactive Views' },
-    { id: 'sec-4', name: 'Release' },
-  ];
+  const sections = useMemo(() => {
+    return (
+      currentProject?.sections || [
+        { id: 'sec-1', name: 'Discovery & Plan' },
+        { id: 'sec-2', name: 'Execution' },
+        { id: 'sec-3', name: 'Review & Launch' },
+      ]
+    );
+  }, [currentProject?.sections]);
+
+  const visibleSections = useMemo(() => {
+    const knownSectionIds = new Set(sections.map((s) => s.id));
+    const firstSectionId = sections[0]?.id || 'sec-1';
+
+    return sections
+      .map((sec) => {
+        const secTasks = projectTasks.filter((t: Task) => {
+          if (t.sectionId && knownSectionIds.has(t.sectionId)) {
+            return t.sectionId === sec.id;
+          }
+          return sec.id === firstSectionId;
+        });
+
+        return {
+          ...sec,
+          tasks: secTasks,
+        };
+      })
+      .filter((sec) => sec.tasks.length > 0);
+  }, [sections, projectTasks]);
 
   function getBarCoordinates(task: Task) {
     // Respect tasks with blank dates: do not invent dates
@@ -219,9 +243,9 @@ export function ProjectTimelineView() {
       <div className="flex-1 overflow-auto" ref={containerRef}>
         <div className="min-w-max flex flex-col">
           {/* Header Row: Month / Days */}
-          <div className="sticky top-0 z-20 flex bg-surface-elevated border-b border-border">
+          <div className="sticky top-0 z-30 flex bg-surface-elevated border-b border-border">
             {/* Left title column header */}
-            <div className="w-64 sm:w-72 px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider border-r border-border flex-shrink-0 bg-surface-elevated">
+            <div className="sticky left-0 z-40 w-64 sm:w-72 px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider border-r border-border flex-shrink-0 bg-surface-elevated shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
               Task Breakdown
             </div>
 
@@ -248,15 +272,17 @@ export function ProjectTimelineView() {
 
           {/* Body: Sections & Task Bars */}
           <div className="divide-y divide-border/60">
-            {sections.map((sec) => {
-              const secTasks = projectTasks.filter((t: Task) => t.sectionId === sec.id);
-
-              return (
+            {visibleSections.length === 0 ? (
+              <div className="p-8 text-center text-xs text-text-muted">
+                No work items found in this project.
+              </div>
+            ) : (
+              visibleSections.map((sec) => (
                 <div key={sec.id} className="relative">
                   {/* Section Label Header */}
                   <div className="flex items-center h-8 bg-surface-active/40 border-b border-border/40">
-                    <div className="w-64 sm:w-72 px-4 text-xs font-bold text-text-primary uppercase tracking-wider truncate border-r border-border flex-shrink-0">
-                      {sec.name} ({secTasks.length})
+                    <div className="sticky left-0 z-20 w-64 sm:w-72 px-4 text-xs font-bold text-text-primary uppercase tracking-wider truncate border-r border-border flex-shrink-0 bg-surface-elevated/95 backdrop-blur-xs shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
+                      {sec.name} ({sec.tasks.length})
                     </div>
                     {/* Background grid lines for section */}
                     <div className="flex h-full">
@@ -277,7 +303,7 @@ export function ProjectTimelineView() {
                   </div>
 
                   {/* Task Rows */}
-                  {secTasks.map((task: Task) => {
+                  {sec.tasks.map((task: Task) => {
                     const isCritical = cpm.criticalTaskIds.has(task.id);
                     const coords = getBarCoordinates(task);
 
@@ -289,7 +315,8 @@ export function ProjectTimelineView() {
                         {/* Task Title Left Column */}
                         <div
                           onClick={() => openTaskDrawer(task.id)}
-                          className="w-64 sm:w-72 px-3 text-xs font-medium text-text-primary truncate border-r border-border flex-shrink-0 cursor-pointer group-hover:text-brand-primary flex items-center justify-between gap-1.5"
+                          className="sticky left-0 z-10 w-64 sm:w-72 px-3 text-xs font-medium text-text-primary truncate border-r border-border flex-shrink-0 cursor-pointer bg-surface group-hover:bg-surface-hover/90 transition-colors group-hover:text-brand-primary flex items-center justify-between gap-1.5 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]"
+                          title={task.title}
                         >
                           <div className="flex items-center gap-1.5 min-w-0 truncate">
                             <WorkItemTypeBadge type={task.type} size="sm" showLabel={false} />
@@ -349,8 +376,8 @@ export function ProjectTimelineView() {
                     );
                   })}
                 </div>
-              );
-            })}
+              ))
+            )}
           </div>
         </div>
       </div>

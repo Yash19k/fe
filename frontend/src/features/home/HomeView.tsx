@@ -254,21 +254,23 @@ export function HomeView() {
                 className="border-0 rounded-none py-10"
               />
             ) : (
-              <div className="overflow-x-auto">
-                <div className="min-w-[780px]">
-                  <div className="hidden md:grid md:grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] items-center gap-3 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface-elevated/40">
-                    <span>Task</span>
-                    <span>Assignee</span>
-                    <span>Due Date</span>
-                    <span>Status</span>
-                    <span>Priority</span>
-                    <span className="text-right">SLA</span>
-                  </div>
-                  <div className="divide-y divide-border/60">
-                    {attentionTasks.map((task) => (
-                      <TaskRow key={task.id} task={task} />
-                    ))}
-                  </div>
+              <div className="w-full">
+                <div className="hidden sm:grid sm:grid-cols-[minmax(140px,1fr)_110px_90px_95px_80px_50px] items-center gap-2.5 px-4 py-2 border-b border-border/40 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface-elevated/40">
+                  <span>Task</span>
+                  <span>Assignee</span>
+                  <span>Due Date</span>
+                  <span className="text-center">Status</span>
+                  <span>Priority</span>
+                  <span className="text-right">Tags</span>
+                </div>
+                <div className="divide-y divide-border/60">
+                  {attentionTasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      gridColsClassName="grid-cols-[minmax(140px,1fr)_110px_90px_95px_80px_50px]"
+                    />
+                  ))}
                 </div>
               </div>
             )}
