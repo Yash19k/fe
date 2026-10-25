@@ -1089,3 +1089,43 @@ export function backendSprintToFrontend(sprint: any): Sprint {
     updatedAt: sprint.updatedAt || new Date().toISOString(),
   };
 }
+
+export interface OrganizationSlaPolicyData {
+  id?: string;
+  organizationId?: string;
+  urgentHours: number;
+  highHours: number;
+  mediumHours: number;
+  lowHours: number;
+  escalateHours: number;
+  warningThresholdHours?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function getOrganizationSlaApi(): Promise<{
+  success: boolean;
+  data: OrganizationSlaPolicyData;
+}> {
+  return request<{ success: boolean; data: OrganizationSlaPolicyData }>('/api/sla', {
+    method: 'GET',
+  });
+}
+
+export async function updateOrganizationSlaApi(payload: {
+  urgentHours?: number;
+  highHours?: number;
+  mediumHours?: number;
+  lowHours?: number;
+  escalateHours?: number;
+}): Promise<{
+  success: boolean;
+  data: OrganizationSlaPolicyData;
+  message?: string;
+}> {
+  return request<{ success: boolean; data: OrganizationSlaPolicyData; message?: string }>('/api/sla', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+

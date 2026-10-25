@@ -117,6 +117,16 @@ export const createWorkItemSchema = Joi.object({
     .unique("userId")
     .default([]),
 
+  labelId: Joi.string()
+    .guid({ version: ["uuidv4"] })
+    .allow(null, "")
+    .optional(),
+
+  labels: Joi.array()
+    .items(Joi.string().guid({ version: ["uuidv4"] }))
+    .allow(null)
+    .optional(),
+
   recurrence: recurrenceSchema.allow(null).optional(),
 })
   .unknown(false);
@@ -164,6 +174,8 @@ const updateWorkItemSchema = Joi.object({
   assignees: Joi.array().items(assigneeSchema).unique("userId").allow(null).optional(),
   assigneeId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
   assigneeIds: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
+  labelId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
+  labels: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
 }).min(1).unknown(false);
 
 export const validateUpdateWorkItem = (

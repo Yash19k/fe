@@ -21,15 +21,20 @@ import {
   addOrganizationMemberApi,
   updateOrganizationMemberRoleApi,
   removeOrganizationMemberApi,
+  getOrganizationSlaApi,
+  updateOrganizationSlaApi,
 } from '../../services/api';
 
 export function SettingsView() {
   const { currentUser, showToast, currentCompany } = useApp();
 
-  const [slaHigh, setSlaHigh] = useState<number | string>(24);
-  const [slaMedium, setSlaMedium] = useState<number | string>(48);
-  const [slaLow, setSlaLow] = useState<number | string>(96);
+  const [slaUrgent, setSlaUrgent] = useState<number | string>(4);
+  const [slaHigh, setSlaHigh] = useState<number | string>(8);
+  const [slaMedium, setSlaMedium] = useState<number | string>(24);
+  const [slaLow, setSlaLow] = useState<number | string>(72);
   const [warningThreshold, setWarningThreshold] = useState<number | string>(8);
+  const [isLoadingSla, setIsLoadingSla] = useState<boolean>(false);
+  const [isSavingSla, setIsSavingSla] = useState<boolean>(false);
 
   // Organization Member Management State
   const [members, setMembers] = useState<any[]>([]);
@@ -75,9 +80,58 @@ export function SettingsView() {
     }
   }, [canManageOrgMembers]);
 
-  function handleSaveSlaSettings(e: React.FormEvent) {
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchSlaPolicy() {
+      setIsLoadingSla(true);
+      try {
+        const res = await getOrganizationSlaApi();
+        if (isMounted && res?.data) {
+          if (res.data.urgentHours !== undefined) setSlaUrgent(res.data.urgentHours);
+          if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+          if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+          if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+          if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+        }
+      } catch (err: any) {
+        // Fallback to default values
+      } finally {
+        if (isMounted) {
+          setIsLoadingSla(false);
+        }
+      }
+    }
+
+    fetchSlaPolicy();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  async function handleSaveSlaSettings(e: React.FormEvent) {
     e.preventDefault();
-    showToast('SLA threshold policy updated successfully', 'success');
+    setIsSavingSla(true);
+    try {
+      const res = await updateOrganizationSlaApi({
+        urgentHours: Math.max(1, Math.round(Number(slaUrgent) || 4)),
+        highHours: Math.max(1, Math.round(Number(slaHigh) || 8)),
+        mediumHours: Math.max(1, Math.round(Number(slaMedium) || 24)),
+        lowHours: Math.max(1, Math.round(Number(slaLow) || 72)),
+        escalateHours: Math.max(1, Math.round(Number(warningThreshold) || 8)),
+      });
+      showToast(res?.message || 'SLA threshold policy updated successfully', 'success');
+      if (res?.data) {
+        if (res.data.urgentHours !== undefined) setSlaUrgent(res.data.urgentHours);
+        if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+        if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+        if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+        if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update SLA settings', 'error');
+    } finally {
+      setIsSavingSla(false);
+    }
   }
 
   async function handleAddMemberSubmit(e: React.FormEvent) {
@@ -406,6 +460,13 @@ export function SettingsView() {
 
         <form onSubmit={handleSaveSlaSettings} className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           <Input
+            label="Urgent Priority SLA (Hours)"
+            type="number"
+            min="1"
+            value={slaUrgent}
+            onChange={(e) => setSlaUrgent(e.target.value)}
+          />
+          <Input
             label="High Priority SLA (Hours)"
             type="number"
             min="1"
@@ -427,7 +488,7 @@ export function SettingsView() {
             onChange={(e) => setSlaLow(e.target.value)}
           />
           <Input
-            label="Breach Warning Lead Time (Hours)"
+            label="Escalate / Breach Warning Lead Time (Hours)"
             type="number"
             min="1"
             value={warningThreshold}
@@ -435,8 +496,14 @@ export function SettingsView() {
           />
 
           <div className="sm:col-span-2 flex justify-end">
-            <Button variant="primary" size="sm" type="submit" icon={Check}>
-              Save SLA Settings
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              icon={Check}
+              disabled={isSavingSla || isLoadingSla}
+            >
+              {isSavingSla ? 'Saving...' : 'Save SLA Settings'}
             </Button>
           </div>
         </form>

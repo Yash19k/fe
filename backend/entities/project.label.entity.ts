@@ -4,11 +4,13 @@ import {
   Column,
   CreateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   Index,
   Unique,
 } from "typeorm";
 import { Project } from "./project.entity";
+import { WorkItem } from "./work.item.entity";
 
 @Entity({ name: "project_labels" })
 @Unique("UQ_project_labels_project_name", ["projectId", "name"])
@@ -32,7 +34,10 @@ export class ProjectLabel {
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @ManyToOne(() => Project, { onDelete: "CASCADE" })
+  @ManyToOne(() => Project, (project) => project.labels, { onDelete: "CASCADE" })
   @JoinColumn({ name: "project_id" })
   project: Project;
+
+  @OneToMany(() => WorkItem, (workItem) => workItem.label)
+  workItems: WorkItem[];
 }
