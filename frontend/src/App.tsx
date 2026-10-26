@@ -274,8 +274,6 @@ function MainAppShell() {
 
           ) : activeRoute === '/chat' ? (
             <ChatView />
-          ) : (
-
           ) : activeRoute === '/' || activeRoute === '' ? (
 
             <HomeView />

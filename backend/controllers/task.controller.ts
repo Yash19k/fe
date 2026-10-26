@@ -8,24 +8,12 @@ import {  WorkItem,  WorkItemType,  WorkItemStatus,  WorkItemPriority,  SlaStatu
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { Sprint } from "../entities/sprint.entities";
-
+import { uploadToCloudinary } from "../services/cloudinary.service";
+import { WorkItemAttachment, AttachmentType } from "../entities/work.item.attachment.entity";
 import {  WorkItemRecurrence,  RecurrenceFrequency,  MonthlyPattern,} from "../entities/work.item.recurrence.entity";
-
-
 import { ProjectLabel } from "../entities/project.label.entity";
 import { OrganizationSla } from "../entities/organization.sla.entity";
-import {
-  WorkItemRecurrence,
-  RecurrenceFrequency,
-  MonthlyPattern,
-} from "../entities/work.item.recurrence.entity";
-import {
-  DEFAULT_RECURRENCE_TIMEZONE,
-  RECURRENCE_TIME_OF_DAY,
-  getInitialOccurrenceRunAt,
-  validateRecurrence,
-  type RecurrenceInput,
-} from "../services/recurrence.service";
+import { DEFAULT_RECURRENCE_TIMEZONE, RECURRENCE_TIME_OF_DAY, getInitialOccurrenceRunAt, validateRecurrence, type RecurrenceInput,} from "../services/recurrence.service";
 import { AppError } from "../errors/app.error";
 import {
   NotificationType,
@@ -420,7 +408,20 @@ async function validateAssignees(
     await manager.getRepository(ProjectMember).save(newMembers);
   }
 }
-
+function getAttachmentType(mimeType: string): AttachmentType {
+  if (mimeType.startsWith("image/")) return AttachmentType.IMAGE;
+  if (mimeType.startsWith("video/")) return AttachmentType.VIDEO;
+  if (
+    mimeType.includes("pdf") ||
+    mimeType.includes("word") ||
+    mimeType.includes("excel") ||
+    mimeType.includes("sheet") ||
+    mimeType.includes("text")
+  ) {
+    return AttachmentType.DOCUMENT;
+  }
+  return AttachmentType.OTHER;
+}
 // CREATE WORK ITEM
 export const createWorkItem = async (
   req: Request,
@@ -541,28 +542,6 @@ export const createWorkItem = async (
 
     const savedWorkItem = await workItemRepository.save(workItem);
 
-    savedWorkItem.slaDeadline = slaDeadline
-      ? new Date(slaDeadline)
-      : calculateSlaDeadline(savedWorkItem.createdAt, priority);
-    savedWorkItem.slaDeadlineIsCustom = Boolean(slaDeadline);
-    applySlaState(savedWorkItem);
-    await workItemRepository.save(savedWorkItem);
-    // audit creation of work item
-    await writeSlaAudit(
-      manager,
-      savedWorkItem,
-      actor.id,
-      "sla_initialized",
-      "Initialized SLA for work item",
-      null,
-      {
-        deadline: savedWorkItem.slaDeadline,
-        status: savedWorkItem.slaStatus,
-        custom: savedWorkItem.slaDeadlineIsCustom,
-      },
-    );
-
-
     if (slaDeadline && !savedWorkItem.priority) {
       throw new AppError(
         "A priority is required to configure an SLA deadline",
@@ -667,7 +646,31 @@ export const createWorkItem = async (
         where: { workItemId: savedWorkItem.id },
         relations: { user: true },
       });
+      // Insert after line 636 in task.controller.ts:
+const uploadedFiles = (req.files as Express.Multer.File[]) || [];
+let savedAttachments: WorkItemAttachment[] = [];
 
+if (uploadedFiles.length > 0) {
+  const attachmentEntities = await Promise.all(
+    uploadedFiles.map(async (file) => {
+      // 1. Upload to Cloudinary
+      const asset = await uploadToCloudinary(file, `work-items/${savedWorkItem.id}`);
+
+      // 2. Map & Create Attachment Entity
+      return manager.getRepository(WorkItemAttachment).create({
+        workItemId: savedWorkItem.id,
+        uploadedById: actor.id,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        type: getAttachmentType(file.mimetype),
+        size: String(asset.bytes || file.size),
+        storageKey: asset.secureUrl, // or asset.publicId depending on your naming convention
+      });
+    })
+  );
+
+  savedAttachments = await manager.getRepository(WorkItemAttachment).save(attachmentEntities);
+}
     return {
       workItem: savedWorkItem,
       label: labelToAssign,
@@ -677,6 +680,7 @@ export const createWorkItem = async (
       assigneeId: assignments[0]?.userId || null,
       assignees: assignments.map((a) => a.user).filter(Boolean),
       recurrence: savedRecurrence,
+      attachments: savedAttachments,
     };
   });
 
@@ -1039,7 +1043,27 @@ export const updateWorkItem = async (
         where: { id: savedWorkItem.labelId },
       });
     }
+    // Insert around Line 1016 in task.controller.ts:
+const uploadedFiles = (req.files as Express.Multer.File[]) || [];
+let newAttachments: WorkItemAttachment[] = [];
 
+if (uploadedFiles.length > 0) {
+  const attachmentEntities = await Promise.all(
+    uploadedFiles.map(async (file) => {
+      const asset = await uploadToCloudinary(file, `work-items/${savedWorkItem.id}`);
+      return manager.getRepository(WorkItemAttachment).create({
+        workItemId: savedWorkItem.id,
+        uploadedById: actor.id,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        type: getAttachmentType(file.mimetype),
+        size: String(asset.bytes || file.size),
+        storageKey: asset.secureUrl,
+      });
+    })
+  );
+  newAttachments = await manager.getRepository(WorkItemAttachment).save(attachmentEntities);
+}
     return {
       ...savedWorkItem,
       label: updatedLabel,

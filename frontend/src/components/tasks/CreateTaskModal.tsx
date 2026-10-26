@@ -47,11 +47,15 @@ export function CreateTaskModal({
   const [dueDate, setDueDate] = useState(initialDueDate || '');
   const [estimateHours, setEstimateHours] = useState<number | string>('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
 
   // Recurrence configuration
   const [recFrequency, setRecFrequency] = useState('none');
   const [recInterval, setRecInterval] = useState<number | string>(1);
   const [recWeekdaysOnly, setRecWeekdaysOnly] = useState(false);
+
+  // Form submission & loading state
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
   if (isOpen !== prevIsOpen) {
@@ -132,63 +136,81 @@ export function CreateTaskModal({
     return itemType === WORK_ITEM_TYPES.BUG ? WORK_ITEM_TYPES.BUG : '';
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validateForm()) return;
 
-    const allAssignees = selectedAssigneeIds.length > 0
-      ? selectedAssigneeIds
-      : assigneeId
-        ? [assigneeId]
-        : [];
+    setIsSubmitting(true);
+    setErrors((prev) => ({ ...prev, general: undefined }));
 
-    const payload: Record<string, any> = {
-      type,
-      parentId: parentId || null,
-      title: title.trim(),
-      description,
-      projectId: currentProject?.id,
-      sectionId,
-      status,
-      priority: priority || null,
-      assigneeId: allAssignees[0] || null,
-      assigneeIds: allAssignees,
-      labels: selectedLabels,
-      startDate: startDate || null,
-      dueDate: dueDate || null,
-      sprintId: initialSprintId || null,
-      estimateHours: estimateHours !== '' ? Number(estimateHours) : null,
-      attachments,
-      recurrenceRule:
-        recFrequency !== 'none'
-          ? {
-              frequency: recFrequency,
-              interval: Number(recInterval) || 1,
-              weekdaysOnly: recWeekdaysOnly,
-              endCondition: 'never',
-            }
-          : { frequency: 'none' },
-    };
+    try {
+      const allAssignees = selectedAssigneeIds.length > 0
+        ? selectedAssigneeIds
+        : assigneeId
+          ? [assigneeId]
+          : [];
 
-    if (type === WORK_ITEM_TYPES.EPIC) {
-      payload.businessGoal = businessGoal;
-      payload.successCriteria = successCriteria;
-    } else if (type === WORK_ITEM_TYPES.STORY) {
-      payload.acceptanceCriteria = acceptanceCriteria;
-    } else if (type === WORK_ITEM_TYPES.BUG) {
-      payload.severity = severity;
-      payload.stepsToReproduce = stepsToReproduce;
-      payload.expectedBehavior = expectedBehavior;
-      payload.actualBehavior = actualBehavior;
-      payload.environment = environment;
-    }
+      const payload: Record<string, any> = {
+        type,
+        parentId: parentId || null,
+        title: title.trim(),
+        description,
+        projectId: currentProject?.id,
+        sectionId,
+        status,
+        priority: priority || null,
+        assigneeId: allAssignees[0] || null,
+        assigneeIds: allAssignees,
+        labels: selectedLabels,
+        startDate: startDate || null,
+        dueDate: dueDate || null,
+        sprintId: initialSprintId || null,
+        estimateHours: estimateHours !== '' ? Number(estimateHours) : null,
+        // Metadata only: never send temporary blob: preview URLs as persisted attachment URLs.
+        attachments: attachments.map(({ id, name, size, type, uploadedAt }) => ({
+          id, name, size, type, uploadedAt,
+        })),
+        // Original File objects must be consumed by the API layer as multipart FormData.
+        attachmentFiles,
+        recurrenceRule:
+          recFrequency !== 'none'
+            ? {
+                frequency: recFrequency,
+                interval: Number(recInterval) || 1,
+                weekdaysOnly: recWeekdaysOnly,
+                endCondition: 'never',
+              }
+            : { frequency: 'none' },
+      };
 
-    const res = createTask(payload);
-    if (res?.success) {
-      resetForm();
-      onClose();
-    } else if (res?.reason) {
-      setErrors((prev) => ({ ...prev, general: res.reason }));
+      if (type === WORK_ITEM_TYPES.EPIC) {
+        payload.businessGoal = businessGoal;
+        payload.successCriteria = successCriteria;
+      } else if (type === WORK_ITEM_TYPES.STORY) {
+        payload.acceptanceCriteria = acceptanceCriteria;
+      } else if (type === WORK_ITEM_TYPES.BUG) {
+        payload.severity = severity;
+        payload.stepsToReproduce = stepsToReproduce;
+        payload.expectedBehavior = expectedBehavior;
+        payload.actualBehavior = actualBehavior;
+        payload.environment = environment;
+      }
+
+      // Await asynchronous createTask execution
+      const res = await createTask(payload);
+      if (res?.success) {
+        resetForm();
+        onClose();
+      } else if (res?.reason) {
+        setErrors((prev) => ({ ...prev, general: res.reason }));
+      }
+    } catch (err: any) {
+      setErrors((prev) => ({
+        ...prev,
+        general: err?.message || 'An unexpected error occurred while creating the work item.',
+      }));
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -209,6 +231,7 @@ export function CreateTaskModal({
     setRecWeekdaysOnly(false);
     setEstimateHours('');
     setAttachments([]);
+    setAttachmentFiles([]);
     setBusinessGoal('');
     setSuccessCriteria('');
     setAcceptanceCriteria('');
@@ -218,14 +241,17 @@ export function CreateTaskModal({
     setActualBehavior('');
     setEnvironment('');
     setErrors({});
+    setIsSubmitting(false);
   }
 
   return (
     <Dialog
       isOpen={isOpen}
       onClose={() => {
-        resetForm();
-        onClose();
+        if (!isSubmitting) {
+          resetForm();
+          onClose();
+        }
       }}
       title="Create New Work Item"
       description={`Creating item in ${currentProject?.name || 'Project'}`}
@@ -244,6 +270,7 @@ export function CreateTaskModal({
             label="Work Item Type *"
             value={type}
             onChange={handleTypeChange}
+            disabled={isSubmitting}
           >
             {WORK_ITEM_TYPE_LIST.map((t) => (
               <option key={t} value={t}>
@@ -266,6 +293,7 @@ export function CreateTaskModal({
                 if (errors.parentId) setErrors((prev) => ({ ...prev, parentId: '' }));
               }}
               error={errors.parentId}
+              disabled={isSubmitting}
             >
               <option value="">
                 {type === WORK_ITEM_TYPES.SUBTASK
@@ -291,6 +319,7 @@ export function CreateTaskModal({
             if (errors.title) setErrors((prev) => ({ ...prev, title: '' }));
           }}
           error={errors.title}
+          disabled={isSubmitting}
           autoFocus
         />
 
@@ -300,6 +329,7 @@ export function CreateTaskModal({
           placeholder="Add context, specifications, background..."
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          disabled={isSubmitting}
           rows={2}
         />
 
@@ -316,12 +346,14 @@ export function CreateTaskModal({
               placeholder="Strategic outcome or business value..."
               value={businessGoal}
               onChange={(e) => setBusinessGoal(e.target.value)}
+              disabled={isSubmitting}
             />
             <Textarea
               label="Success Criteria"
               placeholder="Measurable KPIs or acceptance definition..."
               value={successCriteria}
               onChange={(e) => setSuccessCriteria(e.target.value)}
+              disabled={isSubmitting}
               rows={2}
             />
           </div>
@@ -338,6 +370,7 @@ export function CreateTaskModal({
               placeholder="Given... When... Then... criteria"
               value={acceptanceCriteria}
               onChange={(e) => setAcceptanceCriteria(e.target.value)}
+              disabled={isSubmitting}
               rows={2}
             />
           </div>
@@ -358,6 +391,7 @@ export function CreateTaskModal({
                   if (errors.severity) setErrors((prev) => ({ ...prev, severity: '' }));
                 }}
                 error={errors.severity}
+                disabled={isSubmitting}
               >
                 {BUG_SEVERITIES.map((s) => (
                   <option key={s} value={s}>
@@ -370,6 +404,7 @@ export function CreateTaskModal({
                 placeholder="e.g. Chrome 129, macOS 15, Staging"
                 value={environment}
                 onChange={(e) => setEnvironment(e.target.value)}
+                disabled={isSubmitting}
               />
             </div>
             <Textarea
@@ -382,6 +417,7 @@ export function CreateTaskModal({
               }}
               rows={3}
               error={errors.stepsToReproduce}
+              disabled={isSubmitting}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Textarea
@@ -389,6 +425,7 @@ export function CreateTaskModal({
                 placeholder="What should have occurred..."
                 value={expectedBehavior}
                 onChange={(e) => setExpectedBehavior(e.target.value)}
+                disabled={isSubmitting}
                 rows={2}
               />
               <Textarea
@@ -396,6 +433,7 @@ export function CreateTaskModal({
                 placeholder="What unexpectedly happened..."
                 value={actualBehavior}
                 onChange={(e) => setActualBehavior(e.target.value)}
+                disabled={isSubmitting}
                 rows={2}
               />
             </div>
@@ -412,7 +450,8 @@ export function CreateTaskModal({
             onChange={(e) => {
               if (e.target.value) handleToggleAssignee(e.target.value);
             }}
-            className="w-full h-9 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
+            disabled={isSubmitting}
+            className="w-full h-9 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none disabled:opacity-50"
           >
             <option value="">+ Add or remove assignee...</option>
             {allUsers.map((u) => (
@@ -439,7 +478,8 @@ export function CreateTaskModal({
                   <button
                     type="button"
                     onClick={() => handleToggleAssignee(uid)}
-                    className="hover:text-rose-400 ml-0.5"
+                    disabled={isSubmitting}
+                    className="hover:text-rose-400 ml-0.5 disabled:opacity-50"
                     title="Remove assignee"
                   >
                     ×
@@ -450,7 +490,7 @@ export function CreateTaskModal({
           </div>
         )}
 
-        {/* Labels Selector (Section 13) */}
+        {/* Labels Selector */}
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
             Labels
@@ -469,6 +509,7 @@ export function CreateTaskModal({
             label="Initial Status"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
+            disabled={isSubmitting}
           >
             {currentWorkflow?.statuses?.map((st) => (
               <option key={st.id} value={st.name}>
@@ -481,6 +522,7 @@ export function CreateTaskModal({
             label="Priority"
             value={priority}
             onChange={(e) => setPriority(e.target.value as Priority | '')}
+            disabled={isSubmitting}
           >
             <option value="">No priority</option>
             <option value="High">High</option>
@@ -493,6 +535,7 @@ export function CreateTaskModal({
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
+            disabled={isSubmitting}
           />
 
           <Input
@@ -500,6 +543,7 @@ export function CreateTaskModal({
             type="date"
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
+            disabled={isSubmitting}
           />
         </div>
 
@@ -517,6 +561,7 @@ export function CreateTaskModal({
               label="Frequency"
               value={recFrequency}
               onChange={(e) => setRecFrequency(e.target.value)}
+              disabled={isSubmitting}
             >
               <option value="none">Does not repeat (One-time)</option>
               <option value="daily">Daily</option>
@@ -535,6 +580,7 @@ export function CreateTaskModal({
                 max="30"
                 value={recInterval}
                 onChange={(e) => setRecInterval(e.target.value)}
+                disabled={isSubmitting}
               />
             )}
           </div>
@@ -545,6 +591,7 @@ export function CreateTaskModal({
                 type="checkbox"
                 checked={recWeekdaysOnly}
                 onChange={(e) => setRecWeekdaysOnly(e.target.checked)}
+                disabled={isSubmitting}
                 className="w-3.5 h-3.5 rounded border-border text-brand-primary"
               />
               <span>Weekdays only (skip Saturday & Sunday)</span>
@@ -574,6 +621,7 @@ export function CreateTaskModal({
             placeholder="e.g. 4 (optional)"
             value={estimateHours}
             onChange={(e) => setEstimateHours(e.target.value)}
+            disabled={isSubmitting}
           />
         </div>
 
@@ -581,12 +629,15 @@ export function CreateTaskModal({
         <TaskAttachments
           attachments={attachments}
           onChange={setAttachments}
+          onFilesChange={setAttachmentFiles}
+          disabled={isSubmitting}
         />
 
         <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
           <Button
             variant="secondary"
             size="sm"
+            disabled={isSubmitting}
             onClick={() => {
               resetForm();
               onClose();
@@ -594,8 +645,13 @@ export function CreateTaskModal({
           >
             Cancel
           </Button>
-          <Button variant="primary" size="sm" type="submit">
-            Create {type}
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? 'Creating...' : `Create ${type}`}
           </Button>
         </div>
       </form>

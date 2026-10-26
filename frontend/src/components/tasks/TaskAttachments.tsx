@@ -22,6 +22,7 @@ import {
 export interface TaskAttachmentsProps {
   attachments?: TaskAttachment[];
   onChange: (attachments: TaskAttachment[]) => void;
+  onFilesChange?: (files: File[]) => void;
   disabled?: boolean;
 }
 
@@ -57,6 +58,7 @@ function isPdfFile(type?: string | null, name?: string | null): boolean {
 export function TaskAttachments({
   attachments = [],
   onChange,
+  onFilesChange,
   disabled = false,
 }: TaskAttachmentsProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -65,6 +67,8 @@ export function TaskAttachments({
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Keep original File objects separate from display metadata and preview URLs.
+  const selectedFilesRef = useRef<Map<string, File>>(new Map());
 
   // Restore/generate Object URLs from IndexedDB for attachments on mount/change
   useEffect(() => {
@@ -192,9 +196,10 @@ export function TaskAttachments({
         continue;
       }
 
-      const id = `att-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+      const id = `att-${crypto.randomUUID()}`;
       try {
         await saveMediaBlob(id, file);
+        selectedFilesRef.current.set(id, file);
         const objectUrl = URL.createObjectURL(file);
         newUrls[id] = objectUrl;
 
@@ -215,7 +220,9 @@ export function TaskAttachments({
 
     if (newAttachments.length > 0) {
       setPreviewUrls((prev) => ({ ...prev, ...newUrls }));
-      onChange([...attachments, ...newAttachments]);
+      const nextAttachments = [...attachments, ...newAttachments];
+      onChange(nextAttachments);
+      onFilesChange?.(Array.from(selectedFilesRef.current.values()));
     }
 
     // Reset native input so user can re-select the same file if needed
@@ -227,6 +234,8 @@ export function TaskAttachments({
   async function handleRemove(attId: string, e: React.MouseEvent) {
     e.stopPropagation();
     const target = attachments.find((a) => a.id === attId);
+    selectedFilesRef.current.delete(attId);
+    onFilesChange?.(Array.from(selectedFilesRef.current.values()));
     if (target?.blobKey) {
       await deleteMediaBlob(target.blobKey);
     }
