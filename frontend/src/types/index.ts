@@ -316,10 +316,11 @@ export interface AppContextValue {
   projectTasks: Task[];
   myTasks: Task[];
   createTask: (taskData: any) => Promise<{
-  success: boolean;
-  task?: Task;
-  reason?: string;
-}>;
+    success: boolean;
+    task?: Task;
+    reason?: string;
+  }>;
+  uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
   updateTask: (taskId: string, updates: any, snapshotVersion?: any) => { success: boolean; reason?: string };
   deleteTask: (taskId: string) => void;
   changeTaskStatus: (taskId: string, newStatus: string) => boolean;

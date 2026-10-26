@@ -19,6 +19,7 @@ import {
   getWorkItemSla,
   getWorkItemSlaAudit,
   resolveWorkItemEscalation,
+  uploadAttachmentsToWorkItem,
 } from "../controllers/task.controller";
 import {
   addWorkItemComment,
@@ -32,6 +33,7 @@ import {
 } from "../controllers/feature-persistence.controller";
 import { asyncHandler } from "../middleware/async.handler";
 import { requireProjectPermission } from "../middleware/project.permission";
+import { uploadWorkItemAttachments } from "../middleware/work.item.attachment.upload.middleware";
 
 const router = Router();
 
@@ -50,6 +52,15 @@ router.patch(
   requireProjectPermission("task:update"),
   validateUpdateWorkItem,
   asyncHandler(updateWorkItem)
+);
+
+router.post(
+  "/:workItemId/attachments",
+  isLoggedIn,
+  validateWorkItemId,
+  requireProjectPermission("task:update"),
+  uploadWorkItemAttachments,
+  asyncHandler(uploadAttachmentsToWorkItem)
 );
 
 router.patch(

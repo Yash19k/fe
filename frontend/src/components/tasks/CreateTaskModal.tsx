@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Dialog } from '../ui/Dialog';
 import { Input, Textarea, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -23,6 +23,10 @@ export interface CreateTaskModalProps {
   initialSprintId?: string;
 }
 
+function formatDateInputValue(value?: string): string {
+  return value?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || '';
+}
+
 export function CreateTaskModal({
   isOpen,
   onClose,
@@ -30,7 +34,15 @@ export function CreateTaskModal({
   initialStartDate,
   initialSprintId,
 }: CreateTaskModalProps) {
-  const { createTask, currentProject, allUsers, currentWorkflow, tasks, projectLabels } = useApp();
+  const {
+    createTask,
+    uploadTaskAttachments,
+    currentProject,
+    allUsers,
+    currentWorkflow,
+    tasks,
+    projectLabels,
+  } = useApp();
 
   // Core Common Fields - default to unassigned, no priority, empty dates and hours
   const [type, setType] = useState<WorkItemType>(WORK_ITEM_TYPES.TASK);
@@ -43,11 +55,13 @@ export function CreateTaskModal({
   const [assigneeId, setAssigneeId] = useState('');
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
-  const [startDate, setStartDate] = useState(initialStartDate || '');
-  const [dueDate, setDueDate] = useState(initialDueDate || '');
+  const [startDate, setStartDate] = useState(formatDateInputValue(initialStartDate));
+  const [dueDate, setDueDate] = useState(formatDateInputValue(initialDueDate));
   const [estimateHours, setEstimateHours] = useState<number | string>('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [attachmentPickerKey, setAttachmentPickerKey] = useState(0);
+  const [createdWorkItemId, setCreatedWorkItemId] = useState<string | null>(null);
 
   // Recurrence configuration
   const [recFrequency, setRecFrequency] = useState('none');
@@ -56,13 +70,14 @@ export function CreateTaskModal({
 
   // Form submission & loading state
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
 
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
   if (isOpen !== prevIsOpen) {
     setPrevIsOpen(isOpen);
     if (isOpen) {
-      if (initialDueDate !== undefined) setDueDate(initialDueDate);
-      if (initialStartDate !== undefined) setStartDate(initialStartDate);
+      if (initialDueDate !== undefined) setDueDate(formatDateInputValue(initialDueDate));
+      if (initialStartDate !== undefined) setStartDate(formatDateInputValue(initialStartDate));
     }
   }
 
@@ -138,12 +153,22 @@ export function CreateTaskModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitLockRef.current) return;
     if (!validateForm()) return;
 
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setErrors((prev) => ({ ...prev, general: undefined }));
 
+    let workItemCreated = Boolean(createdWorkItemId);
     try {
+      if (
+        attachments.length !== attachmentFiles.length ||
+        attachmentFiles.some((file) => !(file instanceof File))
+      ) {
+        throw new Error('One or more selected files are no longer available. Remove and reselect them.');
+      }
+
       const allAssignees = selectedAssigneeIds.length > 0
         ? selectedAssigneeIds
         : assigneeId
@@ -170,8 +195,6 @@ export function CreateTaskModal({
         attachments: attachments.map(({ id, name, size, type, uploadedAt }) => ({
           id, name, size, type, uploadedAt,
         })),
-        // Original File objects must be consumed by the API layer as multipart FormData.
-        attachmentFiles,
         recurrenceRule:
           recFrequency !== 'none'
             ? {
@@ -196,20 +219,49 @@ export function CreateTaskModal({
         payload.environment = environment;
       }
 
-      // Await asynchronous createTask execution
-      const res = await createTask(payload);
-      if (res?.success) {
+      let workItemId = createdWorkItemId;
+      if (!workItemId) {
+        const res = await createTask(payload);
+        if (!res?.success) {
+          setErrors((prev) => ({
+            ...prev,
+            general: res?.reason || 'The work item could not be created.',
+          }));
+          return;
+        }
+
+        if (attachmentFiles.length === 0) {
+          resetForm();
+          onClose();
+          return;
+        }
+
+        workItemId = res.task?.id || null;
+        if (!workItemId) {
+          throw new Error('The work item was created but its ID was not returned.');
+        }
+        workItemCreated = true;
+        setCreatedWorkItemId(workItemId);
+      }
+
+      if (attachmentFiles.length === 0) {
         resetForm();
         onClose();
-      } else if (res?.reason) {
-        setErrors((prev) => ({ ...prev, general: res.reason }));
+        return;
       }
+
+      await uploadTaskAttachments(workItemId, attachmentFiles);
+      resetForm();
+      onClose();
     } catch (err: any) {
       setErrors((prev) => ({
         ...prev,
-        general: err?.message || 'An unexpected error occurred while creating the work item.',
+        general: workItemCreated
+          ? `The work item has already been created. Retry to upload its attachments. ${err?.message || ''}`.trim()
+          : err?.message || 'An unexpected error occurred while creating the work item.',
       }));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
   }
@@ -224,14 +276,16 @@ export function CreateTaskModal({
     setAssigneeId('');
     setSelectedAssigneeIds([]);
     setSelectedLabels([]);
-    setStartDate(initialStartDate || '');
-    setDueDate(initialDueDate || '');
+    setStartDate(formatDateInputValue(initialStartDate));
+    setDueDate(formatDateInputValue(initialDueDate));
     setRecFrequency('none');
     setRecInterval(1);
     setRecWeekdaysOnly(false);
     setEstimateHours('');
     setAttachments([]);
     setAttachmentFiles([]);
+    setAttachmentPickerKey((key) => key + 1);
+    setCreatedWorkItemId(null);
     setBusinessGoal('');
     setSuccessCriteria('');
     setAcceptanceCriteria('');
@@ -261,6 +315,11 @@ export function CreateTaskModal({
         {errors.general && (
           <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
             {errors.general}
+          </div>
+        )}
+        {createdWorkItemId && (
+          <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+            This work item already exists. Retrying will upload attachments only.
           </div>
         )}
 
@@ -627,6 +686,7 @@ export function CreateTaskModal({
 
         {/* Image and Video Attachments */}
         <TaskAttachments
+          key={attachmentPickerKey}
           attachments={attachments}
           onChange={setAttachments}
           onFilesChange={setAttachmentFiles}
@@ -651,7 +711,9 @@ export function CreateTaskModal({
             type="submit"
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'Creating...' : `Create ${type}`}
+            {isSubmitting
+              ? createdWorkItemId ? 'Uploading...' : 'Creating...'
+              : createdWorkItemId ? 'Retry Attachment Upload' : `Create ${type}`}
           </Button>
         </div>
       </form>

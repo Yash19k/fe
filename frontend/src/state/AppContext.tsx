@@ -27,6 +27,7 @@ import {
   Sprint,
   SprintStatus,
   Label,
+  TaskAttachment,
 } from '../types';
 import {
   createSprintApi,
@@ -734,10 +735,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
-    // Original File objects collected by TaskAttachments / CreateTaskModal
-    const attachmentFiles: File[] = Array.isArray(formData.attachmentFiles)
-      ? formData.attachmentFiles
-      : [];
+    const backendPriority = frontendPriorityToBackend(sanitized.priority);
 
     try {
       // 1. Create the work item in backend to obtain the database UUID
@@ -748,7 +746,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         type: frontendTypeToBackend(sanitized.type || WORK_ITEM_TYPES.TASK),
         title: sanitized.title.trim(),
         description: sanitized.description || null,
-        priority: frontendPriorityToBackend(sanitized.priority),
+        ...(backendPriority !== null ? { priority: backendPriority } : {}),
         status: frontendStatusToBackend(sanitized.status || 'Backlog'),
         dueDate: sanitized.dueDate || null,
         assignees: (
@@ -770,30 +768,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         serverItem.projectId || targetProjectId
       );
 
-      // 2. Upload selected File objects using the database UUID
-      if (attachmentFiles.length > 0) {
-        try {
-          const uploadRes = await uploadWorkItemAttachmentsApi(serverItem.id, attachmentFiles);
-          const uploadedList = uploadRes?.attachments || uploadRes?.data?.attachments || uploadRes?.data;
-          
-          if (Array.isArray(uploadedList) && uploadedList.length > 0) {
-            authoritativeTask.attachments = uploadedList.map((att: any) => ({
-              id: att.id,
-              name: att.originalName || att.name || 'attachment',
-              size: Number(att.size) || 0,
-              type: att.mimeType || att.type || 'application/octet-stream',
-              url: att.url || (att.storageKey ? `/api/attachments/${att.id}/file` : ''),
-              blobKey: att.blobKey || att.id,
-              uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
-            }));
-          }
-        } catch (uploadErr: any) {
-          console.warn('Task created, but attachment upload failed:', uploadErr.message);
-          showToast('Task created, but attachments failed to upload', 'warning');
-        }
-      }
-
-      // 3. Commit task to local state
+      // Commit the server-created task before the modal starts its separate upload step.
       setTasks((prev) => [authoritativeTask, ...prev]);
 
       if (
@@ -872,6 +847,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast,
     broadcastEvent,
   ]);
+
+  const uploadTaskAttachments = useCallback(async (
+    workItemId: string,
+    files: File[],
+  ): Promise<TaskAttachment[]> => {
+    if (!isPersistedWorkItemId(workItemId)) {
+      throw new Error('A persisted work item is required to upload attachments');
+    }
+    if (typeof File === 'undefined' || files.some((file) => !(file instanceof File))) {
+      throw new Error('Attachments must be selected files');
+    }
+
+    const uploadRes = await uploadWorkItemAttachmentsApi(workItemId, files);
+    const uploadedList = uploadRes?.attachments;
+    if (
+      !Array.isArray(uploadedList) ||
+      uploadedList.length !== files.length ||
+      uploadedList.some((attachment: any) =>
+        typeof attachment.id !== 'string' ||
+        typeof (attachment.storageKey || attachment.url) !== 'string'
+      )
+    ) {
+      throw new Error('The server did not return all persisted attachments');
+    }
+
+    const persistedAttachments: TaskAttachment[] = uploadedList.map((attachment: any) => ({
+      id: attachment.id,
+      name: attachment.originalName || attachment.name || 'attachment',
+      size: Number(attachment.size) || 0,
+      type: attachment.mimeType || attachment.type || 'application/octet-stream',
+      url: attachment.url || attachment.storageKey,
+      uploadedAt: attachment.createdAt || attachment.uploadedAt || new Date().toISOString(),
+    }));
+
+    setTasks((previousTasks) =>
+      previousTasks.map((task) => {
+        if (task.id !== workItemId) return task;
+        const attachmentsById = new Map(
+          (task.attachments || []).map((attachment) => [attachment.id, attachment]),
+        );
+        persistedAttachments.forEach((attachment) =>
+          attachmentsById.set(attachment.id, attachment),
+        );
+        return { ...task, attachments: Array.from(attachmentsById.values()) };
+      }),
+    );
+
+    return persistedAttachments;
+  }, []);
 
   const updateTask = useCallback((taskId: string, updates: any, snapshotVersion: number | null = null) => {
     const target = tasks.find((t) => t.id === taskId);
@@ -2266,6 +2290,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     projectTasks,
     myTasks,
     createTask,
+    uploadTaskAttachments,
     updateTask,
     deleteTask,
     changeTaskStatus,

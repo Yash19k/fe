@@ -367,7 +367,7 @@ export async function getProjectWorkItemsApi(
   limit = 100,
   type?: string
 ): Promise<any> {
-  let url = `/api/projects/${encodeURIComponent(projectId)}/work-items?page=${page}&limit=${limit}`;
+  let url = `/api/work-items/project/${encodeURIComponent(projectId)}?page=${page}&limit=${limit}`;
   if (type) {
     url += `&type=${encodeURIComponent(type)}`;
   }
@@ -392,7 +392,7 @@ export async function uploadWorkItemAttachmentsApi(
   const formData = new FormData();
 
   files.forEach((file) => {
-    formData.append('files', file);
+    formData.append('attachments', file);
   });
 
   const response = await fetch(
@@ -472,7 +472,7 @@ export async function getProjectDashboardApi(projectId: string): Promise<any> {
 }
 
 export async function getPersonalDashboardApi(): Promise<any> {
-  return request<any>('/api/dashboard/me', { method: 'GET' });
+  return request<any>('/api/dashboard/personal', { method: 'GET' });
 }
 
 // Comments, Time Entries & Dependencies
@@ -588,7 +588,7 @@ export async function getProjectAuditLogsApi(
 }
 
 export async function createAuditLogApi(payload: any): Promise<any> {
-  return request<any>('/api/audit-logs', {
+  return request<any>('/api/projects/audit-logs', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -802,7 +802,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
           name: att.originalName || att.name || 'attachment',
           size: Number(att.size) || 0,
           type: att.mimeType || att.type || 'application/octet-stream',
-          url: att.url || (att.storageKey ? `/api/attachments/${att.id}/file` : ''),
+          url: att.url || att.storageKey || '',
           blobKey: att.blobKey || att.id,
           uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
         }))

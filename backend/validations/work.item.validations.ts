@@ -98,7 +98,8 @@ export const createWorkItemSchema = Joi.object({
 
   priority: Joi.string()
     .valid(...Object.values(WorkItemPriority))
-    .default(WorkItemPriority.MEDIUM),
+    .allow(null)
+    .optional(),
 
   status: Joi.string()
     .valid(...Object.values(WorkItemStatus))

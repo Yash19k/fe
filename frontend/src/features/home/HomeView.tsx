@@ -24,7 +24,7 @@ export function HomeView() {
   const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer } = useApp();
 
   const [personalData, setPersonalData] = useState<{
-    metrics: {
+    summary: {
       total: number;
       completed: number;
       active: number;
@@ -59,7 +59,7 @@ export function HomeView() {
 
   useEffect(() => {
     fetchPersonalDashboard();
-  }, [currentUser?.id, tasks.length]);
+  }, [currentUser?.id]);
 
   const accessibleProjects = useMemo(() => {
     return projects.filter((p) => canUserAccessProject(p, currentUser.id));
@@ -72,8 +72,8 @@ export function HomeView() {
 
   // Personal metrics from backend or local fallback
   const personalMetrics = useMemo(() => {
-    if (personalData?.metrics) {
-      return personalData.metrics;
+    if (personalData?.summary) {
+      return personalData.summary;
     }
     const total = userTasks.length;
     const completed = userTasks.filter((t) => t.status === 'Done').length;
