@@ -12,7 +12,6 @@ import {
   Lock,
   Globe,
 } from 'lucide-react';
-import { canUserAccessProject } from '../../domain/permissions';
 
 export interface ProjectsViewProps {
   onOpenCreateProject?: () => void;
@@ -24,12 +23,8 @@ export function ProjectsView({ onOpenCreateProject }: ProjectsViewProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
-  const accessibleProjects = useMemo(() => {
-    return projects.filter((p) => canUserAccessProject(p, currentUser.id));
-  }, [projects, currentUser.id]);
-
   const filteredProjects = useMemo(() => {
-    return accessibleProjects.filter((p) => {
+    return projects.filter((p) => {
       if (search.trim()) {
         const q = search.toLowerCase();
         if (
@@ -43,7 +38,7 @@ export function ProjectsView({ onOpenCreateProject }: ProjectsViewProps) {
       if (statusFilter !== 'ALL' && p.status !== statusFilter) return false;
       return true;
     });
-  }, [accessibleProjects, search, statusFilter]);
+  }, [projects, search, statusFilter]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5">

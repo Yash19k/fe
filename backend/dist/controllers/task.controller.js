@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteWorkItem = exports.updateWorkItem = exports.getProjectWorkItems = exports.createWorkItem = void 0;
+exports.deleteWorkItem = exports.resolveWorkItemEscalation = exports.getWorkItemSlaAudit = exports.getWorkItemSla = exports.escalateWorkItem = exports.updateWorkItem = exports.getProjectWorkItems = exports.createWorkItem = void 0;
 const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data.source");
 const user_entity_1 = require("../entities/user.entity");
@@ -8,10 +8,29 @@ const project_entity_1 = require("../entities/project.entity");
 const project_member_entity_1 = require("../entities/project.member.entity");
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_assignee_entity_1 = require("../entities/work.item-assignee.entity");
+const audit_log_entity_1 = require("../entities/audit.log.entity");
+const sprint_entities_1 = require("../entities/sprint.entities");
+const project_label_entity_1 = require("../entities/project.label.entity");
+const organization_sla_entity_1 = require("../entities/organization.sla.entity");
 const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
+const recurrence_service_1 = require("../services/recurrence.service");
 const app_error_1 = require("../errors/app.error");
+const notification_entity_1 = require("../entities/notification.entity");
+const notification_service_1 = require("../services/notification.service");
+const sla_service_1 = require("../services/sla.service");
+const project_permission_1 = require("../middleware/project.permission");
 const pagination_1 = require("../utils/pagination");
 const isAdmin = (actor) => actor.role === "ADMIN";
+function clearSlaState(workItem) {
+    workItem.slaDeadline = null;
+    workItem.slaStatus = null;
+    workItem.slaDeadlineIsCustom = false;
+    workItem.escalatedAt = null;
+    workItem.escalatedById = null;
+    workItem.escalationReason = null;
+    workItem.slaBreachedAt = null;
+    workItem.slaResolvedAt = null;
+}
 function requireUserId(req) {
     const userId = req.user?.id;
     if (typeof userId !== "string" || !userId) {
@@ -47,81 +66,6 @@ async function getActiveActor(userId) {
     }
     return user;
 }
-function isValidDateOnly(value) {
-    if (typeof value !== "string" ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        return false;
-    }
-    const date = new Date(`${value}T00:00:00.000Z`);
-    return (!Number.isNaN(date.getTime()) &&
-        date.toISOString().slice(0, 10) === value);
-}
-function validateRecurrence(input) {
-    if (!Object.values(work_item_recurrence_entity_1.RecurrenceFrequency).includes(input.frequency)) {
-        throw new app_error_1.AppError("Invalid recurrence frequency", 400, "INVALID_RECURRENCE_FREQUENCY");
-    }
-    const interval = input.interval ?? 1;
-    if (!Number.isInteger(interval) || interval < 1) {
-        throw new app_error_1.AppError("Recurrence interval must be a positive integer", 400, "INVALID_RECURRENCE_INTERVAL");
-    }
-    if (!isValidDateOnly(input.startsOn)) {
-        throw new app_error_1.AppError("startsOn must be a valid YYYY-MM-DD date", 400, "INVALID_RECURRENCE_START_DATE");
-    }
-    if (input.endsOn != null &&
-        (!isValidDateOnly(input.endsOn) || input.endsOn < input.startsOn)) {
-        throw new app_error_1.AppError("endsOn must be a valid date on or after startsOn", 400, "INVALID_RECURRENCE_END_DATE");
-    }
-    try {
-        new Intl.DateTimeFormat("en-US", {
-            timeZone: input.timezone ?? "UTC",
-        });
-    }
-    catch {
-        throw new app_error_1.AppError("Invalid IANA timezone", 400, "INVALID_RECURRENCE_TIMEZONE");
-    }
-    if (input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.WEEKLY) {
-        const days = input.daysOfWeek;
-        if (!Array.isArray(days) ||
-            days.length === 0 ||
-            days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) ||
-            new Set(days).size !== days.length) {
-            throw new app_error_1.AppError("Weekly recurrence requires unique daysOfWeek values from 0 to 6", 400, "INVALID_RECURRENCE_DAYS");
-        }
-        if (input.monthlyPattern != null ||
-            input.dayOfMonth != null) {
-            throw new app_error_1.AppError("Monthly recurrence fields cannot be used for weekly recurrence", 400, "INVALID_RECURRENCE_FIELDS");
-        }
-        return;
-    }
-    if (input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.DAILY) {
-        if ((input.daysOfWeek != null && input.daysOfWeek.length > 0) ||
-            input.monthlyPattern != null ||
-            input.dayOfMonth != null) {
-            throw new app_error_1.AppError("Daily recurrence cannot contain weekly or monthly fields", 400, "INVALID_RECURRENCE_FIELDS");
-        }
-        return;
-    }
-    if (input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.MONTHLY) {
-        if (!input.monthlyPattern ||
-            !Object.values(work_item_recurrence_entity_1.MonthlyPattern).includes(input.monthlyPattern)) {
-            throw new app_error_1.AppError("Monthly recurrence requires a valid monthlyPattern", 400, "INVALID_MONTHLY_PATTERN");
-        }
-        if (input.daysOfWeek != null &&
-            input.daysOfWeek.length > 0) {
-            throw new app_error_1.AppError("daysOfWeek cannot be used for monthly recurrence", 400, "INVALID_RECURRENCE_FIELDS");
-        }
-        if (input.monthlyPattern === work_item_recurrence_entity_1.MonthlyPattern.DAY_OF_MONTH) {
-            if (!Number.isInteger(input.dayOfMonth) ||
-                input.dayOfMonth < 1 ||
-                input.dayOfMonth > 31) {
-                throw new app_error_1.AppError("DAY_OF_MONTH requires dayOfMonth between 1 and 31", 400, "INVALID_DAY_OF_MONTH");
-            }
-        }
-        else if (input.dayOfMonth != null) {
-            throw new app_error_1.AppError("dayOfMonth is only valid with DAY_OF_MONTH", 400, "UNEXPECTED_DAY_OF_MONTH");
-        }
-    }
-}
 async function assertAccessibleProject(projectId, actor, manager = data_source_1.AppDataSource.manager) {
     const project = await manager
         .getRepository(project_entity_1.Project)
@@ -148,6 +92,7 @@ async function getAccessibleWorkItem(workItemId, actor) {
     const workItem = await data_source_1.AppDataSource
         .getRepository(work_item_entity_1.WorkItem)
         .createQueryBuilder("workItem")
+        .leftJoinAndSelect("workItem.label", "label")
         .innerJoin("workItem.project", "project")
         .leftJoin("project.memberships", "membership", "membership.userId = :userId", { userId: actor.id })
         .where("workItem.id = :workItemId", { workItemId })
@@ -268,9 +213,12 @@ async function validateAssignees(assignees, projectId, organizationId, manager =
 const createWorkItem = async (req, res) => {
     const actor = await getActiveActor(requireUserId(req));
     const body = req.body;
-    const { projectId, parentWorkItemId, type, title, description, priority = work_item_entity_1.WorkItemPriority.MEDIUM, status = work_item_entity_1.WorkItemStatus.BACKLOG, dueDate, assignees = [], recurrence, } = body;
+    const { projectId, sprintId, parentWorkItemId, labelId, labels, type, title, description, priority, status = work_item_entity_1.WorkItemStatus.BACKLOG, dueDate, assignees = [], recurrence, slaDeadline, } = body;
+    if (slaDeadline !== undefined) {
+        await (0, project_permission_1.authorizeProjectPermission)(req, "sla:manage");
+    }
     if (recurrence) {
-        validateRecurrence(recurrence);
+        (0, recurrence_service_1.validateRecurrence)(recurrence, type);
     }
     const result = await data_source_1.AppDataSource.transaction(async (manager) => {
         const project = await assertAccessibleProject(projectId, actor, manager);
@@ -287,21 +235,68 @@ const createWorkItem = async (req, res) => {
                 throw new app_error_1.AppError("Parent work item not found in this project", 404, "PARENT_WORK_ITEM_NOT_FOUND");
             }
         }
+        if (sprintId) {
+            const sprint = await manager.getRepository(sprint_entities_1.Sprint).findOne({
+                where: {
+                    id: sprintId,
+                    projectId: project.id,
+                },
+                select: { id: true },
+            });
+            if (!sprint) {
+                throw new app_error_1.AppError("Sprint not found in this project.", 400, "INVALID_SPRINT");
+            }
+        }
+        const targetLabelId = labelId || (Array.isArray(labels) && labels.length > 0 ? labels[0] : null);
+        let labelToAssign = null;
+        if (targetLabelId) {
+            labelToAssign = await manager.getRepository(project_label_entity_1.ProjectLabel).findOne({
+                where: { id: targetLabelId, projectId: project.id },
+            });
+            if (!labelToAssign) {
+                throw new app_error_1.AppError("Label not found in this project.", 400, "INVALID_LABEL");
+            }
+        }
         await validateAssignees(assignees, project.id, actor.organizationId, manager);
         const workItemRepository = manager.getRepository(work_item_entity_1.WorkItem);
         const workItem = workItemRepository.create({
             organizationId: actor.organizationId,
             projectId: project.id,
             createdById: actor.id,
+            sprintId: sprintId ?? null,
             parentWorkItemId: parentWorkItemId ?? null,
+            labelId: labelToAssign ? labelToAssign.id : null,
             type,
             title: title.trim(),
             description: description?.trim() || null,
-            priority,
+            priority: priority ?? null,
             status,
             dueDate: dueDate == null ? null : new Date(dueDate),
         });
         const savedWorkItem = await workItemRepository.save(workItem);
+        if (slaDeadline && !savedWorkItem.priority) {
+            throw new app_error_1.AppError("A priority is required to configure an SLA deadline", 400, "WORK_ITEM_PRIORITY_REQUIRED");
+        }
+        if (savedWorkItem.priority) {
+            const orgPolicy = await manager.getRepository(organization_sla_entity_1.OrganizationSla).findOne({
+                where: { organizationId: actor.organizationId },
+            });
+            savedWorkItem.slaDeadline = slaDeadline
+                ? new Date(slaDeadline)
+                : (0, sla_service_1.calculateSlaDeadline)(savedWorkItem.createdAt, savedWorkItem.priority, orgPolicy);
+            savedWorkItem.slaDeadlineIsCustom = Boolean(slaDeadline);
+            (0, sla_service_1.applySlaState)(savedWorkItem, new Date(), orgPolicy);
+            await workItemRepository.save(savedWorkItem);
+            await (0, sla_service_1.writeSlaAudit)(manager, savedWorkItem, actor.id, "sla_initialized", "Initialized SLA for work item", null, {
+                deadline: savedWorkItem.slaDeadline,
+                status: savedWorkItem.slaStatus,
+                custom: savedWorkItem.slaDeadlineIsCustom,
+            });
+        }
+        else {
+            clearSlaState(savedWorkItem);
+            await workItemRepository.save(savedWorkItem);
+        }
         if (assignees.length > 0) {
             const assignments = assignees.map((assignee) => manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).create({
                 workItemId: savedWorkItem.id,
@@ -316,10 +311,9 @@ const createWorkItem = async (req, res) => {
         }
         let savedRecurrence = null;
         if (recurrence) {
-            const timezone = recurrence.timezone ?? "UTC";
-            savedRecurrence = await manager
-                .getRepository(work_item_recurrence_entity_1.WorkItemRecurrence)
-                .save(manager.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence).create({
+            const recurrenceRepository = manager.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence);
+            const timezone = recurrence_service_1.DEFAULT_RECURRENCE_TIMEZONE;
+            const recurrenceRule = recurrenceRepository.create({
                 workItem: savedWorkItem,
                 frequency: recurrence.frequency,
                 interval: recurrence.interval ?? 1,
@@ -335,13 +329,18 @@ const createWorkItem = async (req, res) => {
                     : null,
                 startsOn: recurrence.startsOn,
                 endsOn: recurrence.endsOn ?? null,
-                // This is a UTC marker, not a timezone-aware local-midnight
-                // calculation. The recurrence worker must interpret startsOn
-                // using the stored timezone when calculating actual runs.
-                nextRunAt: new Date(`${recurrence.startsOn}T00:00:00.000Z`),
+                nextRunAt: null,
                 timezone,
+                timeOfDay: recurrence_service_1.RECURRENCE_TIME_OF_DAY,
+                weekdaysOnly: recurrence.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.DAILY &&
+                    Boolean(recurrence.weekdaysOnly),
                 isActive: true,
-            }));
+            });
+            // If today's 09:00 has passed, begin with the next eligible date instead
+            // of generating a stale occurrence tomorrow for today's date.
+            recurrenceRule.nextRunAt = (0, recurrence_service_1.getInitialOccurrenceRunAt)(recurrenceRule);
+            recurrenceRule.isActive = recurrenceRule.nextRunAt !== null;
+            savedRecurrence = await recurrenceRepository.save(recurrenceRule);
         }
         const assignments = await manager
             .getRepository(work_item_assignee_entity_1.WorkItemAssignee)
@@ -351,6 +350,8 @@ const createWorkItem = async (req, res) => {
         });
         return {
             workItem: savedWorkItem,
+            label: labelToAssign,
+            labels: labelToAssign ? [labelToAssign] : [],
             assignments,
             assigneeIds: assignments.map((assignee) => assignee.userId),
             assigneeId: assignments[0]?.userId || null,
@@ -358,16 +359,32 @@ const createWorkItem = async (req, res) => {
             recurrence: savedRecurrence,
         };
     });
+    // Notify newly assigned users after the work item transaction commits.
+    await Promise.all(result.assigneeIds
+        .filter((assigneeId) => assigneeId !== actor.id)
+        .map((assigneeId) => notification_service_1.notificationService.createNotification({
+        userId: assigneeId,
+        organizationId: actor.organizationId,
+        type: notification_entity_1.NotificationType.TASK_ASSIGNED,
+        title: "Task assigned to you",
+        message: `You have been assigned "${result.workItem.title}".`,
+        workItemId: result.workItem.id,
+        projectId: result.workItem.projectId,
+        link: `/tasks/${result.workItem.id}`,
+    })));
     res.status(201).json({
         success: true,
         message: "Work item created successfully",
         data: {
             ...result.workItem,
+            label: result.label,
+            labels: result.labels,
             assignments: result.assignments,
             assigneeIds: result.assigneeIds,
             assigneeId: result.assigneeId,
             assignees: result.assignees,
             recurrence: result.recurrence,
+            sla: (0, sla_service_1.getSlaSnapshot)(result.workItem),
         },
     });
 };
@@ -386,6 +403,7 @@ const getProjectWorkItems = async (req, res) => {
         .createQueryBuilder("workItem")
         .leftJoinAndSelect("workItem.assignments", "assignments")
         .leftJoinAndSelect("assignments.user", "assigneeUser")
+        .leftJoinAndSelect("workItem.label", "label")
         .leftJoinAndSelect("workItem.comments", "comments")
         .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
         .leftJoinAndSelect("workItem.children", "children")
@@ -405,6 +423,17 @@ const getProjectWorkItems = async (req, res) => {
         query.andWhere("workItem.type = :type", { type });
     }
     const [workItems, total] = await query.getManyAndCount();
+    for (const workItem of workItems) {
+        if (!workItem.priority) {
+            clearSlaState(workItem);
+            continue;
+        }
+        if (!workItem.slaDeadline) {
+            workItem.slaDeadline = (0, sla_service_1.calculateSlaDeadline)(workItem.createdAt, workItem.priority);
+            workItem.slaDeadlineIsCustom = false;
+        }
+        (0, sla_service_1.applySlaState)(workItem);
+    }
     res.status(200).json({
         success: true,
         message: "Project work items retrieved successfully",
@@ -426,6 +455,14 @@ const updateWorkItem = async (req, res) => {
     const workItemId = requireWorkItemId(req);
     const body = req.body;
     const workItem = await getAccessibleWorkItem(workItemId, actor);
+    const previousStatus = workItem.status;
+    const previousAssigneeIds = (await data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+        where: { workItemId: workItem.id },
+        select: { userId: true },
+    })).map((assignment) => assignment.userId);
+    if (body.slaDeadline !== undefined) {
+        await (0, project_permission_1.authorizeProjectPermission)(req, "sla:manage");
+    }
     if (body.parentWorkItemId !== undefined) {
         await validateParentWorkItem(body.parentWorkItemId, workItem.projectId, actor.organizationId, workItem.id);
     }
@@ -440,6 +477,20 @@ const updateWorkItem = async (req, res) => {
         newAssignees = body.assigneeId ? [{ userId: body.assigneeId }] : [];
     }
     const result = await data_source_1.AppDataSource.transaction(async (manager) => {
+        const previousSlaDeadline = workItem.slaDeadline;
+        const previousSlaStatus = workItem.slaStatus;
+        if (body.sprintId !== undefined && body.sprintId !== null) {
+            const sprint = await manager.getRepository(sprint_entities_1.Sprint).findOne({
+                where: {
+                    id: body.sprintId,
+                    projectId: workItem.projectId,
+                },
+                select: { id: true },
+            });
+            if (!sprint) {
+                throw new app_error_1.AppError("Sprint not found in this project.", 400, "INVALID_SPRINT");
+            }
+        }
         if (newAssignees !== undefined) {
             await validateAssignees(newAssignees, workItem.projectId, actor.organizationId, manager);
             await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).delete({
@@ -469,8 +520,19 @@ const updateWorkItem = async (req, res) => {
         if (body.description !== undefined) {
             workItem.description = body.description?.trim() || null;
         }
+        const orgPolicy = await manager.getRepository(organization_sla_entity_1.OrganizationSla).findOne({
+            where: { organizationId: actor.organizationId },
+        });
         if (body.priority !== undefined) {
-            workItem.priority = body.priority;
+            const previousPriority = workItem.priority;
+            workItem.priority = body.priority ?? null;
+            if (!workItem.priority) {
+                clearSlaState(workItem);
+            }
+            else if (previousPriority !== workItem.priority &&
+                !workItem.slaDeadlineIsCustom) {
+                workItem.slaDeadline = (0, sla_service_1.calculateSlaDeadline)(workItem.createdAt, workItem.priority, orgPolicy);
+            }
         }
         if (body.status !== undefined) {
             workItem.status = body.status;
@@ -479,26 +541,158 @@ const updateWorkItem = async (req, res) => {
             workItem.dueDate =
                 body.dueDate === null ? null : new Date(body.dueDate);
         }
+        if (body.slaDeadline !== undefined) {
+            if (body.slaDeadline && !workItem.priority) {
+                throw new app_error_1.AppError("A priority is required to configure an SLA deadline", 400, "WORK_ITEM_PRIORITY_REQUIRED");
+            }
+            workItem.slaDeadline = body.slaDeadline
+                ? new Date(body.slaDeadline)
+                : workItem.priority
+                    ? (0, sla_service_1.calculateSlaDeadline)(workItem.createdAt, workItem.priority, orgPolicy)
+                    : null;
+            workItem.slaDeadlineIsCustom = Boolean(body.slaDeadline);
+        }
         if (body.parentWorkItemId !== undefined) {
             workItem.parentWorkItemId = body.parentWorkItemId;
+        }
+        if (body.sprintId !== undefined) {
+            workItem.sprintId = body.sprintId;
+        }
+        let updatedLabel = null;
+        if (body.labelId !== undefined || body.labels !== undefined) {
+            const updateLabelId = body.labelId !== undefined
+                ? body.labelId
+                : (Array.isArray(body.labels) && body.labels.length > 0 ? body.labels[0] : null);
+            if (updateLabelId) {
+                updatedLabel = await manager.getRepository(project_label_entity_1.ProjectLabel).findOne({
+                    where: { id: updateLabelId, projectId: workItem.projectId },
+                });
+                if (!updatedLabel) {
+                    throw new app_error_1.AppError("Label not found in this project.", 400, "INVALID_LABEL");
+                }
+                workItem.labelId = updatedLabel.id;
+            }
+            else {
+                workItem.labelId = null;
+            }
         }
         const savedWorkItem = await manager
             .getRepository(work_item_entity_1.WorkItem)
             .save(workItem);
+        if (!savedWorkItem.priority) {
+            clearSlaState(savedWorkItem);
+        }
+        else {
+            if (!savedWorkItem.slaDeadline) {
+                savedWorkItem.slaDeadline = (0, sla_service_1.calculateSlaDeadline)(savedWorkItem.createdAt, savedWorkItem.priority, orgPolicy);
+                savedWorkItem.slaDeadlineIsCustom = false;
+            }
+            (0, sla_service_1.applySlaState)(savedWorkItem, new Date(), orgPolicy);
+        }
+        await manager.getRepository(work_item_entity_1.WorkItem).save(savedWorkItem);
+        if (previousSlaDeadline?.getTime() !== savedWorkItem.slaDeadline?.getTime()) {
+            await (0, sla_service_1.writeSlaAudit)(manager, savedWorkItem, actor.id, "sla_deadline_changed", "Changed SLA deadline", { deadline: previousSlaDeadline }, { deadline: savedWorkItem.slaDeadline });
+        }
+        if (previousSlaStatus !== savedWorkItem.slaStatus) {
+            await (0, sla_service_1.writeSlaAudit)(manager, savedWorkItem, actor.id, "sla_status_changed", "Changed SLA status", { status: previousSlaStatus }, { status: savedWorkItem.slaStatus });
+        }
         const assignments = await manager
             .getRepository(work_item_assignee_entity_1.WorkItemAssignee)
             .find({
             where: { workItemId: savedWorkItem.id },
             relations: { user: true },
         });
+        if (savedWorkItem.labelId && !updatedLabel) {
+            updatedLabel = await manager.getRepository(project_label_entity_1.ProjectLabel).findOne({
+                where: { id: savedWorkItem.labelId },
+            });
+        }
         return {
             ...savedWorkItem,
+            label: updatedLabel,
+            labels: updatedLabel ? [updatedLabel] : [],
             assignments,
             assigneeIds: assignments.map((a) => a.userId),
             assigneeId: assignments[0]?.userId || null,
             assignees: assignments.map((a) => a.user).filter(Boolean),
+            sla: (0, sla_service_1.getSlaSnapshot)(savedWorkItem),
         };
     });
+    const currentAssigneeIds = result.assigneeIds;
+    const previousAssigneeSet = new Set(previousAssigneeIds);
+    const currentAssigneeSet = new Set(currentAssigneeIds);
+    const newlyAssignedIds = currentAssigneeIds.filter((assigneeId) => !previousAssigneeSet.has(assigneeId));
+    const statusChanged = previousStatus !== result.status;
+    const completedNow = statusChanged && result.status === work_item_entity_1.WorkItemStatus.DONE;
+    const reopenedNow = statusChanged &&
+        previousStatus === work_item_entity_1.WorkItemStatus.DONE &&
+        result.status !== work_item_entity_1.WorkItemStatus.DONE;
+    // Notify newly added assignees, including additional assignees.
+    const assignmentNotifications = newlyAssignedIds
+        .filter((assigneeId) => assigneeId !== actor.id)
+        .map((assigneeId) => notification_service_1.notificationService.createNotification({
+        userId: assigneeId,
+        organizationId: actor.organizationId,
+        type: notification_entity_1.NotificationType.TASK_ASSIGNED,
+        title: "Task assigned to you",
+        message: `You have been assigned "${result.title}".`,
+        workItemId: result.id,
+        projectId: result.projectId,
+        link: `/tasks/${result.id}`,
+    }));
+    // Completion/reopening notifications go to the current assignees and creator.
+    const statusRecipients = new Set([
+        ...currentAssigneeIds,
+        result.createdById,
+    ]);
+    statusRecipients.delete(actor.id);
+    const statusNotifications = completedNow || reopenedNow
+        ? [...statusRecipients].map((userId) => notification_service_1.notificationService.createNotification({
+            userId,
+            organizationId: actor.organizationId,
+            type: completedNow
+                ? notification_entity_1.NotificationType.TASK_COMPLETED
+                : notification_entity_1.NotificationType.TASK_UPDATED,
+            title: completedNow ? "Task completed" : "Task reopened",
+            message: completedNow
+                ? `"${result.title}" has been marked as completed.`
+                : `"${result.title}" has been reopened.`,
+            workItemId: result.id,
+            projectId: result.projectId,
+            link: `/tasks/${result.id}`,
+        }))
+        : [];
+    // Notify existing assignees when task details change, without duplicating
+    // assignment or completion/reopening notifications for this update.
+    const taskDetailsChanged = body.title !== undefined ||
+        body.description !== undefined ||
+        body.priority !== undefined ||
+        body.dueDate !== undefined ||
+        body.sprintId !== undefined ||
+        body.parentWorkItemId !== undefined ||
+        body.type !== undefined ||
+        body.slaDeadline !== undefined;
+    const updateNotifications = taskDetailsChanged && !completedNow && !reopenedNow
+        ? currentAssigneeIds
+            .filter((assigneeId) => assigneeId !== actor.id &&
+            previousAssigneeSet.has(assigneeId) &&
+            currentAssigneeSet.has(assigneeId))
+            .map((userId) => notification_service_1.notificationService.createNotification({
+            userId,
+            organizationId: actor.organizationId,
+            type: notification_entity_1.NotificationType.TASK_UPDATED,
+            title: "Assigned task updated",
+            message: `"${result.title}" has been updated.`,
+            workItemId: result.id,
+            projectId: result.projectId,
+            link: `/tasks/${result.id}`,
+        }))
+        : [];
+    await Promise.all([
+        ...assignmentNotifications,
+        ...statusNotifications,
+        ...updateNotifications,
+    ]);
     res.status(200).json({
         success: true,
         message: "Work item updated successfully",
@@ -506,6 +700,175 @@ const updateWorkItem = async (req, res) => {
     });
 };
 exports.updateWorkItem = updateWorkItem;
+const escalateWorkItem = async (req, res) => {
+    const actor = await getActiveActor(requireUserId(req));
+    const workItemId = requireWorkItemId(req);
+    const reason = req.body?.reason === undefined || req.body.reason === null
+        ? null
+        : String(req.body.reason).trim();
+    if (reason && reason.length > 500) {
+        throw new app_error_1.AppError("Escalation reason must be 500 characters or fewer", 400, "INVALID_ESCALATION_REASON");
+    }
+    const result = await data_source_1.AppDataSource.transaction(async (manager) => {
+        const workItem = await manager
+            .getRepository(work_item_entity_1.WorkItem)
+            .createQueryBuilder("workItem")
+            .where("workItem.id = :workItemId", { workItemId })
+            .andWhere("workItem.organizationId = :organizationId", {
+            organizationId: actor.organizationId,
+        })
+            .setLock("pessimistic_write")
+            .getOne();
+        if (!workItem) {
+            throw new app_error_1.AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
+        }
+        await assertAccessibleProject(workItem.projectId, actor, manager);
+        if (!workItem.priority) {
+            throw new app_error_1.AppError("Cannot escalate a work item without a priority", 400, "WORK_ITEM_PRIORITY_REQUIRED");
+        }
+        if (workItem.escalatedAt) {
+            (0, sla_service_1.applySlaState)(workItem);
+            return { workItem, alreadyEscalated: true };
+        }
+        const previous = {
+            status: workItem.slaStatus,
+            escalatedAt: workItem.escalatedAt,
+            reason: workItem.escalationReason,
+        };
+        await (0, sla_service_1.ensureSlaData)(workItem, manager);
+        workItem.escalatedAt = new Date();
+        workItem.escalatedById = actor.id;
+        workItem.escalationReason = reason;
+        workItem.slaStatus = work_item_entity_1.SlaStatus.ESCALATED;
+        const saved = await manager.getRepository(work_item_entity_1.WorkItem).save(workItem);
+        await (0, sla_service_1.writeSlaAudit)(manager, saved, actor.id, "escalated", "Escalated work item", previous, { status: saved.slaStatus, escalatedAt: saved.escalatedAt, reason });
+        return { workItem: saved, alreadyEscalated: false };
+    });
+    if (!result.alreadyEscalated) {
+        const assignments = await data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+            where: { workItemId: result.workItem.id },
+            select: { userId: true },
+        });
+        const recipients = new Set([
+            ...assignments.map((assignment) => assignment.userId),
+            result.workItem.createdById,
+        ]);
+        recipients.delete(actor.id);
+        await Promise.all([...recipients].map((userId) => notification_service_1.notificationService.createNotification({
+            userId,
+            organizationId: actor.organizationId,
+            type: notification_entity_1.NotificationType.SLA_ESCALATED,
+            title: "SLA escalation",
+            message: `"${result.workItem.title}" has been escalated because of its SLA status.`,
+            workItemId: result.workItem.id,
+            projectId: result.workItem.projectId,
+            link: `/tasks/${result.workItem.id}`,
+            metadata: {
+                reason: result.workItem.escalationReason,
+                escalatedAt: result.workItem.escalatedAt?.toISOString() ?? null,
+            },
+        })));
+    }
+    res.status(200).json({
+        success: true,
+        message: result.alreadyEscalated ? "Work item is already escalated" : "Work item escalated successfully",
+        data: { ...result.workItem, sla: (0, sla_service_1.getSlaSnapshot)(result.workItem), alreadyEscalated: result.alreadyEscalated },
+    });
+};
+exports.escalateWorkItem = escalateWorkItem;
+const getWorkItemSla = async (req, res) => {
+    const actor = await getActiveActor(requireUserId(req));
+    const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+    if (!workItem.priority) {
+        clearSlaState(workItem);
+    }
+    else {
+        (0, sla_service_1.applySlaState)(workItem);
+    }
+    res.status(200).json({
+        success: true,
+        data: {
+            workItemId: workItem.id,
+            projectId: workItem.projectId,
+            sla: (0, sla_service_1.getSlaSnapshot)(workItem),
+        },
+    });
+};
+exports.getWorkItemSla = getWorkItemSla;
+const getWorkItemSlaAudit = async (req, res) => {
+    const actor = await getActiveActor(requireUserId(req));
+    const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+    const logs = await data_source_1.AppDataSource.getRepository(audit_log_entity_1.AuditLog).find({
+        where: {
+            organizationId: actor.organizationId,
+            projectId: workItem.projectId,
+            entityType: "work_item",
+            entityId: workItem.id,
+        },
+        relations: { user: true },
+        order: { createdAt: "DESC" },
+        take: 150,
+    });
+    res.status(200).json({
+        success: true,
+        data: logs
+            .filter((log) => log.action === "escalated" || log.action.startsWith("sla_"))
+            .map((log) => ({
+            id: log.id,
+            action: log.action,
+            description: log.description,
+            previousState: log.previousState,
+            newState: log.newState,
+            actorId: log.userId,
+            actorName: log.user?.fullName || log.user?.email || "Unknown user",
+            createdAt: log.createdAt,
+        })),
+    });
+};
+exports.getWorkItemSlaAudit = getWorkItemSlaAudit;
+const resolveWorkItemEscalation = async (req, res) => {
+    const actor = await getActiveActor(requireUserId(req));
+    const workItemId = requireWorkItemId(req);
+    const workItem = await data_source_1.AppDataSource.transaction(async (manager) => {
+        const item = await manager
+            .getRepository(work_item_entity_1.WorkItem)
+            .createQueryBuilder("workItem")
+            .where("workItem.id = :workItemId", { workItemId })
+            .andWhere("workItem.organizationId = :organizationId", {
+            organizationId: actor.organizationId,
+        })
+            .setLock("pessimistic_write")
+            .getOne();
+        if (!item) {
+            throw new app_error_1.AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
+        }
+        await assertAccessibleProject(item.projectId, actor, manager);
+        const previous = {
+            status: item.slaStatus,
+            escalatedAt: item.escalatedAt,
+            reason: item.escalationReason,
+        };
+        item.escalatedAt = null;
+        item.escalatedById = null;
+        item.escalationReason = null;
+        item.slaResolvedAt = new Date();
+        if (!item.priority) {
+            clearSlaState(item);
+        }
+        else {
+            (0, sla_service_1.applySlaState)(item);
+        }
+        const saved = await manager.getRepository(work_item_entity_1.WorkItem).save(item);
+        await (0, sla_service_1.writeSlaAudit)(manager, saved, actor.id, "sla_escalation_resolved", "Resolved work item escalation", previous, { status: saved.slaStatus, resolvedAt: saved.slaResolvedAt });
+        return saved;
+    });
+    res.status(200).json({
+        success: true,
+        message: "Work item escalation resolved successfully",
+        data: { ...workItem, sla: (0, sla_service_1.getSlaSnapshot)(workItem) },
+    });
+};
+exports.resolveWorkItemEscalation = resolveWorkItemEscalation;
 // DELETE WORK ITEM
 const deleteWorkItem = async (req, res) => {
     const actor = await getActiveActor(requireUserId(req));

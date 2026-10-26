@@ -55,6 +55,10 @@ exports.createWorkItemSchema = joi_1.default.object({
     projectId: joi_1.default.string()
         .guid({ version: ["uuidv4"] })
         .required(),
+    sprintId: joi_1.default.string()
+        .guid({ version: ["uuidv4", "uuidv5"] })
+        .allow(null)
+        .optional(),
     parentWorkItemId: joi_1.default.string()
         .guid({ version: ["uuidv4"] })
         .allow(null)
@@ -80,10 +84,23 @@ exports.createWorkItemSchema = joi_1.default.object({
         .iso()
         .allow(null)
         .optional(),
+    slaDeadline: joi_1.default.date()
+        .iso()
+        .min("now")
+        .allow(null)
+        .optional(),
     assignees: joi_1.default.array()
         .items(assigneeSchema)
         .unique("userId")
         .default([]),
+    labelId: joi_1.default.string()
+        .guid({ version: ["uuidv4"] })
+        .allow(null, "")
+        .optional(),
+    labels: joi_1.default.array()
+        .items(joi_1.default.string().guid({ version: ["uuidv4"] }))
+        .allow(null)
+        .optional(),
     recurrence: recurrenceSchema.allow(null).optional(),
 })
     .unknown(false);
@@ -104,16 +121,23 @@ const validateCreateWorkItem = (req, res, next) => {
 };
 exports.validateCreateWorkItem = validateCreateWorkItem;
 const updateWorkItemSchema = joi_1.default.object({
+    sprintId: joi_1.default.string()
+        .guid({ version: ["uuidv4", "uuidv5"] })
+        .allow(null)
+        .optional(),
     title: joi_1.default.string().trim().min(1).max(255).optional(),
     description: joi_1.default.string().allow("", null).optional(),
     type: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemType)).optional(),
     priority: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemPriority)).optional(),
     status: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemStatus)).optional(),
     dueDate: joi_1.default.date().iso().allow(null).optional(),
+    slaDeadline: joi_1.default.date().iso().min("now").allow(null).optional(),
     parentWorkItemId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
     assignees: joi_1.default.array().items(assigneeSchema).unique("userId").allow(null).optional(),
     assigneeId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
     assigneeIds: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
+    labelId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
+    labels: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
 }).min(1).unknown(false);
 const validateUpdateWorkItem = (req, _res, next) => {
     const { error, value } = updateWorkItemSchema.validate(req.body, {

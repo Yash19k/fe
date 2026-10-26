@@ -372,7 +372,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }
 
   return (
-    <div className="w-full max-w-xl bg-surface border-l border-border h-full shadow-overlay flex flex-col animate-in slide-in-from-right duration-200">
+    <div className="w-full sm:w-[540px] md:w-[620px] lg:w-[48vw] lg:max-w-[850px] xl:w-[46vw] xl:max-w-[920px] bg-surface border-l border-border h-full shadow-overlay flex flex-col animate-in slide-in-from-right duration-200">
       {/* Drawer Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-elevated flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -674,7 +674,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <span className="text-[11px] text-text-muted block mb-1.5 font-medium">
                   Associated Work Items ({childWorkItems.length})
                 </span>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
+                <div className="space-y-1">
                   {childWorkItems.map((child) => (
                     <div
                       key={child.id}
@@ -839,7 +839,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
         {/* Tabbed Secondary Sections */}
         <div>
-          <div className="flex items-center gap-1 border-b border-border pb-1">
+          <div className="flex items-center gap-1 border-b border-border pb-1 overflow-x-auto flex-nowrap scrollbar-none">
             {[
               ...(currentType !== WORK_ITEM_TYPES.SUBTASK
                 ? [{ id: 'subtasks', label: `Subtasks (${completedSubtasks}/${subtasksList.length})`, icon: CheckCircle2 }]
@@ -854,7 +854,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
                     activeTab === t.id
                       ? 'bg-surface-active text-text-primary font-semibold'
                       : 'text-text-muted hover:text-text-primary hover:bg-surface-hover'
@@ -1179,7 +1179,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
           {/* Comments Tab */}
           {activeTab === 'comments' && (
             <div className="pt-3 space-y-3 text-xs">
-              <div className="space-y-2 max-h-52 overflow-y-auto">
+              <div className="space-y-2">
                 {displayedComments.length === 0 ? (
                   <p className="text-text-muted italic py-2">No comments posted yet.</p>
                 ) : (
@@ -1247,7 +1247,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               No recorded history for this work item yet. Changes made and saved will appear here.
             </div>
           ) : (
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-2">
               {taskHistory.map((item) => (
                 <div
                   key={item.id}

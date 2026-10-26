@@ -90,9 +90,17 @@ __decorate([
     __metadata("design:type", Object)
 ], WorkItemRecurrence.prototype, "nextRunAt", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: "varchar", length: 100, default: "UTC" }),
+    (0, typeorm_1.Column)({ type: "varchar", length: 100, default: "Asia/Kolkata" }),
     __metadata("design:type", String)
 ], WorkItemRecurrence.prototype, "timezone", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "time_of_day", type: "varchar", length: 5, default: "09:00" }),
+    __metadata("design:type", String)
+], WorkItemRecurrence.prototype, "timeOfDay", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "weekdays_only", type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], WorkItemRecurrence.prototype, "weekdaysOnly", void 0);
 __decorate([
     (0, typeorm_1.Column)({ name: "is_active", type: "boolean", default: true }),
     __metadata("design:type", Boolean)

@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerOrganization = registerOrganization;
 exports.addOrganizationMembers = addOrganizationMembers;
@@ -45,19 +42,21 @@ const bcrypt = __importStar(require("bcrypt"));
 const data_source_1 = require("../config/data.source");
 const user_entity_1 = require("../entities/user.entity");
 const organization_entity_1 = require("../entities/organization.entity");
+const organization_sla_entity_1 = require("../entities/organization.sla.entity");
 const project_member_entity_1 = require("../entities/project.member.entity");
 const project_entity_1 = require("../entities/project.entity");
 const user_validator_1 = require("../validations/user.validator");
 const auth_token_1 = require("../utils/auth.token");
-const joi_1 = __importDefault(require("joi"));
 const user_session_entity_1 = require("../entities/user.session.entity");
 const app_error_1 = require("../errors/app.error");
-const invitedMemberSchema = joi_1.default.array().items(joi_1.default.object({
-    email: joi_1.default.string().email().required(),
-    role: joi_1.default.string()
-        .valid(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE)
-        .default(user_entity_1.UserRole.TEAMMATE),
-}));
+// const invitedMemberSchema = Joi.array().items(
+//   Joi.object({
+//     email: Joi.string().email().required(),
+//     role: Joi.string()
+//       .valid(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAMMATE)
+//       .default(UserRole.TEAMMATE),
+//   })
+// );
 const userRepository = data_source_1.AppDataSource.getRepository(user_entity_1.User);
 async function registerOrganization(req, res, next) {
     const { error, value } = user_validator_1.onboardingSchema.validate(req.body, {
@@ -96,6 +95,14 @@ async function registerOrganization(req, res, next) {
                 passwordHash,
                 role: user_entity_1.UserRole.ADMIN,
                 status: user_entity_1.UserStatus.ACTIVE,
+            });
+            await m.save(organization_sla_entity_1.OrganizationSla, {
+                organizationId: org.id,
+                urgentHours: 4,
+                highHours: 8,
+                mediumHours: 24,
+                lowHours: 72,
+                escalateHours: 8,
             });
             const { rawRefreshToken, tokenHash, refreshExpiry } = (0, auth_token_1.generateRefreshToken)();
             const uses = await m.save(user_session_entity_1.UserSession, {
@@ -153,110 +160,58 @@ async function registerOrganization(req, res, next) {
         return next(err);
     }
 }
-// import { Request, Response, NextFunction } from "express";
-const typeorm_1 = require("typeorm");
+const member_invitation_service_1 = require("../services/member-invitation.service");
 async function addOrganizationMembers(req, res, next) {
-    const { error, value } = user_validator_1.invitedMembersSchema.validate(req.body, {
-        abortEarly: false,
-        stripUnknown: true,
-    });
-    if (error) {
-        return res.status(400).json({
-            message: "Validation failed",
-            errors: error.details.map((detail) => ({
-                field: detail.path.join("."),
-                message: detail.message,
-            })),
-        });
-    }
-    const authUser = req.user;
-    if (!authUser) {
-        return res.status(401).json({
-            message: "Authentication required",
-        });
-    }
-    if (authUser.role !== user_entity_1.UserRole.ADMIN) {
-        return res.status(403).json({
-            message: "Only organization admins can add members",
-        });
-    }
-    const organizationId = authUser.organizationId;
-    if (!organizationId) {
-        return res.status(403).json({
-            message: "Admin must belong to an organization",
-        });
-    }
-    const members = value.map((member) => ({
-        email: member.email.trim().toLowerCase(),
-        role: member.role,
-    }));
-    // Prevent duplicate emails that differ only by capitalization.
-    const emails = members.map((member) => member.email);
-    if (new Set(emails).size !== emails.length) {
-        return res.status(400).json({
-            message: "Duplicate email addresses are not allowed",
-        });
-    }
     try {
-        const result = await data_source_1.AppDataSource.transaction(async (manager) => {
-            const added = [];
-            const failed = [];
-            for (const item of members) {
-                const existingUser = await manager.findOne(user_entity_1.User, {
-                    where: { email: item.email },
-                });
-                if (!existingUser) {
-                    failed.push({
-                        email: item.email,
-                        reason: "User does not exist",
-                    });
-                    continue;
-                }
-                if (existingUser.organizationId === authUser.organizationId) {
-                    failed.push({
-                        email: item.email,
-                        reason: "User already belongs to this organization",
-                    });
-                    continue;
-                }
-                if (existingUser.organizationId) {
-                    failed.push({
-                        email: item.email,
-                        reason: "User already belongs to another organization",
-                    });
-                    continue;
-                }
-                existingUser.organizationId = organizationId;
-                existingUser.role = item.role;
-                const savedUser = await manager.save(user_entity_1.User, existingUser);
-                added.push({
-                    userId: savedUser.id,
-                    email: savedUser.email,
-                    role: savedUser.role,
-                });
-            }
-            return { added, failed };
+        const { error, value } = user_validator_1.invitedMembersSchema.validate(req.body, {
+            abortEarly: false,
+            stripUnknown: true,
         });
-        return res.status(200).json({
-            message: "Member processing completed",
-            data: {
-                added: result.added,
-                failed: result.failed,
-                totalAdded: result.added.length,
-                totalFailed: result.failed.length,
-            },
+        if (error) {
+            return res.status(400).json({
+                message: "Validation failed",
+                errors: error.details.map((detail) => ({
+                    field: detail.path.join("."),
+                    message: detail.message,
+                })),
+            });
+        }
+        const authUser = req.user;
+        if (!authUser) {
+            return res.status(401).json({
+                message: "Authentication required",
+            });
+        }
+        if (authUser.role !== user_entity_1.UserRole.ADMIN) {
+            return res.status(403).json({
+                message: "Only organization admins can add members",
+            });
+        }
+        if (!authUser.organizationId) {
+            return res.status(403).json({
+                message: "Admin must belong to an organization",
+            });
+        }
+        const members = value.members.map((member) => ({
+            email: member.email.trim().toLowerCase(),
+            role: member.role,
+        }));
+        // The invitation service supports MANAGER and TEAMMATE only.
+        if (members.some((member) => ![user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE].includes(member.role))) {
+            return res.status(400).json({
+                message: "Invitations can only assign MANAGER or TEAMMATE roles",
+            });
+        }
+        const result = await (0, member_invitation_service_1.inviteOrganizationMembers)(authUser.organizationId, members);
+        const emailFailures = result.invitations.filter((invitation) => !invitation.emailSent);
+        return res.status(emailFailures.length ? 207 : 201).json({
+            success: emailFailures.length === 0,
+            message: result.message,
+            data: result.invitations,
         });
     }
-    catch (err) {
-        if (err instanceof typeorm_1.QueryFailedError) {
-            const dbError = err.driverError;
-            if (dbError.code === "23505") {
-                return res.status(409).json({
-                    message: "A unique constraint was violated",
-                });
-            }
-        }
-        return next(err);
+    catch (error) {
+        return next(error);
     }
 }
 async function getOrganizationMembers(req, res) {

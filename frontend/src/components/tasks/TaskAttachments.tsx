@@ -22,10 +22,34 @@ import {
 export interface TaskAttachmentsProps {
   attachments?: TaskAttachment[];
   onChange: (attachments: TaskAttachment[]) => void;
+  onFilesChange?: (files: File[]) => void;
   disabled?: boolean;
 }
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB limit
+const MAX_FILES = 5;
+
+const allowedFileTypes = new Map<string, Set<string>>([
+  ['.jpg', new Set(['image/jpeg'])],
+  ['.jpeg', new Set(['image/jpeg'])],
+  ['.png', new Set(['image/png'])],
+  ['.webp', new Set(['image/webp'])],
+  ['.gif', new Set(['image/gif'])],
+  ['.mp4', new Set(['video/mp4'])],
+  ['.webm', new Set(['video/webm'])],
+  ['.pdf', new Set(['application/pdf'])],
+  ['.txt', new Set(['text/plain'])],
+  ['.doc', new Set(['application/msword'])],
+  [
+    '.docx',
+    new Set(['application/vnd.openxmlformats-officedocument.wordprocessingml.document']),
+  ],
+  ['.xls', new Set(['application/vnd.ms-excel'])],
+  [
+    '.xlsx',
+    new Set(['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']),
+  ],
+]);
 
 function isImageFile(type?: string | null, name?: string | null): boolean {
   const lowerType = (type || '').toLowerCase();
@@ -57,6 +81,7 @@ function isPdfFile(type?: string | null, name?: string | null): boolean {
 export function TaskAttachments({
   attachments = [],
   onChange,
+  onFilesChange,
   disabled = false,
 }: TaskAttachmentsProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -65,6 +90,14 @@ export function TaskAttachments({
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Keep original File objects separate from display metadata and preview URLs.
+  const selectedFilesRef = useRef<Map<string, File>>(new Map());
+  const objectUrlsRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => () => {
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrlsRef.current.clear();
+  }, []);
 
   // Restore/generate Object URLs from IndexedDB for attachments on mount/change
   useEffect(() => {
@@ -178,24 +211,49 @@ export function TaskAttachments({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (selectedFilesRef.current.size + files.length > MAX_FILES) {
+      setErrorMessage(`A maximum of ${MAX_FILES} attachments can be selected.`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     const newAttachments: TaskAttachment[] = [];
     const newUrls: Record<string, string> = {};
+    let selectionError: string | null = null;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-
-      // Validate size
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        setErrorMessage(
-          `"${file.name}" (${formatFileSize(file.size)}) exceeds the maximum 25 MB limit.`
-        );
+      const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+      const acceptedMimeTypes = allowedFileTypes.get(extension);
+      if (!acceptedMimeTypes?.has(file.type)) {
+        selectionError = `"${file.name}" is not a supported attachment type.`;
         continue;
       }
 
-      const id = `att-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+      // Validate size
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        selectionError =
+          `"${file.name}" (${formatFileSize(file.size)}) exceeds the maximum 25 MB limit.`;
+        continue;
+      }
+
+      const duplicate = Array.from(selectedFilesRef.current.values()).some(
+        (selectedFile) =>
+          selectedFile.name === file.name &&
+          selectedFile.size === file.size &&
+          selectedFile.lastModified === file.lastModified,
+      );
+      if (duplicate) {
+        selectionError = `"${file.name}" is already selected.`;
+        continue;
+      }
+
+      const id = `att-${crypto.randomUUID()}`;
       try {
         await saveMediaBlob(id, file);
+        selectedFilesRef.current.set(id, file);
         const objectUrl = URL.createObjectURL(file);
+        objectUrlsRef.current.set(id, objectUrl);
         newUrls[id] = objectUrl;
 
         newAttachments.push({
@@ -209,13 +267,17 @@ export function TaskAttachments({
         });
       } catch (err) {
         console.warn('Failed to store attachment:', err);
-        setErrorMessage(`Could not process "${file.name}".`);
+        selectionError = `Could not process "${file.name}".`;
       }
     }
 
+    setErrorMessage(selectionError);
+
     if (newAttachments.length > 0) {
       setPreviewUrls((prev) => ({ ...prev, ...newUrls }));
-      onChange([...attachments, ...newAttachments]);
+      const nextAttachments = [...attachments, ...newAttachments];
+      onChange(nextAttachments);
+      onFilesChange?.(Array.from(selectedFilesRef.current.values()));
     }
 
     // Reset native input so user can re-select the same file if needed
@@ -227,6 +289,8 @@ export function TaskAttachments({
   async function handleRemove(attId: string, e: React.MouseEvent) {
     e.stopPropagation();
     const target = attachments.find((a) => a.id === attId);
+    selectedFilesRef.current.delete(attId);
+    onFilesChange?.(Array.from(selectedFilesRef.current.values()));
     if (target?.blobKey) {
       await deleteMediaBlob(target.blobKey);
     }
@@ -237,6 +301,7 @@ export function TaskAttachments({
         // ignore
       }
     }
+    objectUrlsRef.current.delete(attId);
 
     setPreviewUrls((prev) => {
       const copy = { ...prev };
@@ -277,7 +342,7 @@ export function TaskAttachments({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*,application/pdf,.pdf,.doc,.docx,.txt"
+        accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.pdf,.txt,.doc,.docx,.xls,.xlsx"
         multiple
         onChange={handleFileSelect}
         className="hidden"

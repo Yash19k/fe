@@ -9,13 +9,14 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WorkItem = exports.WorkItemPriority = exports.WorkItemStatus = exports.WorkItemType = void 0;
+exports.WorkItem = exports.SlaStatus = exports.WorkItemPriority = exports.WorkItemStatus = exports.WorkItemType = void 0;
 const typeorm_1 = require("typeorm");
 const project_entity_1 = require("./project.entity");
 const user_entity_1 = require("./user.entity");
 const work_item_assignee_entity_1 = require("./work.item-assignee.entity");
 const sprint_entities_1 = require("./sprint.entities");
 const work_item_attachment_entity_1 = require("./work.item.attachment.entity");
+const project_label_entity_1 = require("./project.label.entity");
 var WorkItemType;
 (function (WorkItemType) {
     WorkItemType["EPIC"] = "EPIC";
@@ -41,6 +42,14 @@ var WorkItemPriority;
     WorkItemPriority["HIGH"] = "HIGH";
     WorkItemPriority["URGENT"] = "URGENT";
 })(WorkItemPriority || (exports.WorkItemPriority = WorkItemPriority = {}));
+var SlaStatus;
+(function (SlaStatus) {
+    SlaStatus["ON_TRACK"] = "ON_TRACK";
+    SlaStatus["AT_RISK"] = "AT_RISK";
+    SlaStatus["BREACHED"] = "BREACHED";
+    SlaStatus["ESCALATED"] = "ESCALATED";
+    SlaStatus["RESOLVED"] = "RESOLVED";
+})(SlaStatus || (exports.SlaStatus = SlaStatus = {}));
 let WorkItem = class WorkItem {
 };
 exports.WorkItem = WorkItem;
@@ -98,9 +107,9 @@ __decorate([
         type: "enum",
         enum: WorkItemPriority,
         enumName: "work_items_priority_enum",
-        default: WorkItemPriority.MEDIUM,
+        nullable: true,
     }),
-    __metadata("design:type", String)
+    __metadata("design:type", Object)
 ], WorkItem.prototype, "priority", void 0);
 __decorate([
     (0, typeorm_1.Column)({
@@ -110,6 +119,48 @@ __decorate([
     }),
     __metadata("design:type", Object)
 ], WorkItem.prototype, "dueDate", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: "sla_deadline",
+        type: "timestamptz",
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "slaDeadline", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: "sla_status",
+        type: "enum",
+        enum: SlaStatus,
+        enumName: "work_items_sla_status_enum",
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "slaStatus", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "sla_deadline_is_custom", type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], WorkItem.prototype, "slaDeadlineIsCustom", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "escalated_at", type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "escalatedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "escalated_by_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "escalatedById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "escalation_reason", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "escalationReason", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "sla_breached_at", type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "slaBreachedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "sla_resolved_at", type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "slaResolvedAt", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)({ name: "created_at", type: "timestamptz" }),
     __metadata("design:type", Date)
@@ -134,6 +185,11 @@ __decorate([
     (0, typeorm_1.JoinColumn)({ name: "created_by_id" }),
     __metadata("design:type", user_entity_1.User)
 ], WorkItem.prototype, "createdBy", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { nullable: true, onDelete: "SET NULL" }),
+    (0, typeorm_1.JoinColumn)({ name: "escalated_by_id" }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "escalatedBy", void 0);
 __decorate([
     (0, typeorm_1.ManyToOne)(() => WorkItem, (workItem) => workItem.children, {
         nullable: true,
@@ -167,6 +223,22 @@ __decorate([
     __metadata("design:type", Object)
 ], WorkItem.prototype, "sprint", void 0);
 __decorate([
+    (0, typeorm_1.Column)({
+        name: "label_id",
+        type: "uuid",
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "labelId", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => project_label_entity_1.ProjectLabel, (projectLabel) => projectLabel.workItems, {
+        nullable: true,
+        onDelete: "SET NULL",
+    }),
+    (0, typeorm_1.JoinColumn)({ name: "label_id" }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "label", void 0);
+__decorate([
     (0, typeorm_1.OneToMany)(() => work_item_attachment_entity_1.WorkItemAttachment, (attachment) => attachment.workItem),
     __metadata("design:type", Array)
 ], WorkItem.prototype, "attachments", void 0);
@@ -189,5 +261,6 @@ exports.WorkItem = WorkItem = __decorate([
     (0, typeorm_1.Index)("IDX_work_items_created_by_id", ["createdById"]),
     (0, typeorm_1.Index)("IDX_work_items_parent_id", ["parentWorkItemId"]),
     (0, typeorm_1.Index)("IDX_work_items_project_status", ["projectId", "status"]),
-    (0, typeorm_1.Index)("IDX_work_items_project_type", ["projectId", "type"])
+    (0, typeorm_1.Index)("IDX_work_items_project_type", ["projectId", "type"]),
+    (0, typeorm_1.Index)("IDX_work_items_sla_deadline_status", ["slaDeadline", "slaStatus"])
 ], WorkItem);

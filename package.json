@@ -1,0 +1,13 @@
+{
+  "name": "taskflow-workspace",
+  "private": true,
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "typecheck": "pnpm --dir backend typecheck && pnpm --dir frontend typecheck",
+    "build": "pnpm --dir backend build && pnpm --dir frontend build",
+    "test": "pnpm --dir backend test && pnpm --dir frontend test",
+    "lint": "pnpm --dir frontend lint",
+    "dev:backend": "pnpm --dir backend dev",
+    "dev:frontend": "pnpm --dir frontend dev"
+  }
+}

@@ -12,6 +12,7 @@ import {
   MonthlyPattern,
 } from "../entities/work.item.recurrence.entity";
 import { AppError } from "../errors/app.error";
+import { DEFAULT_RECURRENCE_TIMEZONE } from "../services/recurrence.service";
 
 
 const assigneeSchema = Joi.object({
@@ -62,7 +63,8 @@ const recurrenceSchema = Joi.object({
   dayOfMonth: Joi.number().integer().min(1).max(31).allow(null).optional(),
   startsOn: dateOnlySchema.required(),
   endsOn: dateOnlySchema.allow(null).optional(),
-  timezone: Joi.string().trim().max(100).default("UTC"),
+  timezone: Joi.string().trim().max(100).default(DEFAULT_RECURRENCE_TIMEZONE),
+  weekdaysOnly: Joi.boolean().default(false),
 }).unknown(false);
 
 export const createWorkItemSchema = Joi.object({
@@ -96,7 +98,8 @@ export const createWorkItemSchema = Joi.object({
 
   priority: Joi.string()
     .valid(...Object.values(WorkItemPriority))
-    .default(WorkItemPriority.MEDIUM),
+    .allow(null)
+    .optional(),
 
   status: Joi.string()
     .valid(...Object.values(WorkItemStatus))
@@ -116,6 +119,16 @@ export const createWorkItemSchema = Joi.object({
     .items(assigneeSchema)
     .unique("userId")
     .default([]),
+
+  labelId: Joi.string()
+    .guid({ version: ["uuidv4"] })
+    .allow(null, "")
+    .optional(),
+
+  labels: Joi.array()
+    .items(Joi.string().guid({ version: ["uuidv4"] }))
+    .allow(null)
+    .optional(),
 
   recurrence: recurrenceSchema.allow(null).optional(),
 })
@@ -164,7 +177,84 @@ const updateWorkItemSchema = Joi.object({
   assignees: Joi.array().items(assigneeSchema).unique("userId").allow(null).optional(),
   assigneeId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
   assigneeIds: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
+  labelId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
+  labels: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
 }).min(1).unknown(false);
+
+const workItemIdParamsSchema = Joi.object({
+  workItemId: Joi.string()
+    .guid({ version: ["uuidv4"] })
+    .required(),
+}).unknown(false);
+
+const dependencyParamsSchema = Joi.object({
+  workItemId: Joi.string()
+    .guid({ version: ["uuidv4"] })
+    .required(),
+  depId: Joi.string()
+    .guid({ version: ["uuidv4"] })
+    .required(),
+}).unknown(false);
+
+const validateParams = (
+  schema: Joi.ObjectSchema,
+  req: Request,
+  next: NextFunction,
+): void => {
+  const { error, value } = schema.validate(req.params, {
+    abortEarly: false,
+    convert: true,
+  });
+
+  if (error) {
+    throw new AppError(
+      error.details.map((detail) => detail.message).join(", "),
+      400,
+      "INVALID_WORK_ITEM_ID",
+    );
+  }
+
+  req.params = value;
+  next();
+};
+
+export const validateWorkItemId = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void => validateParams(workItemIdParamsSchema, req, next);
+
+export const validateWorkItemDependencyParams = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void => validateParams(dependencyParamsSchema, req, next);
+
+export const validateWorkItemDependencyBody = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void => {
+  const { error, value } = Joi.object({
+    dependsOnWorkItemId: Joi.string()
+      .guid({ version: ["uuidv4"] })
+      .required(),
+  }).unknown(false).validate(req.body, {
+    abortEarly: false,
+    convert: true,
+  });
+
+  if (error) {
+    throw new AppError(
+      error.details.map((detail) => detail.message).join(", "),
+      400,
+      "INVALID_WORK_ITEM_ID",
+    );
+  }
+
+  req.body = value;
+  next();
+};
 
 export const validateUpdateWorkItem = (
   req: Request,

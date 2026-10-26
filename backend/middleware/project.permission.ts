@@ -115,9 +115,14 @@ export const authorizeProjectPermission = async (
         where: { id: String(req.params.workItemId) },
         select: { projectId: true },
       });
-      if (workItem) {
-        projectId = workItem.projectId;
+      if (!workItem) {
+        throw new AppError(
+          "Work item not found.",
+          404,
+          "WORK_ITEM_NOT_FOUND",
+        );
       }
+      projectId = workItem.projectId;
     }
 
     if (!userId) {

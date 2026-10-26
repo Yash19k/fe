@@ -10,6 +10,7 @@ import {
   WorkItemRecurrence,
 } from "../entities/work.item.recurrence.entity";
 import { WorkItemOccurrence } from "../entities/work.item.occurrence.entity";
+import { OrganizationSla } from "../entities/organization.sla.entity";
 import {
   applySlaState,
   calculateSlaDeadline,
@@ -251,9 +252,13 @@ const initializeGeneratedTaskSla = async (manager: EntityManager, task: WorkItem
     return;
   }
 
-  task.slaDeadline = calculateSlaDeadline(task.createdAt, task.priority as WorkItemPriority);
+  const policy = await manager.getRepository(OrganizationSla).findOne({
+    where: { organizationId: task.organizationId },
+  });
+
+  task.slaDeadline = calculateSlaDeadline(task.createdAt, task.priority as WorkItemPriority, policy);
   task.slaDeadlineIsCustom = false;
-  applySlaState(task);
+  applySlaState(task, new Date(), policy);
   await manager.getRepository(WorkItem).save(task);
   await writeSlaAudit(manager, task, actorId, "sla_initialized", "Initialized SLA for recurring work item", null, {
     deadline: task.slaDeadline,

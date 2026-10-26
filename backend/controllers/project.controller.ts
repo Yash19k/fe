@@ -1,10 +1,7 @@
 import { Request, Response } from "express";
 import { EntityManager } from "typeorm";
 import { AppDataSource } from "../config/data.source";
-import {
-  Project,
-  ProjectVisibility,
-} from "../entities/project.entity";
+import { Project, ProjectVisibility,} from "../entities/project.entity";
 import { User, UserRole } from "../entities/user.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { AppError } from "../errors/app.error";

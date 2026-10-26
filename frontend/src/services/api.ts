@@ -11,6 +11,7 @@ import type {
   Project,
   Sprint,
   Role,
+  SprintStatus,
 } from '../types';
 
 export const API_BASE_URL =
@@ -98,123 +99,78 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
     ...(options.headers as Record<string, string>),
   };
 
   try {
-    const res = await fetch(url, {
-      ...options,
-      headers,
-      credentials: 'include', // Support HTTP cookie JWT authentication
-    });
+    const response = await fetch(url, { ...options, headers });
 
-    let data: any = null;
-    const contentType = res.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
-      data = await res.json().catch(() => null);
-    } else {
-      const text = await res.text().catch(() => '');
-      data = text ? { message: text } : null;
-    }
+    if (response.status === 401 && !options._retry) {
+      options._retry = true;
+      const newToken = await executeTokenRefresh();
 
-    if (!res.ok) {
-      // If 401 Unauthorized, attempt transparent token refresh once
-      if (
-        res.status === 401 &&
-        !options._retry &&
-        !endpoint.includes('/users/login') &&
-        !endpoint.includes('/users/refresh') &&
-        !endpoint.includes('/users/logout')
-      ) {
-        const refreshedToken = await executeTokenRefresh();
-        if (refreshedToken) {
-          return request<T>(endpoint, {
-            ...options,
-            _retry: true,
-          });
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`;
+        const retryResponse = await fetch(url, { ...options, headers });
+        if (!retryResponse.ok) {
+          const errData = await retryResponse.json().catch(() => ({}));
+          throw new ApiError(
+            errData.message || `HTTP ${retryResponse.status}`,
+            retryResponse.status,
+            errData.code,
+            errData
+          );
         }
+        return retryResponse.json();
       }
-
-      let errorMessage = data?.message || data?.error;
-      if (Array.isArray(data?.errors) && data.errors.length > 0) {
-        const details = data.errors
-          .map((e: any) => {
-            if (typeof e === 'object' && e !== null) {
-              return e.message ? `${e.field ? e.field + ': ' : ''}${e.message}` : JSON.stringify(e);
-            }
-            return String(e);
-          })
-          .join(', ');
-        errorMessage = errorMessage ? `${errorMessage}: ${details}` : details;
-      }
-      if (!errorMessage) {
-        errorMessage = `Request failed with status ${res.status}`;
-      }
-
-      throw new ApiError(errorMessage, res.status, data?.code, data?.errors);
     }
 
-    return data as T;
-  } catch (err: any) {
-    if (err instanceof ApiError) {
-      throw err;
-    }
-    // Handle Network / Connection errors (e.g. backend server not running)
-    const isNetworkError =
-      err?.name === 'TypeError' ||
-      err?.message?.includes('fetch') ||
-      err?.message?.includes('Failed to fetch') ||
-      err?.message?.includes('NetworkError');
-
-    if (isNetworkError) {
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
       throw new ApiError(
-        `Unable to reach backend server at ${API_BASE_URL}. Ensure the backend service is running.`,
-        0,
-        'SERVER_UNREACHABLE'
+        errData.message || `HTTP ${response.status}`,
+        response.status,
+        errData.code,
+        errData
       );
     }
 
-    throw new ApiError(err?.message || 'Unexpected network error occurred', 500);
+    return response.json();
+  } catch (err: any) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(err?.message || 'Network request failed', 0, 'SERVER_UNREACHABLE');
   }
 }
 
-// ==========================================
-// Health & Diagnostic
-// ==========================================
-
-export async function checkBackendHealth(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/');
+// Health Check
+export async function checkBackendHealth(): Promise<boolean> {
+  try {
+    const res = await request<{ status: string }>('/health', { method: 'GET' });
+    return res?.status === 'ok' || res?.status === 'UP';
+  } catch {
+    return false;
+  }
 }
 
-// ==========================================
-// Authentication & Users
-// ==========================================
-
+// Auth & Users
 export interface RegisterOrganizationInput {
-  user: {
-    fullName: string;
-    email: string;
-    password: string;
-  };
-  organization: {
-    name: string;
-    slug: string;
-  };
+  organizationName: string;
+  adminName: string;
+  email: string;
+  password?: string;
 }
 
 export interface RegisterOrganizationResponse {
-  organizationId: string;
-  userId: string;
+  user: any;
+  organization: any;
   token?: string;
-  user?: any;
-  organization?: any;
 }
 
 export async function registerOrganizationApi(
   payload: RegisterOrganizationInput
 ): Promise<RegisterOrganizationResponse> {
-  const res = await request<RegisterOrganizationResponse>('/api/users/', {
+  const res = await request<RegisterOrganizationResponse>('/api/users/register', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -226,27 +182,13 @@ export async function registerOrganizationApi(
 
 export interface LoginInput {
   email: string;
-  password: string;
+  password?: string;
 }
 
 export interface LoginResponse {
-  success: boolean;
-  token: string;
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    role: string;
-    companyId: string;
-    companyName: string;
-    onboardingCompleted: boolean;
-  };
-  organization: {
-    id: string;
-    name: string;
-    createdByUserId: string;
-    createdAt: string;
-  };
+  user: any;
+  organization: any;
+  token?: string;
 }
 
 export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
@@ -260,74 +202,86 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
   return res;
 }
 
-export async function currentUserApi(): Promise<{ user: any; organization: any }> {
-  return request<{ user: any; organization: any }>('/api/users/me', {
-    method: 'GET',
-  });
+export async function currentUserApi(): Promise<any> {
+  return request<any>('/api/users/me', { method: 'GET' });
 }
 
-export async function refreshTokenApi(): Promise<{ success: boolean; message?: string; token?: string }> {
-  return request<{ success: boolean; message?: string; token?: string }>('/api/users/refresh', {
-    method: 'POST',
-  });
+export async function refreshTokenApi(): Promise<any> {
+  return executeTokenRefresh();
 }
 
-export async function logoutApi(): Promise<{ success: boolean }> {
+export async function logoutApi(): Promise<any> {
   try {
-    return await request<{ success: boolean }>('/api/users/logout', {
-      method: 'POST',
-    });
+    return await request<any>('/api/users/logout', { method: 'POST' });
   } finally {
     clearAuthToken();
   }
 }
 
-// ==========================================
-// Organization Invitations
-// ==========================================
-
 export interface InviteMemberApiInput {
   email: string;
-  role: string;
+  role?: string;
 }
 
 export async function inviteOrganizationMembersApi(
-  members: InviteMemberApiInput[]
+  invitations: InviteMemberApiInput[]
 ): Promise<any> {
-  return request<any>('/api/organizations/members/invite', {
+  return request<any>('/api/users/invite', {
     method: 'POST',
-    body: JSON.stringify(members),
+    body: JSON.stringify({ invitations }),
   });
 }
 
-export async function acceptInvitationApi(payload: {
-  token: string;
-  password?: string;
-  fullName?: string;
-}): Promise<any> {
-  return request<any>('/api/organizations/accept', {
+export async function acceptInvitationApi(token: string, payload: any): Promise<any> {
+  return request<any>(`/api/users/accept-invitation?token=${encodeURIComponent(token)}`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-// ==========================================
-// Projects
-// ==========================================
+export async function getOrganizationUsersApi(): Promise<any> {
+  return request<any>('/api/users', { method: 'GET' });
+}
 
+export async function getOrganizationMembersApi(): Promise<any> {
+  return request<any>('/api/organization/members', { method: 'GET' });
+}
+
+export async function addOrganizationMemberApi(payload: any): Promise<any> {
+  return request<any>('/api/organization/members', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationMemberRoleApi(
+  memberId: string,
+  role: string
+): Promise<any> {
+  return request<any>(`/api/organization/members/${encodeURIComponent(memberId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeOrganizationMemberApi(memberId: string): Promise<any> {
+  return request<any>(`/api/organization/members/${encodeURIComponent(memberId)}`, {
+    method: 'DELETE',
+  });
+}
+
+// Projects & Members
 export interface CreateProjectApiInput {
   name: string;
-  key: string;
+  key?: string;
   description?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   visibility?: 'PUBLIC' | 'PRIVATE';
 }
 
-export async function getProjectsApi(): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>('/api/projects', {
-    method: 'GET',
-  });
+export async function getProjectsApi(): Promise<any> {
+  return request<any>('/api/projects', { method: 'GET' });
 }
 
 export async function getProjectApi(projectId: string): Promise<any> {
@@ -356,47 +310,44 @@ export async function deleteProjectApi(projectId: string): Promise<any> {
   });
 }
 
-// ==========================================
-// Project Members
-// ==========================================
-
-export async function getProjectMembersApi(projectId: string): Promise<{ success: boolean; data: any[] }> {
-  return request<{ success: boolean; data: any[] }>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
+export async function getProjectMembersApi(projectId: string): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
     method: 'GET',
   });
 }
 
 export async function addProjectMemberApi(
   projectId: string,
-  payload: { memberId?: string; email?: string; role?: string }
+  member: { memberId: string; role?: string }
 ): Promise<any> {
   return request<any>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(member),
   });
 }
 
-export async function removeProjectMemberApi(projectId: string, memberId: string): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(memberId)}`, {
-    method: 'DELETE',
-  });
+export async function removeProjectMemberApi(projectId: string, userId: string): Promise<any> {
+  return request<any>(
+    `/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  );
 }
 
 export async function updateProjectMemberRoleApi(
   projectId: string,
-  memberId: string,
+  userId: string,
   role: string
 ): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(memberId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ role }),
-  });
+  return request<any>(
+    `/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }
+  );
 }
 
-// ==========================================
-// Work Items (Tasks)
-// ==========================================
-
+// Work Items
 export interface CreateWorkItemApiInput {
   projectId: string;
   sprintId?: string | null;
@@ -404,27 +355,23 @@ export interface CreateWorkItemApiInput {
   type: string;
   title: string;
   description?: string | null;
-  priority?: string;
+  priority?: string | null;
   status?: string;
   dueDate?: string | null;
-  assignees?: Array<{ userId: string; startDate?: string | null; estimatedHours?: number | null }>;
-  recurrence?: any;
+  assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
 }
 
 export async function getProjectWorkItemsApi(
   projectId: string,
   page = 1,
   limit = 100,
-  status?: string,
   type?: string
 ): Promise<any> {
   let url = `/api/work-items/project/${encodeURIComponent(projectId)}?page=${page}&limit=${limit}`;
-  if (status) url += `&status=${encodeURIComponent(status)}`;
-  if (type) url += `&type=${encodeURIComponent(type)}`;
-
-  return request<any>(url, {
-    method: 'GET',
-  });
+  if (type) {
+    url += `&type=${encodeURIComponent(type)}`;
+  }
+  return request<any>(url, { method: 'GET' });
 }
 
 export async function createWorkItemApi(payload: CreateWorkItemApiInput): Promise<any> {
@@ -434,6 +381,44 @@ export async function createWorkItemApi(payload: CreateWorkItemApiInput): Promis
   });
 }
 
+/**
+ * Uploads attachment files for a specific work item using multipart FormData.
+ */
+export async function uploadWorkItemAttachmentsApi(
+  workItemId: string,
+  files: File[]
+): Promise<any> {
+  const token = getAuthToken();
+  const formData = new FormData();
+
+  files.forEach((file) => {
+    formData.append('attachments', file);
+  });
+
+  const response = await fetch(
+    `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
+    {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+      },
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new ApiError(
+      errorData.message || `Attachment upload failed with status ${response.status}`,
+      response.status,
+      errorData.code,
+      errorData
+    );
+  }
+
+  return response.json();
+}
+
 export async function updateWorkItemApi(workItemId: string, updates: any): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}`, {
     method: 'PATCH',
@@ -441,14 +426,10 @@ export async function updateWorkItemApi(workItemId: string, updates: any): Promi
   });
 }
 
-export async function escalateWorkItemApi(
-  workItemId: string,
-  reason?: string,
-): Promise<any> {
-  const payload = reason?.trim() ? { reason: reason.trim() } : {};
+export async function escalateWorkItemApi(workItemId: string, reason?: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/escalate`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   });
 }
 
@@ -458,23 +439,19 @@ export async function deleteWorkItemApi(workItemId: string): Promise<any> {
   });
 }
 
-// ==========================================
 // Sprints
-// ==========================================
-
 export interface CreateSprintApiInput {
   name: string;
   goal?: string | null;
-  startDate: string;
-  endDate: string;
+  startDate?: string | null;
+  endDate?: string | null;
   workItemIds?: string[];
 }
 
-const DATABASE_UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function isPersistedWorkItemId(value: unknown): value is string {
-  return typeof value === 'string' && DATABASE_UUID.test(value);
+export async function getProjectSprintsApi(projectId: string): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints`, {
+    method: 'GET',
+  });
 }
 
 export async function createSprintApi(
@@ -487,334 +464,220 @@ export async function createSprintApi(
   });
 }
 
-export async function getProjectSprintsApi(projectId: string): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints`, {
-    method: 'GET',
-  });
-}
-
-// ==========================================
-// Dashboard
-// ==========================================
-
+// Dashboards
 export async function getProjectDashboardApi(projectId: string): Promise<any> {
   return request<any>(`/api/projects/${encodeURIComponent(projectId)}/dashboard`, {
     method: 'GET',
   });
 }
 
-export async function getPersonalDashboardApi(): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>('/api/dashboard/personal', {
+export async function getPersonalDashboardApi(): Promise<any> {
+  return request<any>('/api/dashboard/personal', { method: 'GET' });
+}
+
+// Comments, Time Entries & Dependencies
+export async function getWorkItemCommentsApi(workItemId: string): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
     method: 'GET',
   });
 }
 
-// ==========================================
-// Organization Users & Member Management
-// ==========================================
-
-export async function getOrganizationUsersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>('/api/users', {
-    method: 'GET',
+export async function addWorkItemCommentApi(workItemId: string, text: string): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
   });
 }
 
-export async function getOrganizationMembersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>('/api/organizations/members', {
+export async function getWorkItemTimeEntriesApi(workItemId: string): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
     method: 'GET',
   });
-}
-
-export async function addOrganizationMemberApi(payload: {
-  members: {
-    email: string;
-    role?: "ADMIN" | "MANAGER" | "TEAMMATE";
-  }[];
-}): Promise<{ success: boolean; data: any; message?: string }> {
-  return request<{ success: boolean; data: any; message?: string }>(
-    "/api/organizations/members",
-    {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }
-  );
-}
-
-export async function updateOrganizationMemberRoleApi(
-  userId: string,
-  role: string
-): Promise<{ success: boolean; data: any; message?: string }> {
-  return request<{ success: boolean; data: any; message?: string }>(
-    `/api/organizations/members/${encodeURIComponent(userId)}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({ role }),
-    }
-  );
-}
-
-export async function removeOrganizationMemberApi(
-  userId: string
-): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>(
-    `/api/organizations/members/${encodeURIComponent(userId)}`,
-    {
-      method: 'DELETE',
-    }
-  );
-}
-
-// ==========================================
-// Work Item Comments
-// ==========================================
-
-export async function getWorkItemCommentsApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/comments`,
-    { method: 'GET' }
-  );
-}
-
-export async function addWorkItemCommentApi(
-  workItemId: string,
-  content: string
-): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/comments`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    }
-  );
-}
-
-// ==========================================
-// Work Item Time Tracking
-// ==========================================
-
-export async function getWorkItemTimeEntriesApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/time-entries`,
-    { method: 'GET' }
-  );
 }
 
 export async function addWorkItemTimeEntryApi(
   workItemId: string,
-  payload: { hours?: number; durationMinutes?: number; note?: string; date?: string }
-): Promise<{ success: boolean; data: any }> {
-  const hours = payload.hours !== undefined ? payload.hours : (payload.durationMinutes ? payload.durationMinutes / 60 : 1);
-  return request<{ success: boolean; data: any }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/time-entries`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        hours: Number(hours),
-        note: payload.note || '',
-        date: payload.date || new Date().toISOString().split('T')[0],
-      }),
-    }
-  );
+  entry: { hours: number; durationMinutes?: number; note?: string; date?: string }
+): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
 }
 
-// ==========================================
-// Work Item Dependencies
-// ==========================================
-
-export async function getWorkItemDependenciesApi(workItemId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies`,
-    { method: 'GET' }
-  );
+export async function getWorkItemDependenciesApi(workItemId: string): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/dependencies`, {
+    method: 'GET',
+  });
 }
 
 export async function addWorkItemDependencyApi(
   workItemId: string,
   dependsOnWorkItemId: string
-): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ dependsOnWorkItemId }),
-    }
-  );
+): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/dependencies`, {
+    method: 'POST',
+    body: JSON.stringify({ dependsOnWorkItemId }),
+  });
 }
 
 export async function deleteWorkItemDependencyApi(
   workItemId: string,
   dependsOnWorkItemId: string
-): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>(
+): Promise<any> {
+  return request<any>(
     `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependsOnWorkItemId)}`,
     { method: 'DELETE' }
   );
 }
 
-// ==========================================
-// Project Labels
-// ==========================================
-
-export async function getProjectLabelsApi(projectId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
-    `/api/projects/${encodeURIComponent(projectId)}/labels`,
-    { method: 'GET' }
-  );
+// Labels & Workflow
+export async function getProjectLabelsApi(projectId: string): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/labels`, {
+    method: 'GET',
+  });
 }
 
-export async function createProjectLabelApi(
-  projectId: string,
-  payload: { name: string; color?: string; description?: string }
-): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/projects/${encodeURIComponent(projectId)}/labels`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }
-  );
+export async function createProjectLabelApi(projectId: string, payload: any): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/labels`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
-export async function deleteProjectLabelApi(
-  projectId: string,
-  labelId: string
-): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>(
+export async function deleteProjectLabelApi(projectId: string, labelId: string): Promise<any> {
+  return request<any>(
     `/api/projects/${encodeURIComponent(projectId)}/labels/${encodeURIComponent(labelId)}`,
     { method: 'DELETE' }
   );
 }
 
-// ==========================================
-// Project Workflow
-// ==========================================
-
-export async function getProjectWorkflowApi(projectId: string): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow`,
-    { method: 'GET' }
-  );
+export async function getProjectWorkflowApi(projectId: string): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
+    method: 'GET',
+  });
 }
 
-export async function saveProjectWorkflowApi(
-  projectId: string,
-  payload: { name?: string; stages?: any[]; statuses?: any[]; transitions?: any; rules?: any }
-): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }
-  );
+export async function saveProjectWorkflowApi(projectId: string, payload: any): Promise<any> {
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
-// ==========================================
 // Audit Logs
-// ==========================================
+export interface AuditPaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
 
-export async function getProjectAuditLogsApi(projectId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
+export interface GetProjectAuditLogsResponse {
+  data: any[];
+  meta?: AuditPaginationMeta;
+}
+
+export async function getProjectAuditLogsApi(
+  projectId: string
+): Promise<GetProjectAuditLogsResponse> {
+  return request<GetProjectAuditLogsResponse>(
     `/api/projects/${encodeURIComponent(projectId)}/audit-logs`,
     { method: 'GET' }
   );
 }
 
-export async function createAuditLogApi(payload: {
-  projectId?: string;
-  workItemId?: string;
-  action: string;
-  entityType: string;
-  entityId: string;
-  description?: string;
-  previousState?: any;
-  newState?: any;
-  details?: any;
-}): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>('/api/projects/audit-logs', {
+export async function createAuditLogApi(payload: any): Promise<any> {
+  return request<any>('/api/projects/audit-logs', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export async function undoAuditLogApi(
-  projectId: string,
-  logId: string
-): Promise<{
-  success: boolean;
-  message: string;
-  data: {
-    undoneLogId: string;
-    reversalLog: any;
-    restoredTask?: any;
-  };
-}> {
-  return request(`/api/projects/${encodeURIComponent(projectId)}/audit-logs/${encodeURIComponent(logId)}/undo`, {
-    method: 'POST',
-  });
-}
-
-// ==========================================
-// Notifications
-// ==========================================
-
-export async function getUserNotificationsApi(): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>('/api/notifications', {
-    method: 'GET',
-  });
-}
-
-export async function markNotificationReadApi(notificationId: string): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/notifications/${encodeURIComponent(notificationId)}/read`,
-    { method: 'PATCH' }
+export async function undoAuditLogApi(projectId: string, auditId: string): Promise<any> {
+  return request<any>(
+    `/api/projects/${encodeURIComponent(projectId)}/audit-logs/${encodeURIComponent(auditId)}/undo`,
+    { method: 'POST' }
   );
 }
 
-export async function markAllNotificationsReadApi(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/api/notifications/read-all', {
+// Notifications
+export async function getUserNotificationsApi(): Promise<any> {
+  return request<any>('/api/notifications', { method: 'GET' });
+}
+
+export async function markNotificationReadApi(notifId: string): Promise<any> {
+  return request<any>(`/api/notifications/${encodeURIComponent(notifId)}/read`, {
     method: 'PATCH',
   });
 }
 
-export async function createNotificationApi(payload: {
-  userId?: string;
-  title: string;
-  message: string;
-  type?: string;
-  link?: string;
-}): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>('/api/notifications', {
+export async function markAllNotificationsReadApi(): Promise<any> {
+  return request<any>('/api/notifications/read-all', { method: 'PATCH' });
+}
+
+export async function createNotificationApi(payload: any): Promise<any> {
+  return request<any>('/api/notifications', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-// ==========================================
-// Domain Transformation Helpers
-// ==========================================
-
-export function backendStatusToFrontend(backendStatus: string | null | undefined): TaskStatus {
-  switch (backendStatus?.toUpperCase()) {
-    case 'IN_PROGRESS': return 'In Progress';
-    case 'IN_REVIEW': return 'In Review';
-    case 'TESTING_QA': return 'Testing / QA';
-    case 'BLOCKED': return 'Blocked';
-    case 'ON_HOLD': return 'On Hold';
-    case 'DONE': return 'Done';
-    case 'BACKLOG':
-    default:
-      return 'Backlog';
-  }
+// Chat / Messaging
+export interface ChatConversation {
+  id: string;
+  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  name?: string;
+  projectId?: string;
+  updatedAt: string;
+  members: Array<{ userId: string; user?: any }>;
 }
 
-export function frontendStatusToBackend(frontendStatus: string | null | undefined): string {
-  switch (frontendStatus) {
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  content: string;
+  createdAt: string;
+  sender?: any;
+}
+
+export async function getChatConversationsApi(): Promise<any> {
+  return request<any>('/api/chat/conversations', { method: 'GET' });
+}
+
+export async function createChatConversationApi(payload: {
+  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  name?: string;
+  projectId?: string;
+  recipientUserIds?: string[];
+}): Promise<any> {
+  return request<any>('/api/chat/conversations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getChatMessagesApi(
+  conversationId: string,
+  limit = 50,
+  before?: string
+): Promise<any> {
+  let url = `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`;
+  if (before) url += `&before=${encodeURIComponent(before)}`;
+  return request<any>(url, { method: 'GET' });
+}
+
+// Helpers & Converters
+export function isPersistedWorkItemId(id?: string | null): boolean {
+  if (!id) return false;
+  return !id.startsWith('tf-') && !id.startsWith('sub-') && !id.startsWith('att-');
+}
+
+export function frontendStatusToBackend(status: string): string {
+  switch (status) {
     case 'In Progress': return 'IN_PROGRESS';
     case 'In Review': return 'IN_REVIEW';
-    case 'Testing / QA': return 'TESTING_QA';
-    case 'Blocked': return 'BLOCKED';
-    case 'On Hold': return 'ON_HOLD';
     case 'Done': return 'DONE';
     case 'Backlog':
     default:
@@ -822,31 +685,42 @@ export function frontendStatusToBackend(frontendStatus: string | null | undefine
   }
 }
 
-export function backendTypeToFrontend(backendType: string | null | undefined): WorkItemType {
-  switch (backendType?.toUpperCase()) {
+export function backendStatusToFrontend(status?: string | null): TaskStatus {
+  switch (status?.toUpperCase()) {
+    case 'IN_PROGRESS': return 'In Progress';
+    case 'IN_REVIEW': return 'In Review';
+    case 'DONE': return 'Done';
+    case 'BACKLOG':
+    default:
+      return 'Backlog';
+  }
+}
+
+export function frontendTypeToBackend(type: WorkItemType | string): string {
+  switch (type) {
+    case 'Epic': return 'EPIC';
+    case 'Story': return 'STORY';
+    case 'Bug': return 'BUG';
+    case 'Subtask': return 'SUBTASK';
+    case 'Task':
+    default:
+      return 'TASK';
+  }
+}
+
+export function backendTypeToFrontend(type?: string | null): WorkItemType {
+  switch (type?.toUpperCase()) {
     case 'EPIC': return 'Epic';
     case 'STORY': return 'Story';
-    case 'SUBTASK': return 'Subtask';
     case 'BUG': return 'Bug';
+    case 'SUBTASK': return 'Subtask';
     case 'TASK':
     default:
       return 'Task';
   }
 }
 
-export function frontendTypeToBackend(frontendType: string | null | undefined): string {
-  switch (frontendType?.toLowerCase()) {
-    case 'epic': return 'EPIC';
-    case 'story': return 'STORY';
-    case 'subtask': return 'SUBTASK';
-    case 'bug': return 'BUG';
-    case 'task':
-    default:
-      return 'TASK';
-  }
-}
-
-export function backendPriorityToFrontend(priority: string | null | undefined): Priority {
+export function backendPriorityToFrontend(priority?: string | null): Priority {
   switch (priority?.toUpperCase()) {
     case 'HIGH':
     case 'URGENT': return 'High';
@@ -857,167 +731,69 @@ export function backendPriorityToFrontend(priority: string | null | undefined): 
   }
 }
 
-export function frontendPriorityToBackend(priority: Priority | null | undefined): string {
-  switch (priority) {
-    case 'High': return 'HIGH';
-    case 'Low': return 'LOW';
-    case 'Medium':
+export function frontendPriorityToBackend(priority?: Priority | string | null): string | null {
+  if (!priority) return null;
+  const upper = String(priority).toUpperCase();
+  if (['HIGH', 'MEDIUM', 'LOW', 'URGENT'].includes(upper)) {
+    return upper;
+  }
+  return null;
+}
+
+export function normalizeRole(backendRole?: string | null): Role {
+  switch (backendRole?.toUpperCase()) {
+    case 'ADMIN': return 'Admin';
+    case 'MANAGER': return 'Manager';
+   
+    case 'TEAMMATE':
     default:
-      return 'MEDIUM';
+      return 'Teammate';
   }
 }
 
-export function normalizeRole(backendRole: string | null | undefined): Role {
-  if (!backendRole) return 'Teammate';
-  const upper = backendRole.toUpperCase();
-  if (upper === 'ADMIN') return 'Admin';
-  if (upper === 'MANAGER' || upper === 'LEAD') return 'Manager';
-  return 'Teammate';
-}
-
-export function toBackendRole(frontendRole: Role | string | null | undefined): string {
-  if (frontendRole === 'Admin') return 'ADMIN';
-  if (frontendRole === 'Manager') return 'MANAGER';
-  return 'TEAMMATE';
-}
-
-export function toBackendProjectRole(frontendRole: Role | string | null | undefined): string {
-  if (frontendRole === 'Admin') return 'ADMIN';
-  if (frontendRole === 'Manager') return 'LEAD';
-  return 'MEMBER';
-}
-
-export function backendWorkItemToTask(item: any, currentProjectId: string): Task {
-  const status = backendStatusToFrontend(item.status);
-  const type = backendTypeToFrontend(item.type);
-  const priority = backendPriorityToFrontend(item.priority);
-  const dueDate = item.dueDate
-    ? (typeof item.dueDate === 'string'
-        ? item.dueDate.split('T')[0]
-        : new Date(item.dueDate).toISOString().split('T')[0])
-    : null;
-
-  const assigneeId =
-    item.assigneeId ||
-    (Array.isArray(item.assignments) && item.assignments[0]?.userId) ||
-    (Array.isArray(item.assignees) && item.assignees[0]?.userId) ||
-    null;
-
-  const assigneeIds = Array.isArray(item.assignments)
-    ? item.assignments.map((a: any) => a.userId)
-    : (Array.isArray(item.assignees)
-        ? item.assignees.map((a: any) => a.userId)
-        : (item.assigneeIds || (assigneeId ? [assigneeId] : [])));
-
-  let assignees: any[] = [];
-  if (Array.isArray(item.assignees) && item.assignees.length > 0) {
-    assignees = item.assignees.map((u: any) => ({
-      id: u.id || u.userId,
-      name: u.fullName || u.name || u.email || 'User',
-      fullName: u.fullName || u.name || u.email || 'User',
-      email: u.email || '',
-      role: u.role || 'Teammate',
-    }));
-  } else if (Array.isArray(item.assignments) && item.assignments.length > 0) {
-    assignees = item.assignments
-      .map((a: any) => {
-        const u = a.user;
-        if (!u) return null;
-        return {
-          id: u.id,
-          name: u.fullName || u.name || u.email || 'User',
-          fullName: u.fullName || u.name || u.email || 'User',
-          email: u.email || '',
-          role: u.role || 'Teammate',
-        };
-      })
-      .filter(Boolean);
+export function toBackendRole(role?: Role | string | null): string {
+  switch (role) {
+    case 'Admin': return 'ADMIN';
+    case 'Manager': return 'MANAGER';
+    case 'Guest': return 'GUEST';
+    case 'Teammate':
+    default:
+      return 'TEAMMATE';
   }
+}
 
+export function toBackendProjectRole(role?: Role | string | null): string {
+  return toBackendRole(role);
+}
+
+export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Task {
   return {
     id: item.id,
-    projectId: item.projectId || currentProjectId,
-    parentId: item.parentWorkItemId || null,
-    title: item.title,
-    description: item.description || '',
-    type,
-    status,
-    priority,
-    dueDate,
-    slaStatus: item.sla?.status || item.slaStatus || null,
-    sla: item.sla
-      ? {
-          ...item.sla,
-          deadline: item.sla.deadline || item.slaDeadline || null,
-          isBreached: item.sla.status === 'BREACHED' || Boolean(item.sla.breachedAt),
-          isApproaching: item.sla.status === 'AT_RISK',
-          isEscalated: Boolean(item.sla.isEscalated || item.escalatedAt),
-          hoursRemaining: item.sla.remainingHours ?? null,
-        }
-      : item.slaDeadline
-        ? {
-            status: item.slaStatus,
-            deadline: item.slaDeadline,
-            isBreached: item.slaStatus === 'BREACHED',
-            isApproaching: item.slaStatus === 'AT_RISK',
-            isEscalated: Boolean(item.escalatedAt),
-            hoursRemaining: null,
-          }
-        : undefined,
-    startDate: item.startDate || null,
-    assigneeId,
-    assigneeIds,
-    assignees,
+    projectId: item.projectId || fallbackProjectId || '',
     sprintId: item.sprintId || null,
-    creatorId: item.createdById || item.creatorId,
-    labels: Array.isArray(item.labels)
-      ? item.labels.map((l: any) => (typeof l === 'string' ? l : l.name || l.id))
-      : [],
-    dependencies: Array.isArray(item.dependencies)
-      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id || d)
-      : (Array.isArray(item.dependencyIds) ? item.dependencyIds : []),
+    parentId: item.parentWorkItemId || item.parentId || null,
+    type: backendTypeToFrontend(item.type),
+    title: item.title || 'Untitled Task',
+    description: item.description || '',
+    status: backendStatusToFrontend(item.status),
+    priority: backendPriorityToFrontend(item.priority),
+    assigneeId: item.assignees?.[0]?.userId || item.assigneeId || null,
+    assigneeIds: item.assignees ? item.assignees.map((a: any) => a.userId) : [],
+    creatorId: item.creatorId || '',
+    startDate: item.startDate || null,
+    dueDate: item.dueDate || null,
+    estimateHours: item.estimateHours ? Number(item.estimateHours) : null,
+    actualHours: item.actualHours ? Number(item.actualHours) : 0,
     dependencyIds: Array.isArray(item.dependencies)
-      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id || d)
-      : (Array.isArray(item.dependencyIds) ? item.dependencyIds : []),
-    subtasks: Array.isArray(item.children)
-      ? item.children.map((c: any) => ({
-          id: c.id,
-          title: c.title,
-          completed: c.status === 'DONE' || c.status === 'Done',
-          assigneeId: c.assigneeId || null,
-        }))
-      : (item.subtasks || []),
-    comments: Array.isArray(item.comments)
-      ? item.comments.map((c: any) => ({
-          id: c.id,
-          userId: c.authorId || c.userId,
-          authorId: c.authorId || c.userId,
-          text: c.body || c.content || c.text || '',
-          body: c.body || c.content || c.text || '',
-          createdAt: c.createdAt || new Date().toISOString(),
-        }))
-      : (item.comments || []),
-    timeEntries: Array.isArray(item.timeEntries)
-      ? item.timeEntries.map((te: any) => ({
-          id: te.id,
-          userId: te.userId,
-          hours: te.hours !== undefined ? Number(te.hours) : (te.durationMinutes ? te.durationMinutes / 60 : 0),
-          durationMinutes: te.durationMinutes !== undefined ? te.durationMinutes : (te.hours ? Math.round(Number(te.hours) * 60) : 0),
-          date: te.date,
-          startTime: te.date || te.createdAt,
-          note: te.note || te.description || '',
-          description: te.note || te.description || '',
-        }))
-      : (item.timeEntries || []),
-    recurrenceRule: item.recurrence
-      ? {
-          frequency: item.recurrence.frequency?.toLowerCase() || 'none',
-          interval: item.recurrence.interval || 1,
-          startsOn: item.recurrence.startsOn,
-          endsOn: item.recurrence.endsOn,
-        }
-      : { frequency: 'none' },
-    version: item.version || 1,
+      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id)
+      : [],
+    labels: Array.isArray(item.labels) ? item.labels.map((l: any) => l.name || l) : [],
+    subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
+    comments: Array.isArray(item.comments) ? item.comments : [],
+    timeEntries: Array.isArray(item.timeEntries) ? item.timeEntries : [],
+    recurrenceRule: item.recurrenceRule || { frequency: 'none' },
+    sla: item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
+    version: item.version ? Number(item.version) : 1,
     createdAt: item.createdAt || new Date().toISOString(),
     updatedAt: item.updatedAt || new Date().toISOString(),
     attachments: Array.isArray(item.attachments)
@@ -1026,7 +802,7 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
           name: att.originalName || att.name || 'attachment',
           size: Number(att.size) || 0,
           type: att.mimeType || att.type || 'application/octet-stream',
-          url: att.url || (att.storageKey ? `/api/attachments/${att.id}/file` : ''),
+          url: att.url || att.storageKey || '',
           blobKey: att.blobKey || att.id,
           uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
         }))
@@ -1049,21 +825,22 @@ export function backendProjectToFrontend(proj: any): Project {
 
   return {
     id: proj.id,
-    name: proj.name,
-    projectKey: proj.key || proj.projectKey || (typeof proj.id === 'string' ? proj.id.slice(0, 8).toUpperCase() : 'PRJ'),
+    name: proj.name || 'Untitled Project',
+    projectKey: proj.key || proj.projectKey || proj.id.slice(0, 8).toUpperCase(),
     description: proj.description || '',
-    color: proj.color || '#4F46E5',
-    ownerId: proj.createdById || proj.ownerId || '',
-    memberIds: memberIds.length > 0 ? memberIds : [proj.createdById || 'user-1'],
+    visibility: proj.visibility === 'PUBLIC' ? 'global' : 'private',
+    status: 'On Track',
+    color: proj.color || '#7465F6',
+    ownerId: proj.ownerId || memberIds[0] || '',
+    memberIds,
     memberRoles,
-    visibility: proj.visibility?.toLowerCase() === 'public' ? 'global' : 'private',
-    status: proj.status || 'On Track',
     startDate: proj.startDate || '',
     dueDate: proj.endDate || proj.dueDate || '',
+    workflowId: proj.workflowId || `wf-${proj.id}`,
     sections: proj.sections || [
-      { id: 'sec-1', name: 'Discovery & Plan', order: 1 },
-      { id: 'sec-2', name: 'Execution', order: 2 },
-      { id: 'sec-3', name: 'Review & Launch', order: 3 },
+      { id: `sec-${proj.id}-1`, name: 'Discovery & Plan', order: 1 },
+      { id: `sec-${proj.id}-2`, name: 'Execution', order: 2 },
+      { id: `sec-${proj.id}-3`, name: 'Review & Launch', order: 3 },
     ],
     settings: proj.settings || { slaHighHours: 24, slaMediumHours: 48, allowWeekendWork: false },
     createdAt: proj.createdAt || new Date().toISOString(),
@@ -1076,14 +853,15 @@ export function backendSprintToFrontend(sprint: any): Sprint {
     id: sprint.id,
     projectId: sprint.projectId,
     name: sprint.name,
-    goal: sprint.goal || null,
-    startDate: sprint.startDate,
-    endDate: sprint.endDate,
-    status: sprint.status,
+    goal: sprint.goal || '',
+    status: (sprint.status || 'Planned').toUpperCase() as SprintStatus,
+    startDate: sprint.startDate || '',
+    endDate: sprint.endDate || '',
     workItemIds: Array.isArray(sprint.workItems)
-      ? sprint.workItems.map((w: any) => w.id)
-      : (sprint.workItemIds || []),
-    createdById: sprint.createdById,
+      ? sprint.workItems.map((w: any) => w.id || w)
+      : Array.isArray(sprint.workItemIds)
+        ? sprint.workItemIds
+        : [],
     createdAt: sprint.createdAt || new Date().toISOString(),
     updatedAt: sprint.updatedAt || new Date().toISOString(),
   };

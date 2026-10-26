@@ -1,36 +1,18 @@
-
 import { Request, Response } from "express";
 import { In } from "typeorm";
-
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
-import {
-  Project,
-  ProjectVisibility,
-} from "../entities/project.entity";
+import { Project,  ProjectVisibility,} from "../entities/project.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
-import {
-  WorkItem,
-  WorkItemType,
-  WorkItemStatus,
-  WorkItemPriority,
-  SlaStatus,
-} from "../entities/work.item.entity";
+import {  WorkItem,  WorkItemType,  WorkItemStatus,  WorkItemPriority,  SlaStatus,} from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { Sprint } from "../entities/sprint.entities";
-import {
-  WorkItemRecurrence,
-  RecurrenceFrequency,
-  MonthlyPattern,
-} from "../entities/work.item.recurrence.entity";
-import {
-  DEFAULT_RECURRENCE_TIMEZONE,
-  RECURRENCE_TIME_OF_DAY,
-  getInitialOccurrenceRunAt,
-  validateRecurrence,
-  type RecurrenceInput,
-} from "../services/recurrence.service";
+import { uploadAndPersistWorkItemAttachments } from "../services/work.item.attachment.service";
+import {  WorkItemRecurrence,  RecurrenceFrequency,  MonthlyPattern,} from "../entities/work.item.recurrence.entity";
+import { ProjectLabel } from "../entities/project.label.entity";
+import { OrganizationSla } from "../entities/organization.sla.entity";
+import { DEFAULT_RECURRENCE_TIMEZONE, RECURRENCE_TIME_OF_DAY, getInitialOccurrenceRunAt, validateRecurrence, type RecurrenceInput,} from "../services/recurrence.service";
 import { AppError } from "../errors/app.error";
 import {
   NotificationType,
@@ -43,11 +25,9 @@ import {
   getSlaSnapshot,
   writeSlaAudit,
 } from "../services/sla.service";
+
 import { authorizeProjectPermission } from "../middleware/project.permission";
-import {
-  getPagination,
-  getPaginationMeta,
-} from "../utils/pagination";
+import {  getPagination,  getPaginationMeta,} from "../utils/pagination";
 
 interface AssigneeInput {
   userId: string;
@@ -59,6 +39,8 @@ interface CreateWorkItemBody {
   projectId: string;
   sprintId?: string | null;
   parentWorkItemId?: string | null;
+  labelId?: string | null;
+  labels?: string[] | null;
   type: WorkItemType;
   title: string;
   description?: string | null;
@@ -90,6 +72,8 @@ interface UpdateWorkItemBody {
   assignees?: AssigneeInput[] | null;
   assigneeId?: string | null;
   assigneeIds?: string[] | null;
+  labelId?: string | null;
+  labels?: string[] | null;
 }
 
 interface Actor {
@@ -225,6 +209,7 @@ async function getAccessibleWorkItem(
   const workItem = await AppDataSource
     .getRepository(WorkItem)
     .createQueryBuilder("workItem")
+    .leftJoinAndSelect("workItem.label", "label")
     .innerJoin("workItem.project", "project")
     .leftJoin(
       "project.memberships",
@@ -422,7 +407,6 @@ async function validateAssignees(
     await manager.getRepository(ProjectMember).save(newMembers);
   }
 }
-
 // CREATE WORK ITEM
 export const createWorkItem = async (
   req: Request,
@@ -435,6 +419,8 @@ export const createWorkItem = async (
     projectId,
     sprintId,
     parentWorkItemId,
+    labelId,
+    labels,
     type,
     title,
     description,
@@ -499,6 +485,22 @@ export const createWorkItem = async (
       }
     }
 
+    const targetLabelId = labelId || (Array.isArray(labels) && labels.length > 0 ? labels[0] : null);
+    let labelToAssign: ProjectLabel | null = null;
+    if (targetLabelId) {
+      labelToAssign = await manager.getRepository(ProjectLabel).findOne({
+        where: { id: targetLabelId, projectId: project.id },
+      });
+
+      if (!labelToAssign) {
+        throw new AppError(
+          "Label not found in this project.",
+          400,
+          "INVALID_LABEL",
+        );
+      }
+    }
+
     await validateAssignees(
       assignees,
       project.id,
@@ -514,6 +516,7 @@ export const createWorkItem = async (
       createdById: actor.id,
       sprintId: sprintId ?? null,
       parentWorkItemId: parentWorkItemId ?? null,
+      labelId: labelToAssign ? labelToAssign.id : null,
       type,
       title: title.trim(),
       description: description?.trim() || null,
@@ -533,14 +536,18 @@ export const createWorkItem = async (
     }
 
     if (savedWorkItem.priority) {
+      const orgPolicy = await manager.getRepository(OrganizationSla).findOne({
+        where: { organizationId: actor.organizationId },
+      });
       savedWorkItem.slaDeadline = slaDeadline
         ? new Date(slaDeadline)
         : calculateSlaDeadline(
             savedWorkItem.createdAt,
             savedWorkItem.priority,
+            orgPolicy,
           );
       savedWorkItem.slaDeadlineIsCustom = Boolean(slaDeadline);
-      applySlaState(savedWorkItem);
+      applySlaState(savedWorkItem, new Date(), orgPolicy);
       await workItemRepository.save(savedWorkItem);
       await writeSlaAudit(
         manager,
@@ -559,6 +566,7 @@ export const createWorkItem = async (
       clearSlaState(savedWorkItem);
       await workItemRepository.save(savedWorkItem);
     }
+
 
     if (assignees.length > 0) {
       const assignments = assignees.map((assignee) =>
@@ -623,9 +631,10 @@ export const createWorkItem = async (
         where: { workItemId: savedWorkItem.id },
         relations: { user: true },
       });
-
     return {
       workItem: savedWorkItem,
+      label: labelToAssign,
+      labels: labelToAssign ? [labelToAssign] : [],
       assignments,
       assigneeIds: assignments.map((assignee) => assignee.userId),
       assigneeId: assignments[0]?.userId || null,
@@ -657,6 +666,8 @@ export const createWorkItem = async (
     message: "Work item created successfully",
     data: {
       ...result.workItem,
+      label: result.label,
+      labels: result.labels,
       assignments: result.assignments,
       assigneeIds: result.assigneeIds,
       assigneeId: result.assigneeId,
@@ -693,6 +704,7 @@ export const getProjectWorkItems = async (
     .createQueryBuilder("workItem")
     .leftJoinAndSelect("workItem.assignments", "assignments")
     .leftJoinAndSelect("assignments.user", "assigneeUser")
+    .leftJoinAndSelect("workItem.label", "label")
     .leftJoinAndSelect("workItem.comments", "comments")
     .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
     .leftJoinAndSelect("workItem.children", "children")
@@ -746,6 +758,34 @@ export const getProjectWorkItems = async (
         total,
       }),
     },
+  });
+};
+
+export const uploadAttachmentsToWorkItem = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+  const uploadedFiles = (req.files as Express.Multer.File[]) || [];
+
+  if (uploadedFiles.length === 0) {
+    throw new AppError(
+      "At least one attachment is required.",
+      400,
+      "ATTACHMENT_REQUIRED",
+    );
+  }
+
+  const attachments = await uploadAndPersistWorkItemAttachments(
+    uploadedFiles,
+    workItem.id,
+    actor.id,
+  );
+
+  res.status(201).json({
+    success: true,
+    attachments,
   });
 };
 
@@ -853,6 +893,10 @@ export const updateWorkItem = async (
       workItem.description = body.description?.trim() || null;
     }
 
+    const orgPolicy = await manager.getRepository(OrganizationSla).findOne({
+      where: { organizationId: actor.organizationId },
+    });
+
     if (body.priority !== undefined) {
       const previousPriority = workItem.priority;
       workItem.priority = body.priority ?? null;
@@ -866,6 +910,7 @@ export const updateWorkItem = async (
         workItem.slaDeadline = calculateSlaDeadline(
           workItem.createdAt,
           workItem.priority,
+          orgPolicy,
         );
       }
     }
@@ -891,7 +936,7 @@ export const updateWorkItem = async (
       workItem.slaDeadline = body.slaDeadline
         ? new Date(body.slaDeadline)
         : workItem.priority
-          ? calculateSlaDeadline(workItem.createdAt, workItem.priority)
+          ? calculateSlaDeadline(workItem.createdAt, workItem.priority, orgPolicy)
           : null;
       workItem.slaDeadlineIsCustom = Boolean(body.slaDeadline);
     }
@@ -902,6 +947,31 @@ export const updateWorkItem = async (
 
     if (body.sprintId !== undefined) {
       workItem.sprintId = body.sprintId;
+    }
+
+    let updatedLabel: ProjectLabel | null = null;
+    if (body.labelId !== undefined || body.labels !== undefined) {
+      const updateLabelId = body.labelId !== undefined
+        ? body.labelId
+        : (Array.isArray(body.labels) && body.labels.length > 0 ? body.labels[0] : null);
+
+      if (updateLabelId) {
+        updatedLabel = await manager.getRepository(ProjectLabel).findOne({
+          where: { id: updateLabelId, projectId: workItem.projectId },
+        });
+
+        if (!updatedLabel) {
+          throw new AppError(
+            "Label not found in this project.",
+            400,
+            "INVALID_LABEL",
+          );
+        }
+
+        workItem.labelId = updatedLabel.id;
+      } else {
+        workItem.labelId = null;
+      }
     }
 
     const savedWorkItem = await manager
@@ -915,10 +985,11 @@ export const updateWorkItem = async (
         savedWorkItem.slaDeadline = calculateSlaDeadline(
           savedWorkItem.createdAt,
           savedWorkItem.priority,
+          orgPolicy,
         );
         savedWorkItem.slaDeadlineIsCustom = false;
       }
-      applySlaState(savedWorkItem);
+      applySlaState(savedWorkItem, new Date(), orgPolicy);
     }
 
     await manager.getRepository(WorkItem).save(savedWorkItem);
@@ -954,8 +1025,15 @@ export const updateWorkItem = async (
         relations: { user: true },
       });
 
+    if (savedWorkItem.labelId && !updatedLabel) {
+      updatedLabel = await manager.getRepository(ProjectLabel).findOne({
+        where: { id: savedWorkItem.labelId },
+      });
+    }
     return {
       ...savedWorkItem,
+      label: updatedLabel,
+      labels: updatedLabel ? [updatedLabel] : [],
       assignments,
       assigneeIds: assignments.map((a) => a.userId),
       assigneeId: assignments[0]?.userId || null,

@@ -57,6 +57,12 @@ export class WorkItemAttachment {
   @Column({ type: "text", unique: true })
   storageKey: string;
 
+  @Column({ type: "varchar", length: 255, nullable: true, name: "public_id" })
+  publicId: string | null;
+
+  @Column({ type: "varchar", length: 20, nullable: true, name: "resource_type" })
+  resourceType: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

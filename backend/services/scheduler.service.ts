@@ -41,19 +41,19 @@ export function startScheduler(): void {
         console.info(
           `[SLA Scheduler] Completed. Updated ${updatedCount} work items.`,
         );
+      } catch (error) {
+        console.error("[SLA Scheduler] Job failed:", error);
       } finally {
         isSlaJobRunning = false;
       }
     },
   );
 
-  // Generate recurring tasks at 09:00 Asia/Kolkata each day. The recurrence
-  // service filters by each rule's nextRunAt, so only eligible tasks are created.
+  // Process recurring tasks automatically every minute whenever nextRunAt <= now.
   recurrenceScheduler = new Cron(
-    "0 9 * * *",
+    "* * * * *",
     {
       name: "recurring-work-item-processor",
-      timezone: "Asia/Kolkata",
       protect: true,
     },
     async () => {
@@ -67,6 +67,8 @@ export function startScheduler(): void {
             `[Recurrence Scheduler] Completed. Processed ${processedCount} due recurrences.`,
           );
         }
+      } catch (error) {
+        console.error("[Recurrence Scheduler] Job failed:", error);
       } finally {
         isRecurrenceJobRunning = false;
       }

@@ -315,7 +315,12 @@ export interface AppContextValue {
   tasks: Task[];
   projectTasks: Task[];
   myTasks: Task[];
-  createTask: (taskData: any) => { success: boolean; task?: Task; reason?: string };
+  createTask: (taskData: any) => Promise<{
+    success: boolean;
+    task?: Task;
+    reason?: string;
+  }>;
+  uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
   updateTask: (taskId: string, updates: any, snapshotVersion?: any) => { success: boolean; reason?: string };
   deleteTask: (taskId: string) => void;
   changeTaskStatus: (taskId: string, newStatus: string) => boolean;
@@ -364,5 +369,8 @@ export interface AppContextValue {
   logout?: () => Promise<void>;
   isLoadingBackend?: boolean;
   isInitializingAuth?: boolean;
+  isLoadingProjectData?: boolean;
+  projectDataError?: string | null;
+  reloadProjectData?: () => Promise<void>;
   [key: string]: any;
 }

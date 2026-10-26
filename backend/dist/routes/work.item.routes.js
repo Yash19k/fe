@@ -10,6 +10,10 @@ const project_permission_1 = require("../middleware/project.permission");
 const router = (0, express_1.Router)();
 router.post("/", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:create"), work_item_validations_1.validateCreateWorkItem, (0, async_handler_1.asyncHandler)(task_controller_1.createWorkItem));
 router.patch("/:workItemId", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:update"), work_item_validations_1.validateUpdateWorkItem, (0, async_handler_1.asyncHandler)(task_controller_1.updateWorkItem));
+router.patch("/:workItemId/escalate", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("sla:manage"), (0, async_handler_1.asyncHandler)(task_controller_1.escalateWorkItem));
+router.get("/:workItemId/sla", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("sla:view"), (0, async_handler_1.asyncHandler)(task_controller_1.getWorkItemSla));
+router.get("/:workItemId/sla/audit", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("sla:audit"), (0, async_handler_1.asyncHandler)(task_controller_1.getWorkItemSlaAudit));
+router.post("/:workItemId/escalate/resolve", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("sla:resolve"), (0, async_handler_1.asyncHandler)(task_controller_1.resolveWorkItemEscalation));
 router.delete("/:workItemId", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:delete"), (0, async_handler_1.asyncHandler)(task_controller_1.deleteWorkItem));
 router.get("/project/:projectId", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:read"), work_item_validations_1.validateViewProjectWorkItems, (0, async_handler_1.asyncHandler)(task_controller_1.getProjectWorkItems));
 // Comments

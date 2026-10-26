@@ -553,16 +553,27 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
     }),
   });
 }
-
 export async function createAuditLog(req: Request, res: Response) {
   const organizationId = req.user?.organizationId;
   const userId = req.user?.id;
   const { action, entityType, entityId, previousState, newState } = req.body;
-  let pId = req.body.projectId || (req.params.projectId && req.params.projectId !== "audit-logs" ? req.params.projectId : null);
-  const desc = req.body.description || req.body.details?.description || `${action || ""} ${entityType || ""}`.trim() || "Activity";
+  let pId =
+    req.body.projectId ||
+    (req.params.projectId && req.params.projectId !== "audit-logs"
+      ? req.params.projectId
+      : null);
+  const desc =
+    req.body.description ||
+    req.body.details?.description ||
+    `${action || ""} ${entityType || ""}`.trim() ||
+    "Activity";
 
   if (!action || !entityType) {
-    throw new AppError("action and entityType are required.", 400, "VALIDATION_ERROR");
+    throw new AppError(
+      "action and entityType are required.",
+      400,
+      "VALIDATION_ERROR",
+    );
   }
 
   // If pId is missing and this is a task event, attempt to resolve from WorkItem record
@@ -604,183 +615,184 @@ export async function createAuditLog(req: Request, res: Response) {
   });
 }
 
-export async function undoAuditLog(req: Request, res: Response) {
-  const userId = req.user?.id;
-  const organizationId = req.user?.organizationId;
-  const logId = String(req.params.logId);
-  const requestedProjectId =
-    req.params.projectId && req.params.projectId !== "audit-logs"
-      ? String(req.params.projectId)
-      : null;
 
-  if (!userId) {
-    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
-  }
+// export async function undoAuditLog(req: Request, res: Response) {
+//   const userId = req.user?.id;
+//   const organizationId = req.user?.organizationId;
+//   const logId = String(req.params.logId);
+//   const requestedProjectId =
+//     req.params.projectId && req.params.projectId !== "audit-logs"
+//       ? String(req.params.projectId)
+//       : null;
 
-  const result = await AppDataSource.transaction(async (manager) => {
-    const auditRepo = manager.getRepository(AuditLog);
-    const targetLog = await auditRepo
-      .createQueryBuilder("audit")
-      .setLock("pessimistic_write")
-      .where("audit.id = :logId", { logId })
-      .getOne();
+//   if (!userId) {
+//     throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+//   }
 
-    if (!targetLog) {
-      throw new AppError("Audit log entry not found.", 404, "AUDIT_LOG_NOT_FOUND");
-    }
+//   const result = await AppDataSource.transaction(async (manager) => {
+//     const auditRepo = manager.getRepository(AuditLog);
+//     const targetLog = await auditRepo
+//       .createQueryBuilder("audit")
+//       .setLock("pessimistic_write")
+//       .where("audit.id = :logId", { logId })
+//       .getOne();
 
-    if (organizationId && targetLog.organizationId !== organizationId) {
-      throw new AppError("Access denied.", 403, "FORBIDDEN");
-    }
+//     if (!targetLog) {
+//       throw new AppError("Audit log entry not found.", 404, "AUDIT_LOG_NOT_FOUND");
+//     }
 
-    if (requestedProjectId && targetLog.projectId && targetLog.projectId !== requestedProjectId) {
-      throw new AppError("Audit log does not belong to specified project.", 403, "FORBIDDEN");
-    }
+//     if (organizationId && targetLog.organizationId !== organizationId) {
+//       throw new AppError("Access denied.", 403, "FORBIDDEN");
+//     }
 
-    if (targetLog.isUndone) {
-      throw new AppError("This action has already been undone.", 400, "ALREADY_UNDONE");
-    }
+//     if (requestedProjectId && targetLog.projectId && targetLog.projectId !== requestedProjectId) {
+//       throw new AppError("Audit log does not belong to specified project.", 403, "FORBIDDEN");
+//     }
 
-    if (
-      !targetLog.previousState ||
-      targetLog.action.toLowerCase() === "undone" ||
-      targetLog.action.toLowerCase() === "deleted"
-    ) {
-      throw new AppError("This action cannot be undone.", 400, "ACTION_NOT_REVERSIBLE");
-    }
+//     if (targetLog.isUndone) {
+//       throw new AppError("This action has already been undone.", 400, "ALREADY_UNDONE");
+//     }
 
-    let restoredTask: any = null;
+//     if (
+//       !targetLog.previousState ||
+//       targetLog.action.toLowerCase() === "undone" ||
+//       targetLog.action.toLowerCase() === "deleted"
+//     ) {
+//       throw new AppError("This action cannot be undone.", 400, "ACTION_NOT_REVERSIBLE");
+//     }
 
-    if (targetLog.entityType === "task") {
-      const workItemRepo = manager.getRepository(WorkItem);
-      const workItem = await workItemRepo.findOne({
-        where: { id: targetLog.entityId },
-      });
+//     let restoredTask: any = null;
 
-      if (!workItem) {
-        throw new AppError("Target work item no longer exists.", 404, "WORK_ITEM_NOT_FOUND");
-      }
+//     if (targetLog.entityType === "task") {
+//       const workItemRepo = manager.getRepository(WorkItem);
+//       const workItem = await workItemRepo.findOne({
+//         where: { id: targetLog.entityId },
+//       });
 
-      if (organizationId && workItem.organizationId !== organizationId) {
-        throw new AppError("Access denied to work item.", 403, "FORBIDDEN");
-      }
+//       if (!workItem) {
+//         throw new AppError("Target work item no longer exists.", 404, "WORK_ITEM_NOT_FOUND");
+//       }
 
-      const prev = targetLog.previousState;
+//       if (organizationId && workItem.organizationId !== organizationId) {
+//         throw new AppError("Access denied to work item.", 403, "FORBIDDEN");
+//       }
 
-      if (prev.title !== undefined && prev.title !== null) {
-        workItem.title = String(prev.title).trim();
-      }
-      if (prev.description !== undefined) {
-        workItem.description = prev.description ? String(prev.description).trim() : null;
-      }
-      if (prev.status !== undefined && prev.status !== null) {
-        const normStatus = String(prev.status).toUpperCase().replace(/[-\s]/g, "_");
-        if (Object.values(WorkItemStatus).includes(normStatus as WorkItemStatus)) {
-          workItem.status = normStatus as WorkItemStatus;
-        }
-      }
-      if (prev.priority !== undefined && prev.priority !== null) {
-        const normPriority = String(prev.priority).toUpperCase();
-        if (Object.values(WorkItemPriority).includes(normPriority as WorkItemPriority)) {
-          workItem.priority = normPriority as WorkItemPriority;
-        }
-      }
-      if (prev.type !== undefined && prev.type !== null) {
-        const normType = String(prev.type).toUpperCase();
-        if (Object.values(WorkItemType).includes(normType as WorkItemType)) {
-          workItem.type = normType as WorkItemType;
-        }
-      }
-      if (prev.dueDate !== undefined) {
-        workItem.dueDate = prev.dueDate ? new Date(prev.dueDate) : null;
-      }
-      if (prev.parentWorkItemId !== undefined || prev.parentId !== undefined) {
-        workItem.parentWorkItemId = prev.parentWorkItemId || prev.parentId || null;
-      }
+//       const prev = targetLog.previousState;
 
-      await workItemRepo.save(workItem);
+//       if (prev.title !== undefined && prev.title !== null) {
+//         workItem.title = String(prev.title).trim();
+//       }
+//       if (prev.description !== undefined) {
+//         workItem.description = prev.description ? String(prev.description).trim() : null;
+//       }
+//       if (prev.status !== undefined && prev.status !== null) {
+//         const normStatus = String(prev.status).toUpperCase().replace(/[-\s]/g, "_");
+//         if (Object.values(WorkItemStatus).includes(normStatus as WorkItemStatus)) {
+//           workItem.status = normStatus as WorkItemStatus;
+//         }
+//       }
+//       if (prev.priority !== undefined && prev.priority !== null) {
+//         const normPriority = String(prev.priority).toUpperCase();
+//         if (Object.values(WorkItemPriority).includes(normPriority as WorkItemPriority)) {
+//           workItem.priority = normPriority as WorkItemPriority;
+//         }
+//       }
+//       if (prev.type !== undefined && prev.type !== null) {
+//         const normType = String(prev.type).toUpperCase();
+//         if (Object.values(WorkItemType).includes(normType as WorkItemType)) {
+//           workItem.type = normType as WorkItemType;
+//         }
+//       }
+//       if (prev.dueDate !== undefined) {
+//         workItem.dueDate = prev.dueDate ? new Date(prev.dueDate) : null;
+//       }
+//       if (prev.parentWorkItemId !== undefined || prev.parentId !== undefined) {
+//         workItem.parentWorkItemId = prev.parentWorkItemId || prev.parentId || null;
+//       }
 
-      if (prev.assigneeId !== undefined || prev.assignees !== undefined || prev.assigneeIds !== undefined) {
-        const assigneeRepo = manager.getRepository(WorkItemAssignee);
-        await assigneeRepo.delete({ workItemId: workItem.id });
-        let userIds: string[] = [];
-        if (Array.isArray(prev.assignees)) {
-          userIds = prev.assignees
-            .map((a: any) => (typeof a === "string" ? a : a.userId || a.id))
-            .filter(Boolean);
-        } else if (Array.isArray(prev.assigneeIds)) {
-          userIds = prev.assigneeIds.filter(Boolean);
-        } else if (prev.assigneeId) {
-          userIds = [prev.assigneeId];
-        }
+//       await workItemRepo.save(workItem);
 
-        if (userIds.length > 0) {
-          const assigneeEntities = userIds.map((uId) =>
-            assigneeRepo.create({
-              workItemId: workItem.id,
-              userId: uId,
-              assignedById: userId,
-            })
-          );
-          await assigneeRepo.save(assigneeEntities);
-        }
-      }
+//       if (prev.assigneeId !== undefined || prev.assignees !== undefined || prev.assigneeIds !== undefined) {
+//         const assigneeRepo = manager.getRepository(WorkItemAssignee);
+//         await assigneeRepo.delete({ workItemId: workItem.id });
+//         let userIds: string[] = [];
+//         if (Array.isArray(prev.assignees)) {
+//           userIds = prev.assignees
+//             .map((a: any) => (typeof a === "string" ? a : a.userId || a.id))
+//             .filter(Boolean);
+//         } else if (Array.isArray(prev.assigneeIds)) {
+//           userIds = prev.assigneeIds.filter(Boolean);
+//         } else if (prev.assigneeId) {
+//           userIds = [prev.assigneeId];
+//         }
 
-      const assignments = await manager.getRepository(WorkItemAssignee).find({
-        where: { workItemId: workItem.id },
-      });
+//         if (userIds.length > 0) {
+//           const assigneeEntities = userIds.map((uId) =>
+//             assigneeRepo.create({
+//               workItemId: workItem.id,
+//               userId: uId,
+//               assignedById: userId,
+//             })
+//           );
+//           await assigneeRepo.save(assigneeEntities);
+//         }
+//       }
 
-      restoredTask = {
-        ...workItem,
-        assignments,
-        assigneeIds: assignments.map((a) => a.userId),
-        assigneeId: assignments[0]?.userId || null,
-      };
-    }
+//       const assignments = await manager.getRepository(WorkItemAssignee).find({
+//         where: { workItemId: workItem.id },
+//       });
 
-    const reversalDesc = `Undid change: ${targetLog.description || targetLog.action}`;
-    const reversalLog = await auditRepo.save(
-      auditRepo.create({
-        organizationId: targetLog.organizationId,
-        projectId: targetLog.projectId,
-        userId: userId,
-        action: "undone",
-        entityType: targetLog.entityType,
-        entityId: targetLog.entityId,
-        description: reversalDesc,
-        previousState: targetLog.newState,
-        newState: targetLog.previousState,
-        isUndone: false,
-      })
-    );
+//       restoredTask = {
+//         ...workItem,
+//         assignments,
+//         assigneeIds: assignments.map((a) => a.userId),
+//         assigneeId: assignments[0]?.userId || null,
+//       };
+//     }
 
-    targetLog.isUndone = true;
-    targetLog.undoneAt = new Date();
-    targetLog.undoneById = userId;
-    targetLog.reversalLogId = reversalLog.id;
-    await auditRepo.save(targetLog);
+//     const reversalDesc = `Undid change: ${targetLog.description || targetLog.action}`;
+//     const reversalLog = await auditRepo.save(
+//       auditRepo.create({
+//         organizationId: targetLog.organizationId,
+//         projectId: targetLog.projectId,
+//         userId: userId,
+//         action: "undone",
+//         entityType: targetLog.entityType,
+//         entityId: targetLog.entityId,
+//         description: reversalDesc,
+//         previousState: targetLog.newState,
+//         newState: targetLog.previousState,
+//         isUndone: false,
+//       })
+//     );
 
-    return {
-      targetLog,
-      reversalLog,
-      restoredTask,
-    };
-  });
+//     targetLog.isUndone = true;
+//     targetLog.undoneAt = new Date();
+//     targetLog.undoneById = userId;
+//     targetLog.reversalLogId = reversalLog.id;
+//     await auditRepo.save(targetLog);
 
-  return res.status(200).json({
-    success: true,
-    message: "Action undone successfully.",
-    data: {
-      undoneLogId: result.targetLog.id,
-      reversalLog: {
-        ...result.reversalLog,
-        timestamp: result.reversalLog.createdAt,
-        actorId: result.reversalLog.userId,
-      },
-      restoredTask: result.restoredTask,
-    },
-  });
-}
+//     return {
+//       targetLog,
+//       reversalLog,
+//       restoredTask,
+//     };
+//   });
+
+//   return res.status(200).json({
+//     success: true,
+//     message: "Action undone successfully.",
+//     data: {
+//       undoneLogId: result.targetLog.id,
+//       reversalLog: {
+//         ...result.reversalLog,
+//         timestamp: result.reversalLog.createdAt,
+//         actorId: result.reversalLog.userId,
+//       },
+//       restoredTask: result.restoredTask,
+//     },
+//   });
+// }
 
 // ==========================================
 // Notifications

@@ -35,11 +35,23 @@ import { SettingsView } from './features/settings/SettingsView';
 import { AuthView } from './features/auth/AuthView';
 import { CompanySetupView } from './features/onboarding/CompanySetupView';
 
+import { ChatView } from './features/chat/ChatView';
+
+import { NotFoundView } from './features/not-found/NotFoundView';
+
+
 function isSettingsTab(tab: string): boolean {
   return (
     tab === 'settings' ||
     tab.startsWith('settings#') ||
     ['workflow', 'dependencies', 'members', 'activity', 'labels', 'danger', 'security', 'general'].includes(tab)
+  );
+}
+
+function isValidProjectTab(tab: string): boolean {
+  return (
+    ['overview', 'dashboard', 'list', 'board', 'timeline', 'calendar', 'sprint'].includes(tab) ||
+    isSettingsTab(tab)
   );
 }
 
@@ -61,7 +73,17 @@ function getSettingsSectionFromTab(tab: string): SettingsSection {
 }
 
 function MainAppShell() {
-  const { activeRoute, projectTab, currentUser, currentProject, currentWorkflow, navigate, isInitializingAuth } = useApp();
+  const {
+    activeRoute,
+    projectTab,
+    currentProjectId,
+    currentProject,
+    currentUser,
+    currentWorkflow,
+    navigate,
+    isInitializingAuth,
+    isLoadingProjectData,
+  } = useApp();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -125,7 +147,11 @@ function MainAppShell() {
     return <CompanySetupView />;
   }
 
-  const isProjectRoute = activeRoute.startsWith('/project/');
+  const routeProjectId = activeRoute.startsWith('/project/')
+    ? (activeRoute.match(/^\/project\/([^/?#]+)/)?.[1] ?? '')
+    : '';
+  const effectiveProjectId = currentProjectId || routeProjectId;
+  const isProjectRoute = activeRoute.startsWith('/project/') && Boolean(effectiveProjectId);
   const hasProjectAccess = currentProject && currentUser?.id ? canUserAccessProject(currentProject, currentUser.id) : true;
 
   return (
@@ -161,20 +187,27 @@ function MainAppShell() {
         <main className="flex-1 overflow-y-auto">
           {isProjectRoute ? (
             !currentProject ? (
-              <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center bg-canvas">
-                <h2 className="text-base font-semibold text-text-primary mb-1">
-                  Project Not Found
-                </h2>
-                <p className="text-xs text-text-muted max-w-sm mb-5">
-                  The requested project does not exist or has been removed.
-                </p>
-                <button
-                  onClick={() => navigate('/projects')}
-                  className="px-3.5 py-1.5 rounded-lg bg-surface border border-border text-xs font-medium text-text-primary hover:bg-surface-hover hover:border-border-strong transition-colors"
-                >
-                  Back to Projects
-                </button>
-              </div>
+              isLoadingProjectData ? (
+                <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center bg-canvas">
+                  <div className="w-8 h-8 rounded-full border-2 border-brand-primary border-t-transparent animate-spin mb-3" />
+                  <span className="text-xs text-text-muted">Loading project...</span>
+                </div>
+              ) : (
+                <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center bg-canvas">
+                  <h2 className="text-base font-semibold text-text-primary mb-1">
+                    Project Not Found
+                  </h2>
+                  <p className="text-xs text-text-muted max-w-sm mb-5">
+                    The requested project does not exist or has been removed.
+                  </p>
+                  <button
+                    onClick={() => navigate('/projects')}
+                    className="px-3.5 py-1.5 rounded-lg bg-surface border border-border text-xs font-medium text-text-primary hover:bg-surface-hover hover:border-border-strong transition-colors"
+                  >
+                    Back to Projects
+                  </button>
+                </div>
+              )
             ) : !hasProjectAccess ? (
               <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center bg-canvas">
                 <div className="w-12 h-12 rounded-xl bg-surface-elevated border border-border flex items-center justify-center text-text-muted mb-4 shadow-xs">
@@ -229,6 +262,7 @@ function MainAppShell() {
                     initialSection={getSettingsSectionFromTab(projectTab)}
                   />
                 )}
+                {!isValidProjectTab(projectTab) && <NotFoundView />}
               </>
             )
           ) : activeRoute === '/my-tasks' ? (
@@ -237,8 +271,14 @@ function MainAppShell() {
             <ProjectsView onOpenCreateProject={() => setCreateProjectOpen(true)} />
           ) : activeRoute === '/settings' ? (
             <SettingsView />
-          ) : (
+
+          ) : activeRoute === '/chat' ? (
+            <ChatView />
+          ) : activeRoute === '/' || activeRoute === '' ? (
+
             <HomeView />
+          ) : (
+            <NotFoundView />
           )}
         </main>
       </div>

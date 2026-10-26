@@ -6,6 +6,8 @@ const project_entity_1 = require("../entities/project.entity");
 const user_entity_1 = require("../entities/user.entity");
 const project_member_entity_1 = require("../entities/project.member.entity");
 const app_error_1 = require("../errors/app.error");
+const notification_entity_1 = require("../entities/notification.entity");
+const notification_service_1 = require("../services/notification.service");
 const getActor = async (req) => {
     const userId = req.user?.id;
     if (!userId) {
@@ -251,8 +253,25 @@ const addProjectMember = async (req, res) => {
             email: targetUser.email,
             role: membership.role,
             joinedAt: membership.joinedAt,
+            projectName: project.name,
+            projectKey: project.key,
         };
     });
+    if (result.userId !== actor.id) {
+        await notification_service_1.notificationService.createNotification({
+            userId: result.userId,
+            organizationId: actor.organizationId,
+            type: notification_entity_1.NotificationType.PROJECT_MEMBER_ADDED,
+            title: "Added to a project",
+            message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
+            projectId,
+            link: `/projects/${projectId}`,
+            metadata: {
+                addedByUserId: actor.id,
+                role: result.role,
+            },
+        });
+    }
     res.status(201).json({
         success: true,
         message: "Project member added successfully.",

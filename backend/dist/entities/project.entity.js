@@ -16,6 +16,7 @@ const user_entity_1 = require("./user.entity");
 const work_item_entity_1 = require("./work.item.entity");
 const project_member_entity_1 = require("./project.member.entity");
 const sprint_entities_1 = require("./sprint.entities");
+const project_label_entity_1 = require("./project.label.entity");
 var ProjectVisibility;
 (function (ProjectVisibility) {
     ProjectVisibility["PRIVATE"] = "PRIVATE";
@@ -102,7 +103,7 @@ __decorate([
     __metadata("design:type", Array)
 ], Project.prototype, "sprints", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)("ProjectLabel", "project"),
+    (0, typeorm_1.OneToMany)(() => project_label_entity_1.ProjectLabel, (label) => label.project),
     __metadata("design:type", Array)
 ], Project.prototype, "labels", void 0);
 __decorate([

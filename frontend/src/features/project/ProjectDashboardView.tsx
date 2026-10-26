@@ -13,7 +13,8 @@ export function ProjectDashboardView() {
   const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!currentProject?.id || !currentProject.id.includes('-')) return;
+    setBackendDashboard(null);
+    if (!currentProject?.id) return;
     let isCancelled = false;
     setIsLoadingDashboard(true);
 

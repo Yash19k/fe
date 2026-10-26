@@ -7,6 +7,7 @@ import {
   STORAGE_KEYS,
 } from '../src/state/storage';
 import { ApiError } from '../src/services/api';
+import { classifyAuthError } from '../src/features/auth/AuthView';
 
 describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests', () => {
   // Mock localStorage for node:test environment
@@ -149,26 +150,6 @@ describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests',
   });
 
   test('TEST 2: Invalid credentials error classification', () => {
-    function classifyAuthError(err: any): string {
-      if (
-        err?.code === 'INVALID_CREDENTIALS' ||
-        err?.status === 401 ||
-        err?.message?.toLowerCase().includes('invalid email or password')
-      ) {
-        return 'Invalid email or password.';
-      } else if (
-        err?.code === 'SERVER_UNREACHABLE' ||
-        err?.status === 0 ||
-        err?.message?.toLowerCase().includes('unable to reach') ||
-        err?.message?.toLowerCase().includes('failed to fetch') ||
-        err?.message?.toLowerCase().includes('network')
-      ) {
-        return 'Unable to connect. Please check your internet connection and try again.';
-      } else {
-        return 'Something went wrong. Please try again later.';
-      }
-    }
-
     // 401 error
     const err401 = new ApiError('Unauthorized', 401, 'INVALID_CREDENTIALS');
     assert.equal(classifyAuthError(err401), 'Invalid email or password.');
@@ -179,65 +160,42 @@ describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests',
   });
 
   test('TEST 8: Network failure error classification', () => {
-    function classifyAuthError(err: any): string {
-      if (
-        err?.code === 'INVALID_CREDENTIALS' ||
-        err?.status === 401 ||
-        err?.message?.toLowerCase().includes('invalid email or password')
-      ) {
-        return 'Invalid email or password.';
-      } else if (
-        err?.code === 'SERVER_UNREACHABLE' ||
-        err?.status === 0 ||
-        err?.message?.toLowerCase().includes('unable to reach') ||
-        err?.message?.toLowerCase().includes('failed to fetch') ||
-        err?.message?.toLowerCase().includes('network')
-      ) {
-        return 'Unable to connect. Please check your internet connection and try again.';
-      } else {
-        return 'Something went wrong. Please try again later.';
-      }
-    }
-
-    // Network / unreachable server error
+    // Network / unreachable server error when backend is not running
     const netErr = new ApiError('Unable to reach backend server', 0, 'SERVER_UNREACHABLE');
     assert.equal(
       classifyAuthError(netErr),
-      'Unable to connect. Please check your internet connection and try again.'
+      'Unable to connect to the TaskFlow server. Please make sure the backend server is running and try again.'
     );
 
     const fetchErr = new TypeError('Failed to fetch');
     assert.equal(
       classifyAuthError(fetchErr),
-      'Unable to connect. Please check your internet connection and try again.'
+      'Unable to connect to the TaskFlow server. Please make sure the backend server is running and try again.'
     );
+
+    // Truly offline browser scenario
+    try {
+      Object.defineProperty(globalThis.navigator, 'onLine', {
+        value: false,
+        configurable: true,
+      });
+      assert.equal(
+        classifyAuthError(netErr),
+        'Unable to connect. Please check your internet connection and try again.'
+      );
+    } finally {
+      Object.defineProperty(globalThis.navigator, 'onLine', {
+        value: true,
+        configurable: true,
+      });
+    }
   });
 
   test('TEST 9: Server 500 failure error classification', () => {
-    function classifyAuthError(err: any): string {
-      if (
-        err?.code === 'INVALID_CREDENTIALS' ||
-        err?.status === 401 ||
-        err?.message?.toLowerCase().includes('invalid email or password')
-      ) {
-        return 'Invalid email or password.';
-      } else if (
-        err?.code === 'SERVER_UNREACHABLE' ||
-        err?.status === 0 ||
-        err?.message?.toLowerCase().includes('unable to reach') ||
-        err?.message?.toLowerCase().includes('failed to fetch') ||
-        err?.message?.toLowerCase().includes('network')
-      ) {
-        return 'Unable to connect. Please check your internet connection and try again.';
-      } else {
-        return 'Something went wrong. Please try again later.';
-      }
-    }
-
     const serverErr = new ApiError('Internal Server Error', 500, 'INTERNAL_ERROR');
     assert.equal(
       classifyAuthError(serverErr),
-      'Something went wrong. Please try again later.'
+      'Internal Server Error'
     );
   });
 
