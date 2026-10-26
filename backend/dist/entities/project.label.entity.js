@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProjectLabel = void 0;
 const typeorm_1 = require("typeorm");
 const project_entity_1 = require("./project.entity");
+const work_item_entity_1 = require("./work.item.entity");
 let ProjectLabel = class ProjectLabel {
 };
 exports.ProjectLabel = ProjectLabel;
@@ -40,10 +41,14 @@ __decorate([
     __metadata("design:type", Date)
 ], ProjectLabel.prototype, "createdAt", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => project_entity_1.Project, { onDelete: "CASCADE" }),
+    (0, typeorm_1.ManyToOne)(() => project_entity_1.Project, (project) => project.labels, { onDelete: "CASCADE" }),
     (0, typeorm_1.JoinColumn)({ name: "project_id" }),
     __metadata("design:type", project_entity_1.Project)
 ], ProjectLabel.prototype, "project", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => work_item_entity_1.WorkItem, (workItem) => workItem.label),
+    __metadata("design:type", Array)
+], ProjectLabel.prototype, "workItems", void 0);
 exports.ProjectLabel = ProjectLabel = __decorate([
     (0, typeorm_1.Entity)({ name: "project_labels" }),
     (0, typeorm_1.Unique)("UQ_project_labels_project_name", ["projectId", "name"]),

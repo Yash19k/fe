@@ -4,6 +4,7 @@ import * as bcrypt from "bcrypt";
 import { AppDataSource } from "../config/data.source";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { Organization } from "../entities/organization.entity";
+import { OrganizationSla } from "../entities/organization.sla.entity";
 import { ProjectMember } from "../entities/project.member.entity";
 import { Project } from "../entities/project.entity";
 import { invitedMembersSchema, onboardingSchema } from "../validations/user.validator";
@@ -83,6 +84,15 @@ export async function registerOrganization(
         passwordHash,
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
+      });
+
+      await m.save(OrganizationSla, {
+        organizationId: org.id,
+        urgentHours: 4,
+        highHours: 8,
+        mediumHours: 24,
+        lowHours: 72,
+        escalateHours: 8,
       });
 
       const { rawRefreshToken, tokenHash, refreshExpiry } =

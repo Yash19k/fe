@@ -6,6 +6,8 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   error?: string;
   helperText?: string;
   icon?: LucideIcon | React.ComponentType<{ size?: number; className?: string }>;
+  rightElement?: React.ReactNode;
+  focusVariant?: 'default' | 'subtle';
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
@@ -14,6 +16,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     error,
     helperText,
     icon: Icon,
+    rightElement,
+    focusVariant = 'default',
     type = 'text',
     className = '',
     id,
@@ -22,6 +26,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   ref
 ) {
   const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+
+  const focusClasses =
+    focusVariant === 'subtle'
+      ? 'focus:ring-1 focus:ring-brand-primary/25 focus:border-brand-primary/60'
+      : 'focus:ring-1 focus:ring-brand-primary focus:border-brand-primary';
 
   return (
     <div className="w-full space-y-1.5">
@@ -40,15 +49,20 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           ref={ref}
           id={inputId}
           type={type}
-          className={`w-full rounded-lg bg-surface border text-sm text-text-primary placeholder:text-text-muted transition-colors focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary ${
-            Icon ? 'pl-9 pr-3' : 'px-3'
-          } h-9 ${
+          className={`w-full rounded-lg bg-surface border text-sm text-text-primary placeholder:text-text-muted transition-colors focus:outline-none ${focusClasses} ${
+            Icon ? 'pl-9' : 'pl-3'
+          } ${rightElement ? 'pr-10' : 'pr-3'} h-9 ${
             error
               ? 'border-rose-500/80 focus:ring-rose-500 focus:border-rose-500'
               : 'border-border hover:border-border-strong'
           } ${className}`}
           {...props}
         />
+        {rightElement && (
+          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
+            {rightElement}
+          </div>
+        )}
       </div>
       {error && <p className="text-xs text-rose-400 mt-1">{error}</p>}
       {helperText && !error && <p className="text-xs text-text-muted mt-1">{helperText}</p>}

@@ -95,7 +95,13 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
     setSprints((prev) => {
       const merged = new Map(prev.map((sprint) => [sprint.id, sprint]));
       projectSprints.forEach((sprint) => merged.set(sprint.id, sprint));
-      return Array.from(merged.values());
+      const list = Array.from(merged.values());
+      setSelectedSprintId((current) => {
+        if (current && list.some((s) => s.id === current)) return current;
+        const active = list.find((s: Sprint) => s.status === 'ACTIVE');
+        return active ? active.id : (list[0]?.id || '');
+      });
+      return list;
     });
   }, [projectSprints]);
 
@@ -370,33 +376,15 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               </span>
             </div>
 
-            {/* Visual Multi-Color Progress Bar */}
-            <div className="w-full h-3 rounded-full bg-surface-elevated overflow-hidden flex border border-border">
-              {metrics.total > 0 ? (
-                <>
-                  <div
-                    style={{ width: `${(metrics.completed / metrics.total) * 100}%` }}
-                    className="bg-emerald-500 transition-all duration-300"
-                    title={`Completed: ${metrics.completed}`}
-                  />
-                  <div
-                    style={{ width: `${(metrics.inProgress / metrics.total) * 100}%` }}
-                    className="bg-brand-primary transition-all duration-300"
-                    title={`In Progress: ${metrics.inProgress}`}
-                  />
-                  <div
-                    style={{
-                      width: `${
-                        ((metrics.total - metrics.completed - metrics.inProgress) / metrics.total) * 100
-                      }%`,
-                    }}
-                    className="bg-surface-elevated transition-all duration-300"
-                    title={`Backlog/Planned: ${metrics.total - metrics.completed - metrics.inProgress}`}
-                  />
-                </>
-              ) : (
-                <div className="w-full h-full bg-surface-elevated" />
-              )}
+            {/* Visual Progress Bar */}
+            <div className="w-full h-3 rounded-full bg-surface-elevated overflow-hidden border border-border">
+              <div
+                style={{
+                  width: `${Math.min(100, Math.max(0, metrics.completionPercentage))}%`,
+                }}
+                className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                title={`Delivery progress: ${metrics.completed} of ${metrics.total} items completed (${metrics.completionPercentage}%)`}
+              />
             </div>
 
             {/* Status Legend Pills */}

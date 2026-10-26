@@ -364,5 +364,8 @@ export interface AppContextValue {
   logout?: () => Promise<void>;
   isLoadingBackend?: boolean;
   isInitializingAuth?: boolean;
+  isLoadingProjectData?: boolean;
+  projectDataError?: string | null;
+  reloadProjectData?: () => Promise<void>;
   [key: string]: any;
 }

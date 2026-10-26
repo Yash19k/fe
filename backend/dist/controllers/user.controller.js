@@ -48,6 +48,7 @@ const crypto_1 = require("crypto");
 const data_source_1 = require("../config/data.source");
 const user_entity_1 = require("../entities/user.entity");
 const organization_entity_1 = require("../entities/organization.entity");
+const organization_sla_entity_1 = require("../entities/organization.sla.entity");
 const user_session_entity_1 = require("../entities/user.session.entity");
 const user_validator_1 = require("../validations/user.validator");
 const app_error_1 = require("../errors/app.error");
@@ -129,6 +130,14 @@ async function registerOrganization(req, res) {
             passwordHash,
             role: user_entity_1.UserRole.ADMIN,
             status: user_entity_1.UserStatus.ACTIVE,
+        });
+        await m.save(organization_sla_entity_1.OrganizationSla, {
+            organizationId: org.id,
+            urgentHours: 4,
+            highHours: 8,
+            mediumHours: 24,
+            lowHours: 72,
+            escalateHours: 8,
         });
         return { org, newUser };
     });

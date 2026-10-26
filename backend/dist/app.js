@@ -14,6 +14,7 @@ const work_item_routes_1 = __importDefault(require("./routes/work.item.routes"))
 const sprint_routes_1 = __importDefault(require("./routes/sprint.routes"));
 const dashboard_route_1 = __importDefault(require("./routes/dashboard.route"));
 const notification_routes_1 = __importDefault(require("./routes/notification.routes"));
+const sla_routes_1 = __importDefault(require("./routes/sla.routes"));
 const error_handler_1 = require("./middleware/error.handler");
 const config_1 = require("./config/config");
 exports.app = (0, express_1.default)();
@@ -39,6 +40,8 @@ exports.app.use("/api/work-items", work_item_routes_1.default);
 exports.app.use("/api/organizations", organization_routes_1.default);
 exports.app.use("/api/organization", organization_routes_1.default);
 exports.app.use("/api/notifications", notification_routes_1.default);
+exports.app.use("/api/sla", sla_routes_1.default);
+exports.app.use("/api/organization/sla", sla_routes_1.default);
 exports.app.use("/api", sprint_routes_1.default);
 exports.app.use("/api", dashboard_route_1.default);
 exports.app.get("/", (_req, res) => {

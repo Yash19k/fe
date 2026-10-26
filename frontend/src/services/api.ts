@@ -713,9 +713,36 @@ export async function saveProjectWorkflowApi(
 // Audit Logs
 // ==========================================
 
-export async function getProjectAuditLogsApi(projectId: string): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>(
-    `/api/projects/${encodeURIComponent(projectId)}/audit-logs`,
+export interface AuditPaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface GetProjectAuditLogsResponse {
+  success: boolean;
+  count?: number;
+  data: any[];
+  pagination?: AuditPaginationMeta;
+}
+
+export async function getProjectAuditLogsApi(
+  projectId: string,
+  page?: number,
+  limit?: number
+): Promise<GetProjectAuditLogsResponse> {
+  const query = new URLSearchParams();
+  if (page !== undefined && page !== null) {
+    query.set('page', String(page));
+  }
+  if (limit !== undefined && limit !== null) {
+    query.set('limit', String(limit));
+  }
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+
+  return request<GetProjectAuditLogsResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/audit-logs${queryString}`,
     { method: 'GET' }
   );
 }
@@ -759,22 +786,37 @@ export async function undoAuditLogApi(
 // ==========================================
 
 export async function getUserNotificationsApi(): Promise<{ success: boolean; count: number; data: any[] }> {
-  return request<{ success: boolean; count: number; data: any[] }>('/api/notifications', {
-    method: 'GET',
-  });
+  try {
+    return await request<{ success: boolean; count: number; data: any[] }>('/api/notifications', {
+      method: 'GET',
+    });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking notifications fetch failure:', err?.message || err);
+    return { success: false, count: 0, data: [] };
+  }
 }
 
 export async function markNotificationReadApi(notificationId: string): Promise<{ success: boolean; data: any }> {
-  return request<{ success: boolean; data: any }>(
-    `/api/notifications/${encodeURIComponent(notificationId)}/read`,
-    { method: 'PATCH' }
-  );
+  try {
+    return await request<{ success: boolean; data: any }>(
+      `/api/notifications/${encodeURIComponent(notificationId)}/read`,
+      { method: 'PATCH' }
+    );
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark notification read notice:', err?.message || err);
+    return { success: false, data: null };
+  }
 }
 
 export async function markAllNotificationsReadApi(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/api/notifications/read-all', {
-    method: 'PATCH',
-  });
+  try {
+    return await request<{ success: boolean; message: string }>('/api/notifications/read-all', {
+      method: 'PATCH',
+    });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark all notifications read notice:', err?.message || err);
+    return { success: false, message: err?.message || 'Failed' };
+  }
 }
 
 export async function createNotificationApi(payload: {
@@ -937,6 +979,7 @@ export function backendWorkItemToTask(item: any, currentProjectId: string): Task
   return {
     id: item.id,
     projectId: item.projectId || currentProjectId,
+    sectionId: item.sectionId || item.section_id || item.section || undefined,
     parentId: item.parentWorkItemId || null,
     title: item.title,
     description: item.description || '',

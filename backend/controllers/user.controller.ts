@@ -7,6 +7,7 @@ import { createHash, randomBytes } from "crypto";
 import { AppDataSource } from "../config/data.source";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { Organization } from "../entities/organization.entity";
+import { OrganizationSla } from "../entities/organization.sla.entity";
 import { UserSession } from "../entities/user.session.entity";
 import { loginSchema, onboardingSchema } from "../validations/user.validator";
 import { AppError } from "../errors/app.error";
@@ -138,6 +139,15 @@ export async function registerOrganization(req: Request, res: Response) {
       passwordHash,
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
+    });
+
+    await m.save(OrganizationSla, {
+      organizationId: org.id,
+      urgentHours: 4,
+      highHours: 8,
+      mediumHours: 24,
+      lowHours: 72,
+      escalateHours: 8,
     });
 
     return { org, newUser };

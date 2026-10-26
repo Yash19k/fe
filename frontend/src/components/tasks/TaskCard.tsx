@@ -15,7 +15,7 @@ export interface TaskCardProps {
 }
 
 export function TaskCard({ task, onDragStart }: TaskCardProps) {
-  const { openTaskDrawer, changeTaskStatus, allUsers, currentWorkflow, tasks } = useApp();
+  const { openTaskDrawer, allUsers, tasks } = useApp();
 
   const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
   const isBlocked = isTaskBlocked(task, tasks);
@@ -99,25 +99,6 @@ export function TaskCard({ task, onDragStart }: TaskCardProps) {
         </div>
 
         <Avatar user={assignee} size="xs" />
-      </div>
-
-      {/* Accessible status changer dropdown (hidden until hover or focus) */}
-      <div
-        className="opacity-0 group-hover:opacity-100 transition-opacity pt-1 flex justify-end"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <select
-          value={task.status}
-          onChange={(e) => changeTaskStatus(task.id, e.target.value)}
-          className="text-[10px] bg-surface-elevated border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none"
-          title="Move status"
-        >
-          {currentWorkflow?.statuses?.map((st) => (
-            <option key={st.id} value={st.name}>
-              Move to: {st.name}
-            </option>
-          ))}
-        </select>
       </div>
     </div>
   );

@@ -9,10 +9,22 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Notification = void 0;
+exports.Notification = exports.NotificationType = void 0;
 const typeorm_1 = require("typeorm");
 const user_entity_1 = require("./user.entity");
 const organization_entity_1 = require("./organization.entity");
+var NotificationType;
+(function (NotificationType) {
+    NotificationType["TASK_ASSIGNED"] = "TASK_ASSIGNED";
+    NotificationType["TASK_UPDATED"] = "TASK_UPDATED";
+    NotificationType["TASK_COMPLETED"] = "TASK_COMPLETED";
+    NotificationType["TASK_OVERDUE"] = "TASK_OVERDUE";
+    NotificationType["TASK_MENTIONED"] = "TASK_MENTIONED";
+    NotificationType["SLA_ESCALATED"] = "SLA_ESCALATED";
+    NotificationType["RECURRING_TASK_CREATED"] = "RECURRING_TASK_CREATED";
+    NotificationType["RECURRING_TASK_FAILED"] = "RECURRING_TASK_FAILED";
+    NotificationType["PROJECT_MEMBER_ADDED"] = "PROJECT_MEMBER_ADDED";
+})(NotificationType || (exports.NotificationType = NotificationType = {}));
 let Notification = class Notification {
 };
 exports.Notification = Notification;
@@ -29,6 +41,14 @@ __decorate([
     __metadata("design:type", String)
 ], Notification.prototype, "organizationId", void 0);
 __decorate([
+    (0, typeorm_1.Column)({
+        type: "enum",
+        enum: NotificationType,
+        enumName: "notifications_type_enum",
+    }),
+    __metadata("design:type", String)
+], Notification.prototype, "type", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: "varchar", length: 255 }),
     __metadata("design:type", String)
 ], Notification.prototype, "title", void 0);
@@ -41,9 +61,35 @@ __decorate([
     __metadata("design:type", Boolean)
 ], Notification.prototype, "read", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "read_at", type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], Notification.prototype, "readAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "work_item_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], Notification.prototype, "workItemId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "project_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], Notification.prototype, "projectId", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: "varchar", length: 255, nullable: true }),
     __metadata("design:type", Object)
 ], Notification.prototype, "link", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: "deduplication_key",
+        type: "varchar",
+        length: 255,
+        nullable: true,
+        unique: true,
+    }),
+    __metadata("design:type", Object)
+], Notification.prototype, "deduplicationKey", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb", nullable: true }),
+    __metadata("design:type", Object)
+], Notification.prototype, "metadata", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)({ name: "created_at", type: "timestamptz" }),
     __metadata("design:type", Date)

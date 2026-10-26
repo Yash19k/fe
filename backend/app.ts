@@ -9,6 +9,7 @@ import workItemRoutes from "./routes/work.item.routes";
 import sprintRoutes from "./routes/sprint.routes";
 import dashboardRoutes from "./routes/dashboard.route";
 import notificationRoutes from "./routes/notification.routes";
+import slaRoutes from "./routes/sla.routes";
 import { errorHandler } from "./middleware/error.handler";
 import { config } from "./config/config";
 
@@ -39,6 +40,8 @@ app.use("/api/work-items", workItemRoutes);
 app.use("/api/organizations", organizationRoutes);
 app.use("/api/organization", organizationRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/sla", slaRoutes);
+app.use("/api/organization/sla", slaRoutes);
 app.use("/api", sprintRoutes);
 app.use("/api", dashboardRoutes);
 

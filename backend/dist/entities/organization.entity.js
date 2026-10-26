@@ -13,6 +13,7 @@ exports.Organization = void 0;
 const typeorm_1 = require("typeorm");
 const user_entity_1 = require("./user.entity");
 const project_entity_1 = require("./project.entity");
+const organization_sla_entity_1 = require("./organization.sla.entity");
 let Organization = class Organization {
 };
 exports.Organization = Organization;
@@ -40,6 +41,10 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => project_entity_1.Project, (project) => project.organization),
     __metadata("design:type", Array)
 ], Organization.prototype, "projects", void 0);
+__decorate([
+    (0, typeorm_1.OneToOne)(() => organization_sla_entity_1.OrganizationSla, (sla) => sla.organization),
+    __metadata("design:type", organization_sla_entity_1.OrganizationSla)
+], Organization.prototype, "slaPolicy", void 0);
 exports.Organization = Organization = __decorate([
     (0, typeorm_1.Entity)({ name: "organizations" })
 ], Organization);

@@ -3,7 +3,7 @@ import { app } from "./app";
 // import { app } from "./src/app"; 
 import { config } from "./config/config";
 import { AppDataSource } from "./config/data.source";
-import { refreshSlaStatuses } from "./services/sla.service";
+import { startScheduler, stopScheduler } from "./services/scheduler.service";
 
 async function startServer(): Promise<void> {
   try {
@@ -18,12 +18,8 @@ async function startServer(): Promise<void> {
 
     console.log("Database connected successfully.");
 
-    const slaIntervalMs = Number(process.env.SLA_CHECK_INTERVAL_MS ?? 60000);
-    const slaTimer = setInterval(() => {
-      void AppDataSource.transaction((manager) => refreshSlaStatuses(manager))
-        .catch((error) => console.error("SLA status refresh failed:", error));
-    }, Math.max(10000, slaIntervalMs));
-    slaTimer.unref();
+    // Start background schedulers for automated SLA escalation and recurring tasks
+    startScheduler();
 
     const server = app.listen(config.port, config.host, () => {
       console.log(
@@ -32,6 +28,7 @@ async function startServer(): Promise<void> {
     });
 
     server.on("error", (error: NodeJS.ErrnoException) => {
+      stopScheduler();
       if (error.code === "EADDRINUSE") {
         console.error(
           `Port ${config.port} is already in use. Stop the existing backend process or set a different PORT before starting TaskFlow.`,
@@ -45,6 +42,7 @@ async function startServer(): Promise<void> {
     });
 
     server.on("close", () => {
+      stopScheduler();
       console.error("HTTP server closed.");
     });
   } catch (error) {

@@ -3,7 +3,6 @@ import {
   CheckSquare,
   LayoutDashboard,
   Plus,
-  Radio,
   ChevronRight,
   Lock,
 } from 'lucide-react';
@@ -24,7 +23,6 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
     currentUser,
     activeRoute,
     navigate,
-    crossTabIndicator,
   } = useApp();
 
   const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
@@ -48,29 +46,16 @@ export function WorkspaceSidebar({ isOpen, onClose, onOpenCreateProject }: Works
         }`}
       >
         {/* Workspace Brand / Header */}
-        <div className="flex items-center justify-between h-14 px-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center h-14 px-4 border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <div className="w-6 h-6 rounded-md bg-brand-primary flex items-center justify-center font-bold text-xs text-white shadow-xs">
               TF
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <span className="text-sm font-semibold text-text-primary tracking-tight block truncate">
                 {currentCompany?.name || 'TaskFlow Workspace'}
               </span>
             </div>
-          </div>
-
-          {/* Cross-tab real-time sync pill */}
-          <div
-            className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-all duration-300 ${
-              crossTabIndicator
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
-                : 'text-text-muted bg-surface/50 border border-border/50'
-            }`}
-            title="Real-time multi-tab synchronization"
-          >
-            <Radio size={10} className={crossTabIndicator ? 'text-emerald-400' : 'text-text-muted'} />
-            <span className="hidden sm:inline">Sync</span>
           </div>
         </div>
 

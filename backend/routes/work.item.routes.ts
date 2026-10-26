@@ -3,6 +3,9 @@ import {
   validateCreateWorkItem,
   validateUpdateWorkItem,
   validateViewProjectWorkItems,
+  validateWorkItemId,
+  validateWorkItemDependencyParams,
+  validateWorkItemDependencyBody,
 } from "../validations/work.item.validations";
 
 import { isLoggedIn } from "../middleware/is.loggedin";
@@ -42,6 +45,7 @@ router.post(
 router.patch(
   "/:workItemId",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("task:update"),
   validateUpdateWorkItem,
   asyncHandler(updateWorkItem)
@@ -50,6 +54,7 @@ router.patch(
 router.patch(
   "/:workItemId/escalate",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("sla:manage"),
   asyncHandler(escalateWorkItem),
 );
@@ -57,6 +62,7 @@ router.patch(
 router.get(
   "/:workItemId/sla",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("sla:view"),
   asyncHandler(getWorkItemSla),
 );
@@ -64,6 +70,7 @@ router.get(
 router.get(
   "/:workItemId/sla/audit",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("sla:audit"),
   asyncHandler(getWorkItemSlaAudit),
 );
@@ -71,6 +78,7 @@ router.get(
 router.post(
   "/:workItemId/escalate/resolve",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("sla:resolve"),
   asyncHandler(resolveWorkItemEscalation),
 );
@@ -78,6 +86,7 @@ router.post(
 router.delete(
   "/:workItemId",
   isLoggedIn,
+  validateWorkItemId,
   requireProjectPermission("task:delete"),
   asyncHandler(deleteWorkItem)
 );
@@ -94,11 +103,13 @@ router.get(
 router.post(
   "/:workItemId/comments",
   isLoggedIn,
+  validateWorkItemId,
   asyncHandler(addWorkItemComment)
 );
 router.get(
   "/:workItemId/comments",
   isLoggedIn,
+  validateWorkItemId,
   asyncHandler(getWorkItemComments)
 );
 
@@ -106,11 +117,13 @@ router.get(
 router.post(
   "/:workItemId/time-entries",
   isLoggedIn,
+  validateWorkItemId,
   asyncHandler(addWorkItemTimeEntry)
 );
 router.get(
   "/:workItemId/time-entries",
   isLoggedIn,
+  validateWorkItemId,
   asyncHandler(getWorkItemTimeEntries)
 );
 
@@ -118,16 +131,20 @@ router.get(
 router.post(
   "/:workItemId/dependencies",
   isLoggedIn,
+  validateWorkItemId,
+  validateWorkItemDependencyBody,
   asyncHandler(addWorkItemDependency)
 );
 router.get(
   "/:workItemId/dependencies",
   isLoggedIn,
+  validateWorkItemId,
   asyncHandler(getWorkItemDependencies)
 );
 router.delete(
   "/:workItemId/dependencies/:depId",
   isLoggedIn,
+  validateWorkItemDependencyParams,
   asyncHandler(deleteWorkItemDependency)
 );
 

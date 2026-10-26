@@ -17,6 +17,7 @@ import { User } from "./user.entity";
 import { WorkItem } from "./work.item.entity";
 import { ProjectMember } from "./project.member.entity";
 import { Sprint } from "./sprint.entities";
+import { ProjectLabel } from "./project.label.entity";
 
 export enum ProjectVisibility {
   PRIVATE = "PRIVATE",
@@ -93,8 +94,8 @@ export class Project {
   @OneToMany(() => Sprint, (sprint) => sprint.project)
   sprints!: Sprint[];
 
-  @OneToMany("ProjectLabel", "project")
-  labels: any[];
+  @OneToMany(() => ProjectLabel, (label) => label.project)
+  labels!: ProjectLabel[];
 
   @OneToOne("ProjectWorkflow", "project")
   workflow: any;

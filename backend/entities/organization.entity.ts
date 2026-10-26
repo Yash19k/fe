@@ -5,10 +5,11 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  OneToOne,
 } from "typeorm";
 import { User } from "./user.entity";
 import { Project } from "./project.entity";
-
+import { OrganizationSla } from "./organization.sla.entity";
 
 @Entity({ name: "organizations" })
 export class Organization {
@@ -24,11 +25,12 @@ export class Organization {
   @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 
- 
   @OneToMany(() => User, (user) => user.organization)
   users: User[];
 
- 
   @OneToMany(() => Project, (project) => project.organization)
   projects: Project[];
+
+  @OneToOne(() => OrganizationSla, (sla) => sla.organization)
+  slaPolicy: OrganizationSla;
 }

@@ -47,7 +47,8 @@ export function ProjectOverviewView() {
 
   // Fetch project dashboard metrics from backend
   useEffect(() => {
-    if (!currentProject?.id || !currentProject.id.includes('-')) return;
+    setBackendDashboard(null);
+    if (!currentProject?.id) return;
     let isCancelled = false;
     setIsLoadingDashboard(true);
 
