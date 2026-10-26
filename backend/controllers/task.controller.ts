@@ -1,24 +1,17 @@
-
 import { Request, Response } from "express";
 import { In } from "typeorm";
-
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
-import {
-  Project,
-  ProjectVisibility,
-} from "../entities/project.entity";
+import { Project,  ProjectVisibility,} from "../entities/project.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
-import {
-  WorkItem,
-  WorkItemType,
-  WorkItemStatus,
-  WorkItemPriority,
-  SlaStatus,
-} from "../entities/work.item.entity";
+import {  WorkItem,  WorkItemType,  WorkItemStatus,  WorkItemPriority,  SlaStatus,} from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { Sprint } from "../entities/sprint.entities";
+
+import {  WorkItemRecurrence,  RecurrenceFrequency,  MonthlyPattern,} from "../entities/work.item.recurrence.entity";
+
+
 import { ProjectLabel } from "../entities/project.label.entity";
 import { OrganizationSla } from "../entities/organization.sla.entity";
 import {
@@ -45,11 +38,9 @@ import {
   getSlaSnapshot,
   writeSlaAudit,
 } from "../services/sla.service";
+
 import { authorizeProjectPermission } from "../middleware/project.permission";
-import {
-  getPagination,
-  getPaginationMeta,
-} from "../utils/pagination";
+import {  getPagination,  getPaginationMeta,} from "../utils/pagination";
 
 interface AssigneeInput {
   userId: string;
@@ -550,6 +541,28 @@ export const createWorkItem = async (
 
     const savedWorkItem = await workItemRepository.save(workItem);
 
+    savedWorkItem.slaDeadline = slaDeadline
+      ? new Date(slaDeadline)
+      : calculateSlaDeadline(savedWorkItem.createdAt, priority);
+    savedWorkItem.slaDeadlineIsCustom = Boolean(slaDeadline);
+    applySlaState(savedWorkItem);
+    await workItemRepository.save(savedWorkItem);
+    // audit creation of work item
+    await writeSlaAudit(
+      manager,
+      savedWorkItem,
+      actor.id,
+      "sla_initialized",
+      "Initialized SLA for work item",
+      null,
+      {
+        deadline: savedWorkItem.slaDeadline,
+        status: savedWorkItem.slaStatus,
+        custom: savedWorkItem.slaDeadlineIsCustom,
+      },
+    );
+
+
     if (slaDeadline && !savedWorkItem.priority) {
       throw new AppError(
         "A priority is required to configure an SLA deadline",
@@ -589,6 +602,7 @@ export const createWorkItem = async (
       clearSlaState(savedWorkItem);
       await workItemRepository.save(savedWorkItem);
     }
+
 
     if (assignees.length > 0) {
       const assignments = assignees.map((assignee) =>

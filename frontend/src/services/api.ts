@@ -519,6 +519,48 @@ export async function getOrganizationUsersApi(): Promise<{ success: boolean; cou
   });
 }
 
+export type ChatConversation = {
+  id: string;
+  organizationId: string;
+  projectId: string | null;
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
+  name: string | null;
+  createdAt: string;
+  updatedAt: string;
+  otherParticipant?: { id: string; fullName?: string | null; email: string } | null;
+  members?: Array<{ id: string; userId: string; user?: { id: string; fullName?: string; email: string } }>;
+};
+
+export type ChatMessage = {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  content: string;
+  createdAt: string;
+};
+
+export async function getChatConversationsApi(): Promise<{ success: boolean; data: ChatConversation[] }> {
+  return request('/api/conversations', { method: 'GET' });
+}
+
+export async function createChatConversationApi(input: {
+  organizationId: string;
+  type: ChatConversation['type'];
+  name?: string;
+  memberIds: string[];
+}): Promise<{ success: boolean; data: ChatConversation }> {
+  return request('/api/conversations', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function getChatMessagesApi(
+  conversationId: string,
+  before?: string,
+): Promise<{ success: boolean; data: ChatMessage[] }> {
+  const query = new URLSearchParams({ limit: '100' });
+  if (before) query.set('before', before);
+  return request(`/api/conversations/${conversationId}/messages?${query.toString()}`, { method: 'GET' });
+}
+
 export async function getOrganizationMembersApi(): Promise<{ success: boolean; count: number; data: any[] }> {
   return request<{ success: boolean; count: number; data: any[] }>('/api/organizations/members', {
     method: 'GET',

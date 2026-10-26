@@ -201,13 +201,7 @@ export const createSprint = async (
   const organizationId = authReq.user.organizationId;
   const projectId = getProjectId(req);
 
-  const {
-    name,
-    goal,
-    startDate,
-    endDate,
-    workItemIds = [],
-  } = req.body as CreateSprintInput;
+  const { name, goal,startDate,endDate, workItemIds = [], } = req.body as CreateSprintInput;
 
   if (!Array.isArray(workItemIds)) {
     throw new AppError(

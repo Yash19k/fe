@@ -34,7 +34,11 @@ import { ProjectSettingsView, SettingsSection } from './features/project/Project
 import { SettingsView } from './features/settings/SettingsView';
 import { AuthView } from './features/auth/AuthView';
 import { CompanySetupView } from './features/onboarding/CompanySetupView';
+
+import { ChatView } from './features/chat/ChatView';
+
 import { NotFoundView } from './features/not-found/NotFoundView';
+
 
 function isSettingsTab(tab: string): boolean {
   return (
@@ -267,7 +271,13 @@ function MainAppShell() {
             <ProjectsView onOpenCreateProject={() => setCreateProjectOpen(true)} />
           ) : activeRoute === '/settings' ? (
             <SettingsView />
+
+          ) : activeRoute === '/chat' ? (
+            <ChatView />
+          ) : (
+
           ) : activeRoute === '/' || activeRoute === '' ? (
+
             <HomeView />
           ) : (
             <NotFoundView />
