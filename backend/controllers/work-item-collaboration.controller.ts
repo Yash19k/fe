@@ -1,0 +1,294 @@
+import { Request, Response } from "express";
+import { AppDataSource } from "../config/data.source";
+import { WorkItemComment } from "../entities/work.item.comment.entity";
+import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
+import { WorkItemDependency } from "../entities/work.item.dependency.entity";
+import { WorkItem } from "../entities/work.item.entity";
+import { ProjectMember } from "../entities/project.member.entity";
+import { UserRole } from "../entities/user.entity";
+import { AppError } from "../errors/app.error";
+
+/**
+ * Validates that the work item exists, belongs to the user's organization,
+ * and that the user is authorized to view/access the parent project.
+ */
+async function assertWorkItemAccess(
+  workItemId: string,
+  req: Request,
+): Promise<WorkItem> {
+  const userId = req.user?.id;
+  const organizationId = req.user?.organizationId;
+
+  if (!userId || !organizationId) {
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  }
+
+  const workItem = await AppDataSource.getRepository(WorkItem).findOne({
+    where: { id: workItemId },
+    select: { id: true, projectId: true, organizationId: true },
+  });
+
+  if (!workItem || workItem.organizationId !== organizationId) {
+    throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+  }
+
+  // Organization admins have access to all projects in the org
+  if (req.user?.role === UserRole.ADMIN) {
+    return workItem;
+  }
+
+  // Verify membership in the project
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId: workItem.projectId, userId },
+  });
+
+  if (!membership) {
+    throw new AppError(
+      "You do not have access to this work item's project.",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  return workItem;
+}
+
+// ==========================================
+// Comments
+// ==========================================
+
+export async function addWorkItemComment(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+  const text = req.body.body || req.body.content || req.body.text;
+  const userId = req.user?.id;
+
+  if (!text || typeof text !== "string" || !text.trim()) {
+    throw new AppError("Comment body is required.", 400, "VALIDATION_ERROR");
+  }
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const commentRepo = AppDataSource.getRepository(WorkItemComment);
+  const comment = await commentRepo.save(
+    commentRepo.create({
+      workItemId,
+      authorId: userId!,
+      body: text.trim(),
+    }),
+  );
+
+  return res.status(201).json({
+    success: true,
+    data: {
+      id: comment.id,
+      workItemId: comment.workItemId,
+      authorId: comment.authorId,
+      userId: comment.authorId,
+      body: comment.body,
+      content: comment.body,
+      text: comment.body,
+      createdAt: comment.createdAt,
+    },
+  });
+}
+
+export async function getWorkItemComments(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const comments = await AppDataSource.getRepository(WorkItemComment).find({
+    where: { workItemId },
+    relations: { author: true },
+    order: { createdAt: "ASC" },
+  });
+
+  return res.json({
+    success: true,
+    data: comments.map((c) => ({
+      id: c.id,
+      workItemId: c.workItemId,
+      authorId: c.authorId,
+      userId: c.authorId,
+      authorName: c.author?.fullName || c.author?.email || "User",
+      body: c.body,
+      content: c.body,
+      text: c.body,
+      createdAt: c.createdAt,
+    })),
+  });
+}
+
+// ==========================================
+// Time Entries
+// ==========================================
+
+export async function addWorkItemTimeEntry(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+  const durationMinutes =
+    req.body.durationMinutes !== undefined
+      ? Number(req.body.durationMinutes)
+      : req.body.hours !== undefined
+        ? Math.round(Number(req.body.hours) * 60)
+        : 0;
+  const description = req.body.description || req.body.note || "";
+  const startTime = req.body.startTime || req.body.date;
+  const userId = req.user?.id;
+
+  const duration = Number(durationMinutes);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new AppError(
+      "durationMinutes or hours must be a positive number.",
+      400,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const timeEntryRepo = AppDataSource.getRepository(WorkItemTimeEntry);
+  const entry = await timeEntryRepo.save(
+    timeEntryRepo.create({
+      workItemId,
+      userId: userId!,
+      durationMinutes: duration,
+      description: description ? String(description).trim() : null,
+      startTime: startTime ? new Date(startTime) : new Date(),
+    }),
+  );
+
+  return res.status(201).json({
+    success: true,
+    data: {
+      id: entry.id,
+      workItemId: entry.workItemId,
+      userId: entry.userId,
+      durationMinutes: entry.durationMinutes,
+      hours: Number((entry.durationMinutes / 60).toFixed(2)),
+      description: entry.description,
+      note: entry.description,
+      startTime: entry.startTime,
+      createdAt: entry.createdAt,
+    },
+  });
+}
+
+export async function getWorkItemTimeEntries(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const entries = await AppDataSource.getRepository(WorkItemTimeEntry).find({
+    where: { workItemId },
+    relations: { user: true },
+    order: { startTime: "DESC" },
+  });
+
+  return res.json({
+    success: true,
+    data: entries.map((e) => ({
+      id: e.id,
+      workItemId: e.workItemId,
+      userId: e.userId,
+      userName: e.user?.fullName || e.user?.email || "User",
+      durationMinutes: e.durationMinutes,
+      hours: Number((e.durationMinutes / 60).toFixed(2)),
+      description: e.description,
+      note: e.description,
+      startTime: e.startTime,
+      createdAt: e.createdAt,
+    })),
+  });
+}
+
+// ==========================================
+// Dependencies
+// ==========================================
+
+export async function addWorkItemDependency(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+  const dependsOnWorkItemId = String(req.body.dependsOnWorkItemId || "").trim();
+
+  if (!dependsOnWorkItemId) {
+    throw new AppError(
+      "dependsOnWorkItemId is required.",
+      400,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  if (workItemId === dependsOnWorkItemId) {
+    throw new AppError(
+      "A work item cannot depend on itself.",
+      400,
+      "INVALID_DEPENDENCY",
+    );
+  }
+
+  const primaryWorkItem = await assertWorkItemAccess(workItemId, req);
+
+  // Verify the dependency target belongs to the same organization and project
+  const targetWorkItem = await AppDataSource.getRepository(WorkItem).findOne({
+    where: { id: dependsOnWorkItemId },
+    select: { id: true, projectId: true, organizationId: true },
+  });
+
+  if (
+    !targetWorkItem ||
+    targetWorkItem.organizationId !== primaryWorkItem.organizationId ||
+    targetWorkItem.projectId !== primaryWorkItem.projectId
+  ) {
+    throw new AppError(
+      "Dependent work item must exist in the same project and organization.",
+      400,
+      "INVALID_DEPENDENCY",
+    );
+  }
+
+  const repo = AppDataSource.getRepository(WorkItemDependency);
+  const existing = await repo.findOne({
+    where: { workItemId, dependsOnWorkItemId },
+  });
+
+  if (existing) {
+    return res.json({ success: true, data: existing });
+  }
+
+  const dep = await repo.save(
+    repo.create({
+      workItemId,
+      dependsOnWorkItemId,
+    }),
+  );
+
+  return res.status(201).json({ success: true, data: dep });
+}
+
+export async function getWorkItemDependencies(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const deps = await AppDataSource.getRepository(WorkItemDependency).find({
+    where: { workItemId },
+  });
+
+  return res.json({
+    success: true,
+    data: deps.map((d) => d.dependsOnWorkItemId),
+  });
+}
+
+export async function deleteWorkItemDependency(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+  const depId = String(req.params.depId);
+
+  await assertWorkItemAccess(workItemId, req);
+
+  await AppDataSource.getRepository(WorkItemDependency).delete({
+    workItemId,
+    dependsOnWorkItemId: depId,
+  });
+
+  return res.json({ success: true });
+}

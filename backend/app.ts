@@ -42,15 +42,23 @@ app.use("/api/organizations", organizationRoutes);
 app.use("/api/organization", organizationRoutes);
 app.use("/api/notifications", notificationRoutes);
 
+app.use("/api/chat/conversations", chatRoutes);
 app.use("/api/conversations", chatRoutes);
 app.use("/api/chat", chatRoutes);
-app.use("/api/chat/conversations", chatRoutes);
 
 app.use("/api/sla", slaRoutes);
 app.use("/api/organization/sla", slaRoutes);
 
 app.use("/api", sprintRoutes);
 app.use("/api", dashboardRoutes);
+
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    success: true,
+    message: "TaskFlow API is healthy",
+  });
+});
 
 app.get("/", (_req, res) => {
   console.log("GET / request received");

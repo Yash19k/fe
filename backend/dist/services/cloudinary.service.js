@@ -24,8 +24,12 @@ const uploadToCloudinary = (file, folder) => new Promise((resolve, reject) => {
     }, (error, result) => {
         if (error)
             return reject(error);
-        if (!result)
-            return reject(new Error("Cloudinary returned no upload result"));
+        if (!result?.public_id ||
+            !result.secure_url ||
+            !result.resource_type ||
+            !Number.isFinite(result.bytes)) {
+            return reject(new Error("Cloudinary returned incomplete upload metadata"));
+        }
         resolve({
             publicId: result.public_id,
             secureUrl: result.secure_url,

@@ -1,17 +1,10 @@
 import { In } from "typeorm";
-// import { WorkItemComment } from "../entities/work.item.comment.entity";
-// import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
-// import { ProjectLabel } from "../entities/project.label.entity";
-// import { WorkItemDependency } from "../entities/work.item.dependency.entity";
-// import { ProjectWorkflow } from "../entities/project.workflow.entity";
-// import { Notification } from "../entities/notification.entity";
-
-import { NextFunction, Request, Response } from "express";
+import { Request, Response } from "express";
 import { AppDataSource } from "../config/data.source";
 import { AuditLog } from "../entities/audit.log.entity";
-import { ProjectMember } from "../entities/project.member.entity";
-import { User } from "../entities/user.entity";
-
+import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
+import { Project } from "../entities/project.entity";
+import { User, UserRole } from "../entities/user.entity";
 import {
   WorkItem,
   WorkItemPriority,
@@ -21,10 +14,55 @@ import {
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import { AppError } from "../errors/app.error";
 
+/**
+ * Validates that the user has access to read the project's audit logs.
+ */
+async function assertAuditProjectAccess(
+  projectId: string,
+  userId: string,
+  organizationId: string,
+  role?: string,
+): Promise<Project> {
+  const project = await AppDataSource.getRepository(Project).findOne({
+    where: { id: projectId, organizationId },
+  });
+
+  if (!project) {
+    throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
+  }
+
+  if (role === UserRole.ADMIN) {
+    return project;
+  }
+
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId, userId },
+  });
+
+  if (!membership && project.visibility !== "PUBLIC") {
+    throw new AppError(
+      "You do not have access to this project's audit logs.",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  return project;
+}
+
 export async function createAuditLog(req: Request, res: Response) {
   const organizationId = req.user?.organizationId;
   const userId = req.user?.id;
   const { action, entityType, entityId, previousState, newState } = req.body;
+
+  if (!userId || !organizationId) {
+    throw new AppError(
+      "Authentication and organization context required.",
+      401,
+      "UNAUTHORIZED",
+    );
+  }
+
   let pId =
     req.body.projectId ||
     (req.params.projectId && req.params.projectId !== "audit-logs"
@@ -49,7 +87,7 @@ export async function createAuditLog(req: Request, res: Response) {
   if (!pId && entityType === "task" && entityId) {
     try {
       const task = await AppDataSource.getRepository(WorkItem).findOne({
-        where: { id: String(entityId) },
+        where: { id: String(entityId), organizationId },
         select: { id: true, projectId: true },
       });
       if (task?.projectId) {
@@ -60,12 +98,21 @@ export async function createAuditLog(req: Request, res: Response) {
     }
   }
 
+  if (pId) {
+    await assertAuditProjectAccess(
+      String(pId),
+      userId,
+      organizationId,
+      req.user?.role,
+    );
+  }
+
   const repo = AppDataSource.getRepository(AuditLog);
   const log = await repo.save(
     repo.create({
-      organizationId: organizationId!,
+      organizationId,
       projectId: pId ? String(pId) : null,
-      userId: userId!,
+      userId,
       action: String(action),
       entityType: String(entityType),
       entityId: String(entityId || ""),
@@ -88,12 +135,17 @@ export async function undoAuditLog(req: Request, res: Response) {
   const userId = req.user?.id;
   const organizationId = req.user?.organizationId;
   const logId = String(req.params.logId);
-  const requestedProjectId =req.params.projectId && req.params.projectId !== "audit-logs"
+  const requestedProjectId =
+    req.params.projectId && req.params.projectId !== "audit-logs"
       ? String(req.params.projectId)
       : null;
 
-  if (!userId) {
-    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  if (!userId || !organizationId) {
+    throw new AppError(
+      "Authentication and organization context required.",
+      401,
+      "UNAUTHORIZED",
+    );
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
@@ -112,7 +164,7 @@ export async function undoAuditLog(req: Request, res: Response) {
       );
     }
 
-    if (organizationId && targetLog.organizationId !== organizationId) {
+    if (targetLog.organizationId !== organizationId) {
       throw new AppError("Access denied.", 403, "FORBIDDEN");
     }
 
@@ -126,6 +178,23 @@ export async function undoAuditLog(req: Request, res: Response) {
         403,
         "FORBIDDEN",
       );
+    }
+
+    // Require project-level update permissions
+    if (targetLog.projectId && req.user?.role !== UserRole.ADMIN) {
+      const membership = await manager.getRepository(ProjectMember).findOne({
+        where: { projectId: targetLog.projectId, userId },
+      });
+      if (
+        !membership ||
+        ![ProjectRole.ADMIN, ProjectRole.LEAD].includes(membership.role)
+      ) {
+        throw new AppError(
+          "You must be a project administrator or lead to undo actions.",
+          403,
+          "FORBIDDEN",
+        );
+      }
     }
 
     if (targetLog.isUndone) {
@@ -153,7 +222,7 @@ export async function undoAuditLog(req: Request, res: Response) {
     if (targetLog.entityType === "task") {
       const workItemRepo = manager.getRepository(WorkItem);
       const workItem = await workItemRepo.findOne({
-        where: { id: targetLog.entityId },
+        where: { id: targetLog.entityId, organizationId },
       });
 
       if (!workItem) {
@@ -164,8 +233,12 @@ export async function undoAuditLog(req: Request, res: Response) {
         );
       }
 
-      if (organizationId && workItem.organizationId !== organizationId) {
-        throw new AppError("Access denied to work item.", 403, "FORBIDDEN");
+      if (targetLog.projectId && workItem.projectId !== targetLog.projectId) {
+        throw new AppError(
+          "Target work item does not match audit project.",
+          403,
+          "FORBIDDEN",
+        );
       }
 
       const prev = targetLog.previousState;
@@ -188,7 +261,7 @@ export async function undoAuditLog(req: Request, res: Response) {
           workItem.status = normStatus as WorkItemStatus;
         }
       }
-      
+
       if (prev.priority !== undefined && prev.priority !== null) {
         const normPriority = String(prev.priority).toUpperCase();
         if (
@@ -301,22 +374,45 @@ export async function undoAuditLog(req: Request, res: Response) {
   });
 }
 
-///////////////////
-// for get
-// /////////////////
-
 export async function getProjectAuditLogs(req: Request, res: Response) {
   const projectId = req.params.projectId
     ? String(req.params.projectId)
     : undefined;
   const organizationId = req.user?.organizationId;
+  const userId = req.user?.id;
 
-  // Find all task IDs for this project if projectId is supplied
+  if (!organizationId || !userId) {
+    throw new AppError(
+      "Authentication and organization context required.",
+      401,
+      "UNAUTHORIZED",
+    );
+  }
+
+  // Parse pagination params
+  const page = Math.max(
+    1,
+    Number.parseInt(String(req.query.page ?? "1"), 10) || 1,
+  );
+  const limit = Math.min(
+    150,
+    Math.max(1, Number.parseInt(String(req.query.limit ?? "50"), 10) || 50),
+  );
+  const skip = (page - 1) * limit;
+
+  // If projectId is supplied, verify access
   let projectTaskIds: string[] = [];
   if (projectId) {
+    await assertAuditProjectAccess(
+      projectId,
+      userId,
+      organizationId,
+      req.user?.role,
+    );
+
     try {
       const projectTasks = await AppDataSource.getRepository(WorkItem).find({
-        where: { projectId },
+        where: { projectId, organizationId },
         select: { id: true, title: true },
       });
       projectTaskIds = projectTasks.map((t) => t.id);
@@ -325,47 +421,28 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
     }
   }
 
-  let logs: AuditLog[] = [];
   const auditRepo = AppDataSource.getRepository(AuditLog);
+  const qb = auditRepo
+    .createQueryBuilder("audit")
+    .leftJoinAndSelect("audit.user", "user")
+    .leftJoinAndSelect("audit.project", "project")
+    .where("audit.organizationId = :organizationId", { organizationId })
+    .orderBy("audit.createdAt", "DESC")
+    .addOrderBy("audit.id", "DESC");
 
   if (projectId) {
-    const qb = auditRepo
-      .createQueryBuilder("audit")
-      .leftJoinAndSelect("audit.user", "user")
-      .leftJoinAndSelect("audit.project", "project")
-      .orderBy("audit.createdAt", "DESC")
-      .take(150);
-
-    if (organizationId) {
-      qb.where("audit.organizationId = :organizationId", { organizationId });
-      if (projectTaskIds.length > 0) {
-        qb.andWhere(
-          "(audit.projectId = :projectId OR (audit.entityType = 'task' AND audit.entityId IN (:...projectTaskIds)))",
-          { projectId, projectTaskIds },
-        );
-      } else {
-        qb.andWhere("audit.projectId = :projectId", { projectId });
-      }
+    if (projectTaskIds.length > 0) {
+      qb.andWhere(
+        "(audit.projectId = :projectId OR (audit.entityType = 'task' AND audit.entityId IN (:...projectTaskIds)))",
+        { projectId, projectTaskIds },
+      );
     } else {
-      if (projectTaskIds.length > 0) {
-        qb.where(
-          "(audit.projectId = :projectId OR (audit.entityType = 'task' AND audit.entityId IN (:...projectTaskIds)))",
-          { projectId, projectTaskIds },
-        );
-      } else {
-        qb.where("audit.projectId = :projectId", { projectId });
-      }
+      qb.andWhere("audit.projectId = :projectId", { projectId });
     }
-
-    logs = await qb.getMany();
-  } else {
-    logs = await auditRepo.find({
-      where: organizationId ? { organizationId } : {},
-      relations: { user: true, project: true },
-      order: { createdAt: "DESC" },
-      take: 150,
-    });
   }
+
+  const total = await qb.getCount();
+  const logs = await qb.skip(skip).take(limit).getMany();
 
   const taskIds = logs
     .filter((l) => l.entityType === "task" && l.entityId)
@@ -375,7 +452,7 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
   if (taskIds.length > 0) {
     try {
       const foundTasks = await AppDataSource.getRepository(WorkItem).find({
-        where: { id: In(taskIds) },
+        where: { id: In(taskIds), organizationId },
         select: { id: true, title: true },
       });
       foundTasks.forEach((t) => {
@@ -437,159 +514,133 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
         createdAt: l.createdAt,
       };
     }),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
   });
 }
 
+export async function getMyAuditLogs(req: Request, res: Response) {
+  const userId = req.user?.id;
+  const organizationId = req.user?.organizationId;
 
-
-export async function getMyAuditLogs(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
-  try {
-    // Identity comes from authentication middleware, never from req.params.
-    const userId = req.user?.id;
-    const organizationId = req.user?.organizationId;
-
-    if (!userId || !organizationId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication and organization context are required",
-      });
-    }
-
-    const page = Math.max(
-      1,
-      Number.parseInt(String(req.query.page ?? "1"), 10) || 1,
+  if (!userId || !organizationId) {
+    throw new AppError(
+      "Authentication and organization context required.",
+      401,
+      "UNAUTHORIZED",
     );
-    const limit = Math.min(
-      100,
-      Math.max(1, Number.parseInt(String(req.query.limit ?? "20"), 10) || 20),
-    );
+  }
 
-    // Confirm the authenticated user belongs to the organization.
-    const userExists = await AppDataSource.getRepository(User)
-      .createQueryBuilder("user")
-      .where("user.id = :userId", { userId })
-      .andWhere("user.organizationId = :organizationId", {
-        organizationId,
-      })
-      .getExists();
+  const page = Math.max(
+    1,
+    Number.parseInt(String(req.query.page ?? "1"), 10) || 1,
+  );
+  const limit = Math.min(
+    100,
+    Math.max(1, Number.parseInt(String(req.query.limit ?? "20"), 10) || 20),
+  );
 
-    if (!userExists) {
-      return res.status(403).json({
-        success: false,
-        message: "User does not belong to this organization",
-      });
-    }
+  const memberships = await AppDataSource.getRepository(ProjectMember)
+    .createQueryBuilder("member")
+    .innerJoin("member.project", "project")
+    .select("member.projectId", "projectId")
+    .where("member.userId = :userId", { userId })
+    .andWhere("project.organizationId = :organizationId", {
+      organizationId,
+    })
+    .getRawMany<{ projectId: string }>();
 
-    // Find only projects this user is enrolled in.
-    const memberships = await AppDataSource.getRepository(ProjectMember)
-      .createQueryBuilder("member")
-      .innerJoin("member.project", "project")
-      .select("member.projectId", "projectId")
-      .where("member.userId = :userId", { userId })
-      .andWhere("project.organizationId = :organizationId", {
-        organizationId,
-      })
-      .getRawMany<{ projectId: string }>();
+  const projectIds = [
+    ...new Set(memberships.map((membership) => membership.projectId)),
+  ];
 
-    const projectIds = [
-      ...new Set(memberships.map((membership) => membership.projectId)),
-    ];
-
-    if (projectIds.length === 0) {
-      return res.json({
-        success: true,
-        data: [],
-        pagination: {
-          page,
-          limit,
-          total: 0,
-          totalPages: 0,
-        },
-      });
-    }
-
-    // Only logs made by this user in their enrolled projects.
-    const auditRepo = AppDataSource.getRepository(AuditLog);
-
-    const qb = auditRepo
-      .createQueryBuilder("audit")
-      .leftJoinAndSelect("audit.project", "project")
-      .leftJoinAndSelect("audit.user", "actor")
-      .where("audit.organizationId = :organizationId", {
-        organizationId,
-      })
-      .andWhere("audit.userId = :userId", { userId })
-      .andWhere("audit.projectId IN (:...projectIds)", { projectIds })
-      .orderBy("audit.createdAt", "DESC");
-
-    const total = await qb.clone().getCount();
-
-    const logs = await qb
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getMany();
-
-    // Resolve task titles only for UUID-based task entity IDs.
-    const taskIds = [
-      ...new Set(
-        logs
-          .filter((log) => log.entityType === "task" && log.entityId)
-          .map((log) => log.entityId),
-      ),
-    ];
-
-    const taskMap = new Map<string, string>();
-
-    if (taskIds.length > 0) {
-      const tasks = await AppDataSource.getRepository(WorkItem)
-        .createQueryBuilder("task")
-        .select(["task.id", "task.title"])
-        .where("task.id IN (:...taskIds)", { taskIds })
-        .getMany();
-
-      for (const task of tasks) {
-        taskMap.set(task.id, task.title);
-      }
-    }
-
-    return res.status(200).json({
+  if (projectIds.length === 0) {
+    return res.json({
       success: true,
-      data: logs.map((log) => ({
-        id: log.id,
-        action: log.action,
-        entityType: log.entityType,
-        entityId: log.entityId,
-        entityTitle:
-          (log.entityType === "task"
-            ? taskMap.get(log.entityId)
-            : log.entityType === "project"
-              ? log.project?.name
-              : null) ??
-          log.newState?.title ??
-          log.previousState?.title ??
-          null,
-        description: log.description,
-        previousState: log.previousState,
-        newState: log.newState,
-        projectId: log.projectId,
-        projectName: log.project?.name ?? null,
-        userId: log.userId,
-        userName:
-          log.user?.fullName?.trim() || log.user?.email || "Unknown user",
-        timestamp: log.createdAt,
-      })),
+      data: [],
       pagination: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+        total: 0,
+        totalPages: 0,
       },
     });
-  } catch (error) {
-    next(error);
   }
+
+  const auditRepo = AppDataSource.getRepository(AuditLog);
+  const qb = auditRepo
+    .createQueryBuilder("audit")
+    .leftJoinAndSelect("audit.project", "project")
+    .leftJoinAndSelect("audit.user", "actor")
+    .where("audit.organizationId = :organizationId", { organizationId })
+    .andWhere("audit.userId = :userId", { userId })
+    .andWhere("audit.projectId IN (:...projectIds)", { projectIds })
+    .orderBy("audit.createdAt", "DESC")
+    .addOrderBy("audit.id", "DESC");
+
+  const total = await qb.getCount();
+  const logs = await qb
+    .skip((page - 1) * limit)
+    .take(limit)
+    .getMany();
+
+  const taskIds = [
+    ...new Set(
+      logs
+        .filter((log) => log.entityType === "task" && log.entityId)
+        .map((log) => log.entityId),
+    ),
+  ];
+
+  const taskMap = new Map<string, string>();
+  if (taskIds.length > 0) {
+    const tasks = await AppDataSource.getRepository(WorkItem)
+      .createQueryBuilder("task")
+      .select(["task.id", "task.title"])
+      .where("task.id IN (:...taskIds)", { taskIds })
+      .andWhere("task.organizationId = :organizationId", { organizationId })
+      .getMany();
+
+    for (const task of tasks) {
+      taskMap.set(task.id, task.title);
+    }
+  }
+
+  return res.status(200).json({
+    success: true,
+    data: logs.map((log) => ({
+      id: log.id,
+      action: log.action,
+      entityType: log.entityType,
+      entityId: log.entityId,
+      entityTitle:
+        (log.entityType === "task"
+          ? taskMap.get(log.entityId)
+          : log.entityType === "project"
+            ? log.project?.name
+            : null) ??
+        log.newState?.title ??
+        log.previousState?.title ??
+        null,
+      description: log.description,
+      previousState: log.previousState,
+      newState: log.newState,
+      projectId: log.projectId,
+      projectName: log.project?.name ?? null,
+      userId: log.userId,
+      userName:
+        log.user?.fullName?.trim() || log.user?.email || "Unknown user",
+      timestamp: log.createdAt,
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
 }

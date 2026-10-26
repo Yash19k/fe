@@ -1,9 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const app_1 = require("./app");
+const http_1 = require("http");
 // import { app } from "./src/app"; 
 const config_1 = require("./config/config");
 const data_source_1 = require("./config/data.source");
+const chat_gateway_1 = require("./websocket/chat.gateway");
 const scheduler_service_1 = require("./services/scheduler.service");
 async function startServer() {
     try {
@@ -16,7 +18,9 @@ async function startServer() {
         console.log("Database connected successfully.");
         // Start background schedulers for automated SLA escalation and recurring tasks
         (0, scheduler_service_1.startScheduler)();
-        const server = app_1.app.listen(config_1.config.port, config_1.config.host, () => {
+        const server = (0, http_1.createServer)(app_1.app);
+        (0, chat_gateway_1.attachChatWebSocket)(server);
+        server.listen(config_1.config.port, config_1.config.host, () => {
             console.log(`Server running at http://${config_1.config.host}:${config_1.config.port}`);
         });
         server.on("error", (error) => {

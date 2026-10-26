@@ -78,9 +78,10 @@ const authorizeProjectPermission = async (req, action) => {
             where: { id: String(req.params.workItemId) },
             select: { projectId: true },
         });
-        if (workItem) {
-            projectId = workItem.projectId;
+        if (!workItem) {
+            throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
         }
+        projectId = workItem.projectId;
     }
     if (!userId) {
         throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");

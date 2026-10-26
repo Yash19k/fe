@@ -110,7 +110,20 @@ async function createAuthSession(user, res) {
     return accessToken;
 }
 async function registerOrganization(req, res) {
-    const { error, value } = user_validator_1.onboardingSchema.validate(req.body, {
+    let payload = req.body;
+    if (!payload.user && (payload.email || payload.adminName || payload.organizationName)) {
+        payload = {
+            user: {
+                fullName: payload.adminName || payload.fullName || "Workspace Admin",
+                email: payload.email,
+                password: payload.password,
+            },
+            organization: {
+                name: payload.organizationName || payload.name,
+            },
+        };
+    }
+    const { error, value } = user_validator_1.onboardingSchema.validate(payload, {
         abortEarly: false,
         stripUnknown: true,
     });
@@ -118,6 +131,12 @@ async function registerOrganization(req, res) {
         throw new app_error_1.AppError(error.details.map((d) => `${d.path.join(".")}: ${d.message}`).join(", "), 400, "VALIDATION_ERROR");
     }
     const { user, organization } = value;
+    const existingUser = await userRepository.findOne({
+        where: { email: user.email.toLowerCase() },
+    });
+    if (existingUser) {
+        throw new app_error_1.AppError("A user with this email address already exists.", 409, "EMAIL_ALREADY_EXISTS");
+    }
     const passwordHash = await bcrypt.hash(user.password, 12);
     const result = await data_source_1.AppDataSource.transaction(async (m) => {
         const org = await m.save(organization_entity_1.Organization, {
@@ -187,10 +206,16 @@ async function login(req, res) {
         where: { email: value.email.toLowerCase() },
     });
     if (!user ||
-        user.status !== user_entity_1.UserStatus.ACTIVE ||
+        (user.status !== user_entity_1.UserStatus.ACTIVE && user.status !== user_entity_1.UserStatus.PENDING) ||
         !user.passwordHash ||
         !(await bcrypt.compare(value.password, user.passwordHash))) {
         throw new app_error_1.AppError("Invalid email or password.", 401, "INVALID_CREDENTIALS");
+    }
+    if (user.status === user_entity_1.UserStatus.PENDING) {
+        user.status = user_entity_1.UserStatus.ACTIVE;
+        user.inviteTokenHash = null;
+        user.inviteExpiresAt = null;
+        await userRepository.save(user);
     }
     if (!user.organizationId) {
         throw new app_error_1.AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");

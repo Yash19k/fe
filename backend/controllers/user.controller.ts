@@ -111,7 +111,21 @@ async function createAuthSession(
 }
 
 export async function registerOrganization(req: Request, res: Response) {
-  const { error, value } = onboardingSchema.validate(req.body, {
+  let payload = req.body;
+  if (!payload.user && (payload.email || payload.adminName || payload.organizationName)) {
+    payload = {
+      user: {
+        fullName: payload.adminName || payload.fullName || "Workspace Admin",
+        email: payload.email,
+        password: payload.password,
+      },
+      organization: {
+        name: payload.organizationName || payload.name,
+      },
+    };
+  }
+
+  const { error, value } = onboardingSchema.validate(payload, {
     abortEarly: false,
     stripUnknown: true,
   });
@@ -125,6 +139,18 @@ export async function registerOrganization(req: Request, res: Response) {
   }
 
   const { user, organization } = value;
+
+  const existingUser = await userRepository.findOne({
+    where: { email: user.email.toLowerCase() },
+  });
+  if (existingUser) {
+    throw new AppError(
+      "A user with this email address already exists.",
+      409,
+      "EMAIL_ALREADY_EXISTS",
+    );
+  }
+
   const passwordHash = await bcrypt.hash(user.password, 12);
 
   const result = await AppDataSource.transaction(async (m) => {
@@ -212,7 +238,7 @@ export async function login(req: Request, res: Response) {
 
   if (
     !user ||
-    user.status !== UserStatus.ACTIVE ||
+    (user.status !== UserStatus.ACTIVE && user.status !== UserStatus.PENDING) ||
     !user.passwordHash ||
     !(await bcrypt.compare(value.password, user.passwordHash))
   ) {
@@ -221,6 +247,13 @@ export async function login(req: Request, res: Response) {
       401,
       "INVALID_CREDENTIALS",
     );
+  }
+
+  if (user.status === UserStatus.PENDING) {
+    user.status = UserStatus.ACTIVE;
+    user.inviteTokenHash = null;
+    user.inviteExpiresAt = null;
+    await userRepository.save(user);
   }
 
   if (!user.organizationId) {

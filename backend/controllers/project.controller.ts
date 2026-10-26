@@ -349,6 +349,19 @@ export const addProjectMember = async (req: Request, res: Response) => {
       );
     }
 
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      const actorMembership = await memberRepo.findOne({
+        where: { projectId: project.id, userId: actor.id },
+      });
+      if (!actorMembership || actorMembership.role !== ProjectRole.ADMIN) {
+        throw new AppError(
+          "Only a project administrator can assign the project administrator role.",
+          403,
+          "PROJECT_ADMIN_REQUIRED",
+        );
+      }
+    }
+
     const membership = await memberRepo.save(
       memberRepo.create({
         projectId: project.id,
@@ -459,6 +472,19 @@ export const updateProjectMemberRole = async (
 
     if (member.role === ProjectRole.ADMIN && role !== ProjectRole.ADMIN) {
       await ensureNotLastProjectAdmin(manager, project.id, member);
+    }
+
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      const actorMembership = await memberRepo.findOne({
+        where: { projectId: project.id, userId: actor.id },
+      });
+      if (!actorMembership || actorMembership.role !== ProjectRole.ADMIN) {
+        throw new AppError(
+          "Only a project administrator can assign the project administrator role.",
+          403,
+          "PROJECT_ADMIN_REQUIRED",
+        );
+      }
     }
 
     member.role = role as ProjectRole;

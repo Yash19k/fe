@@ -130,23 +130,59 @@ export async function listConversations(actor: ChatActor) {
     `, { userId: actor.id })
     .orderBy("COALESCE(conversation.last_message_at, conversation.created_at)", "DESC")
     .getMany();
-  return Promise.all(result.map(async (conversation) => {
+
+  if (result.length === 0) return [];
+
+  const convIds = result.map((c) => c.id);
+
+  // Batched query: get recent messages for all conversations
+  const recentMessages = await messages()
+    .createQueryBuilder("message")
+    .where("message.conversation_id IN (:...convIds)", { convIds })
+    .andWhere("message.deleted_at IS NULL")
+    .orderBy("message.created_at", "DESC")
+    .addOrderBy("message.id", "DESC")
+    .getMany();
+
+  const lastMessageMap = new Map<string, { id: string; content: string; createdAt: Date; senderId: string }>();
+  for (const msg of recentMessages) {
+    if (!lastMessageMap.has(msg.conversationId)) {
+      lastMessageMap.set(msg.conversationId, {
+        id: msg.id,
+        content: msg.content,
+        createdAt: msg.createdAt,
+        senderId: msg.senderId,
+      });
+    }
+  }
+
+  // Batched query: compute unread counts per conversation
+  const unreadCountMap = new Map<string, number>();
+  for (const conversation of result) {
+    const currentMember = conversation.members.find((member) => member.userId === actor.id);
+    const unread = recentMessages.filter(
+      (msg) =>
+        msg.conversationId === conversation.id &&
+        msg.senderId !== actor.id &&
+        (!currentMember?.lastReadAt || msg.createdAt > currentMember.lastReadAt),
+    ).length;
+    unreadCountMap.set(conversation.id, unread);
+  }
+
+  return result.map((conversation) => {
     const currentMember = conversation.members.find((member) => member.userId === actor.id);
     const other = conversation.members.find((member) => member.userId !== actor.id)?.user;
-    const lastMessage = await messages().findOne({
-      where: { conversationId: conversation.id, deletedAt: IsNull() },
-      order: { createdAt: "DESC", id: "DESC" },
-      select: { id: true, content: true, createdAt: true, senderId: true },
-    });
-    const unreadCount = await messages().createQueryBuilder("message")
-      .where("message.conversation_id = :conversationId", { conversationId: conversation.id })
-      .andWhere("message.sender_id != :userId", { userId: actor.id })
-      .andWhere(currentMember?.lastReadAt ? "message.created_at > :lastReadAt" : "1=1", { lastReadAt: currentMember?.lastReadAt })
-      .andWhere("message.deleted_at IS NULL")
-      .getCount();
-    return { ...conversation, otherParticipant: other ? { id: other.id, fullName: other.fullName, email: other.email } : null,
-      lastMessage, unreadCount, lastReadAt: currentMember?.lastReadAt ?? null };
-  }));
+    const lastMessage = lastMessageMap.get(conversation.id) || null;
+    const unreadCount = unreadCountMap.get(conversation.id) || 0;
+
+    return {
+      ...conversation,
+      otherParticipant: other ? { id: other.id, fullName: other.fullName, email: other.email } : null,
+      lastMessage,
+      unreadCount,
+      lastReadAt: currentMember?.lastReadAt ?? null,
+    };
+  });
 }
 
 async function assertConversationManager(actor: ChatActor, conversationId: string) {
@@ -174,6 +210,16 @@ export async function removeMember(actor: ChatActor, conversationId: string, use
   const conversation = await assertConversationManager(actor, conversationId);
   if (conversation.type === ChatConversationType.DIRECT) throw new AppError("Direct conversations must keep both participants.", 400, "DIRECT_CONVERSATION_MEMBERS_LOCKED");
   await members().delete({ conversationId, userId });
+
+  // Evict removed user from any live WebSocket room subscriptions
+  try {
+    const { evictUserFromConversationRoom } = require("../websocket/chat.gateway");
+    if (typeof evictUserFromConversationRoom === "function") {
+      evictUserFromConversationRoom(conversationId, userId);
+    }
+  } catch {
+    // Ignore if websocket gateway not loaded
+  }
 }
 
 export async function getMessages(actor: ChatActor, conversationId: string, limit: number, before?: Date) {

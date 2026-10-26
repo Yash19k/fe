@@ -3,11 +3,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
+exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateWorkItemDependencyBody = exports.validateWorkItemDependencyParams = exports.validateWorkItemId = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
 const app_error_1 = require("../errors/app.error");
+const recurrence_service_1 = require("../services/recurrence.service");
 const assigneeSchema = joi_1.default.object({
     userId: joi_1.default.string().guid({ version: ["uuidv4"] }).required(),
     startDate: joi_1.default.string()
@@ -49,7 +50,8 @@ const recurrenceSchema = joi_1.default.object({
     dayOfMonth: joi_1.default.number().integer().min(1).max(31).allow(null).optional(),
     startsOn: dateOnlySchema.required(),
     endsOn: dateOnlySchema.allow(null).optional(),
-    timezone: joi_1.default.string().trim().max(100).default("UTC"),
+    timezone: joi_1.default.string().trim().max(100).default(recurrence_service_1.DEFAULT_RECURRENCE_TIMEZONE),
+    weekdaysOnly: joi_1.default.boolean().default(false),
 }).unknown(false);
 exports.createWorkItemSchema = joi_1.default.object({
     projectId: joi_1.default.string()
@@ -76,7 +78,8 @@ exports.createWorkItemSchema = joi_1.default.object({
         .optional(),
     priority: joi_1.default.string()
         .valid(...Object.values(work_item_entity_1.WorkItemPriority))
-        .default(work_item_entity_1.WorkItemPriority.MEDIUM),
+        .allow(null)
+        .optional(),
     status: joi_1.default.string()
         .valid(...Object.values(work_item_entity_1.WorkItemStatus))
         .default(work_item_entity_1.WorkItemStatus.BACKLOG),
@@ -139,6 +142,50 @@ const updateWorkItemSchema = joi_1.default.object({
     labelId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
     labels: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
 }).min(1).unknown(false);
+const workItemIdParamsSchema = joi_1.default.object({
+    workItemId: joi_1.default.string()
+        .guid({ version: ["uuidv4"] })
+        .required(),
+}).unknown(false);
+const dependencyParamsSchema = joi_1.default.object({
+    workItemId: joi_1.default.string()
+        .guid({ version: ["uuidv4"] })
+        .required(),
+    depId: joi_1.default.string()
+        .guid({ version: ["uuidv4"] })
+        .required(),
+}).unknown(false);
+const validateParams = (schema, req, next) => {
+    const { error, value } = schema.validate(req.params, {
+        abortEarly: false,
+        convert: true,
+    });
+    if (error) {
+        throw new app_error_1.AppError(error.details.map((detail) => detail.message).join(", "), 400, "INVALID_WORK_ITEM_ID");
+    }
+    req.params = value;
+    next();
+};
+const validateWorkItemId = (req, _res, next) => validateParams(workItemIdParamsSchema, req, next);
+exports.validateWorkItemId = validateWorkItemId;
+const validateWorkItemDependencyParams = (req, _res, next) => validateParams(dependencyParamsSchema, req, next);
+exports.validateWorkItemDependencyParams = validateWorkItemDependencyParams;
+const validateWorkItemDependencyBody = (req, _res, next) => {
+    const { error, value } = joi_1.default.object({
+        dependsOnWorkItemId: joi_1.default.string()
+            .guid({ version: ["uuidv4"] })
+            .required(),
+    }).unknown(false).validate(req.body, {
+        abortEarly: false,
+        convert: true,
+    });
+    if (error) {
+        throw new app_error_1.AppError(error.details.map((detail) => detail.message).join(", "), 400, "INVALID_WORK_ITEM_ID");
+    }
+    req.body = value;
+    next();
+};
+exports.validateWorkItemDependencyBody = validateWorkItemDependencyBody;
 const validateUpdateWorkItem = (req, _res, next) => {
     const { error, value } = updateWorkItemSchema.validate(req.body, {
         abortEarly: false,

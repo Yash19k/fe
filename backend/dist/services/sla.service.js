@@ -147,11 +147,14 @@ async function writeSlaAudit(manager, workItem, userId, action, description, pre
     }));
 }
 async function refreshSlaStatuses(manager) {
+    const now = new Date();
+    // Select items that are unfinished, prioritized by items requiring immediate attention or oldest updated
     const candidates = await manager
         .getRepository(work_item_entity_1.WorkItem)
         .createQueryBuilder("workItem")
         .where("workItem.status != :done", { done: work_item_entity_1.WorkItemStatus.DONE })
-        .orderBy("workItem.createdAt", "ASC")
+        .orderBy("COALESCE(workItem.updatedAt, workItem.createdAt)", "ASC")
+        .addOrderBy("workItem.id", "ASC")
         .take(500)
         .setLock("pessimistic_write")
         .getMany();
@@ -159,7 +162,6 @@ async function refreshSlaStatuses(manager) {
     let changed = 0;
     for (const item of candidates) {
         const previous = item.slaStatus;
-        const now = new Date();
         if (!item.priority) {
             const hadSlaState = Boolean(item.slaDeadline ||
                 item.slaDeadlineIsCustom ||
@@ -171,6 +173,7 @@ async function refreshSlaStatuses(manager) {
                 item.slaResolvedAt);
             if (hadSlaState) {
                 clearSlaState(item);
+                item.updatedAt = now;
                 await manager.getRepository(work_item_entity_1.WorkItem).save(item);
                 changed += 1;
             }
@@ -201,39 +204,46 @@ async function refreshSlaStatuses(manager) {
             item.escalatedById = null;
             item.escalationReason =
                 "Automated SLA escalation: task breached resolution deadline";
+            item.updatedAt = now;
             await manager.getRepository(work_item_entity_1.WorkItem).save(item);
             await writeSlaAudit(manager, item, item.createdById, "escalated", "Work item automatically escalated due to SLA deadline breach", { status: previous }, {
                 status: item.slaStatus,
                 escalatedAt: item.escalatedAt,
                 reason: item.escalationReason,
             });
-            const assignments = await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
-                where: { workItemId: item.id },
-                select: { userId: true },
-            });
-            const recipients = new Set([
-                ...assignments.map((assignment) => assignment.userId),
-                item.createdById,
-            ]);
-            await Promise.all(Array.from(recipients).map((userId) => notification_service_1.notificationService.createNotification({
-                userId,
-                organizationId: item.organizationId,
-                type: notification_entity_1.NotificationType.SLA_ESCALATED,
-                title: "SLA escalation",
-                message: `"${item.title}" has been automatically escalated because of SLA breach.`,
-                workItemId: item.id,
-                projectId: item.projectId,
-                link: `/tasks/${item.id}`,
-                metadata: {
-                    reason: item.escalationReason,
-                    escalatedAt: item.escalatedAt?.toISOString() ?? null,
-                },
-            })));
+            try {
+                const assignments = await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+                    where: { workItemId: item.id },
+                    select: { userId: true },
+                });
+                const recipients = new Set([
+                    ...assignments.map((assignment) => assignment.userId),
+                    item.createdById,
+                ]);
+                await Promise.all(Array.from(recipients).map((userId) => notification_service_1.notificationService.createNotification({
+                    userId,
+                    organizationId: item.organizationId,
+                    type: notification_entity_1.NotificationType.SLA_ESCALATED,
+                    title: "SLA escalation",
+                    message: `"${item.title}" has been automatically escalated because of SLA breach.`,
+                    workItemId: item.id,
+                    projectId: item.projectId,
+                    link: `/tasks/${item.id}`,
+                    metadata: {
+                        reason: item.escalationReason,
+                        escalatedAt: item.escalatedAt?.toISOString() ?? null,
+                    },
+                })));
+            }
+            catch (notifErr) {
+                console.error("SLA escalation notification delivery failed:", notifErr);
+            }
             changed += 1;
             continue;
         }
         const next = applySlaState(item, now, policy);
         if (previous !== next) {
+            item.updatedAt = now;
             await manager.getRepository(work_item_entity_1.WorkItem).save(item);
             if (next === work_item_entity_1.SlaStatus.BREACHED && previous !== work_item_entity_1.SlaStatus.BREACHED) {
                 await writeSlaAudit(manager, item, item.createdById, "sla_breached", "Work item SLA breached during scheduled refresh", { status: previous }, {

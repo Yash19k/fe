@@ -67,6 +67,14 @@ __decorate([
     __metadata("design:type", String)
 ], WorkItemAttachment.prototype, "storageKey", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 255, nullable: true, name: "public_id" }),
+    __metadata("design:type", Object)
+], WorkItemAttachment.prototype, "publicId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20, nullable: true, name: "resource_type" }),
+    __metadata("design:type", Object)
+], WorkItemAttachment.prototype, "resourceType", void 0);
+__decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
 ], WorkItemAttachment.prototype, "createdAt", void 0);
