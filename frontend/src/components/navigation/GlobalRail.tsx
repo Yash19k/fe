@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, CheckSquare, FolderKanban, Settings, Layers, LucideIcon } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, FolderKanban, Settings, Layers, MessageCircle, LucideIcon } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 
 interface NavItem {
@@ -23,6 +23,7 @@ export function GlobalRail() {
       badge: myTasks.filter((t) => t.status !== 'Done').length,
     },
     { id: 'projects', label: 'Projects', icon: FolderKanban, route: '/projects' },
+    { id: 'chat', label: 'Chat', icon: MessageCircle, route: '/chat' },
     { id: 'settings', label: 'Settings', icon: Settings, route: '/settings' },
   ];
 
@@ -32,6 +33,8 @@ export function GlobalRail() {
       ? 'projects'
       : activeRoute.startsWith('/settings')
         ? 'settings'
+        : activeRoute.startsWith('/chat')
+          ? 'chat'
         : 'home';
 
   return (

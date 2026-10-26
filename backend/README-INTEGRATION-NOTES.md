@@ -90,3 +90,25 @@ The server starts a single in-process SLA refresh interval. Its default interval
 is 60 seconds and can be changed with `SLA_CHECK_INTERVAL_MS` (minimum 10
 seconds). For multi-instance deployments, run the refresh job in one designated
 instance or replace it with the deployment's existing scheduler.
+
+## Real-time chat
+
+Chat tables are added by `1792400000000-AddChatTables`. Apply migrations from
+the `backend` directory with:
+
+```sh
+pnpm exec typeorm-ts-node-commonjs migration:run -d config/data.source.ts
+```
+
+Authenticated REST endpoints are mounted below `/api/conversations` for
+creating and listing conversations, reading a conversation, managing members,
+and retrieving paginated messages. The WebSocket endpoint is
+`/ws/chat`; it accepts the existing `token` HTTP-only cookie or an
+`Authorization: Bearer` header during the handshake. Browsers must use an
+origin listed in `CORS_ORIGINS`.
+
+The WebSocket protocol supports `conversation:join`,
+`conversation:leave`, and `message:send` client events. Messages are persisted
+before `message:new` is broadcast to sockets that joined the same authorized
+conversation. Connections are limited to 64 KiB frames and 30 events per
+10-second window.

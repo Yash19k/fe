@@ -18,8 +18,9 @@ import {
   saveProjectWorkflow,
   getProjectAuditLogs,
   createAuditLog,
-  undoAuditLog,
+
 } from "../controllers/feature-persistence.controller";
+import { undoAuditLog } from "../controllers/auditlog.controller";
 import {
   validateCreateProject,
   validateUpdateProject,

@@ -1,9 +1,15 @@
 
 import { app } from "./app";
+import { createServer } from "http";
 // import { app } from "./src/app"; 
 import { config } from "./config/config";
 import { AppDataSource } from "./config/data.source";
+
+import { refreshSlaStatuses } from "./services/sla.service";
+import { attachChatWebSocket } from "./websocket/chat.gateway";
+
 import { startScheduler, stopScheduler } from "./services/scheduler.service";
+
 
 async function startServer(): Promise<void> {
   try {
@@ -21,7 +27,9 @@ async function startServer(): Promise<void> {
     // Start background schedulers for automated SLA escalation and recurring tasks
     startScheduler();
 
-    const server = app.listen(config.port, config.host, () => {
+    const server = createServer(app);
+    attachChatWebSocket(server);
+    server.listen(config.port, config.host, () => {
       console.log(
         `Server running at http://${config.host}:${config.port}`,
       );
