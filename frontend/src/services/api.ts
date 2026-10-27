@@ -156,10 +156,14 @@ export async function checkBackendHealth(): Promise<boolean> {
 
 // Auth & Users
 export interface RegisterOrganizationInput {
-  organizationName: string;
-  adminName: string;
-  email: string;
-  password?: string;
+  user: {
+    fullName: string;
+    email: string;
+    password: string;
+  };
+  organization: {
+    name: string;
+  };
 }
 
 export interface RegisterOrganizationResponse {
@@ -315,6 +319,96 @@ export async function getProjectMembersApi(projectId: string): Promise<any> {
   return request<any>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
     method: 'GET',
   });
+}
+
+export interface WhiteboardScene {
+  elements: readonly Record<string, unknown>[];
+  appState: Record<string, unknown>;
+  files: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface WhiteboardSummary {
+  id: string;
+  projectId: string;
+  name: string;
+  revision: number;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Whiteboard extends WhiteboardSummary {
+  sceneData: WhiteboardScene;
+}
+
+export interface WhiteboardRevision {
+  id: string;
+  whiteboardId: string;
+  revisionNumber: number;
+  createdById: string | null;
+  sceneSnapshot: WhiteboardScene;
+  changeSummary: string | null;
+  createdAt: string;
+}
+
+export async function createWhiteboardApi(projectId: string, name: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function listWhiteboardsApi(
+  projectId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardSummary[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardApi(whiteboardId: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'GET' });
+}
+
+export async function listWhiteboardRevisionsApi(
+  whiteboardId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardRevision[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardRevisionApi(
+  whiteboardId: string,
+  revisionNumber: number
+): Promise<{ data: WhiteboardRevision }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions/${revisionNumber}`, { method: 'GET' });
+}
+
+export async function updateWhiteboardApi(
+  whiteboardId: string,
+  payload: { sceneData: WhiteboardScene; revision: number }
+): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function renameWhiteboardApi(whiteboardId: string, name: string): Promise<{ data: WhiteboardSummary }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/name`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteWhiteboardApi(whiteboardId: string): Promise<{ data: { id: string } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'DELETE' });
 }
 
 export async function addProjectMemberApi(
@@ -577,8 +671,9 @@ export interface AuditPaginationMeta {
 }
 
 export interface GetProjectAuditLogsResponse {
+  success: boolean;
   data: any[];
-  meta?: AuditPaginationMeta;
+  pagination?: AuditPaginationMeta;
 }
 
 export async function getProjectAuditLogsApi(

@@ -74,12 +74,6 @@ export function CompanySetupView() {
     setApiError(null);
 
     const trimmed = companyName.trim();
-    const slug = trimmed
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 50) || 'workspace';
-
     // Attempt registration against real backend API if configured
     try {
       const pendingPassword = pendingSignupPassword || 'Password123!';
@@ -92,7 +86,6 @@ export function CompanySetupView() {
         },
         organization: {
           name: trimmed,
-          slug,
         },
       }).catch((err) => {
         // If server is unreachable or 409 already exists, log actionable message

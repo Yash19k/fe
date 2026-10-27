@@ -29,6 +29,8 @@ import { ProjectDashboardView } from './features/project/ProjectDashboardView';
 import { SprintDashboardView } from './features/project/SprintDashboardView';
 import { WorkflowBuilderView } from './features/project/WorkflowBuilderView';
 import { DependenciesView } from './features/project/DependenciesView';
+import { WhiteboardsView } from './features/project/WhiteboardsView';
+import { WhiteboardEditorView } from './features/project/WhiteboardEditorView';
 import { ProjectSettingsView, SettingsSection } from './features/project/ProjectSettingsView';
 import { SettingsView } from './features/settings/SettingsView';
 import { AuthView } from './features/auth/AuthView';
@@ -49,7 +51,7 @@ function isSettingsTab(tab: string): boolean {
 
 function isValidProjectTab(tab: string): boolean {
   return (
-    ['overview', 'dashboard', 'list', 'board', 'timeline', 'calendar', 'sprint'].includes(tab) ||
+    ['overview', 'dashboard', 'list', 'board', 'timeline', 'calendar', 'sprint', 'whiteboards'].includes(tab) ||
     isSettingsTab(tab)
   );
 }
@@ -169,6 +171,7 @@ function MainAppShell() {
     : '';
   const effectiveProjectId = currentProjectId || routeProjectId;
   const isProjectRoute = activeRoute.startsWith('/project/') && Boolean(effectiveProjectId);
+  const whiteboardEditorId = activeRoute.match(/^\/project\/[^/]+\/whiteboards\/([^/?#]+)/)?.[1];
   const hasProjectAccess = currentProject && currentUser?.id ? canUserAccessProject(currentProject, currentUser.id) : true;
 
   return (
@@ -246,7 +249,9 @@ function MainAppShell() {
               </div>
             ) : (
               <>
-                {projectTab === 'overview' && <ProjectOverviewView />}
+                {whiteboardEditorId ? (
+                  <WhiteboardEditorView whiteboardId={whiteboardEditorId} />
+                ) : projectTab === 'overview' && <ProjectOverviewView />}
                 {/* Legacy /dashboard URL renders consolidated Overview (Req 2.5) */}
                 {projectTab === 'dashboard' && <ProjectOverviewView />}
                 {projectTab === 'list' && (
@@ -273,6 +278,7 @@ function MainAppShell() {
                     }}
                   />
                 )}
+                {projectTab === 'whiteboards' && !whiteboardEditorId && <WhiteboardsView />}
                 {/* Unified Project Settings & Subsection Navigation */}
                 {isSettingsTab(projectTab) && (
                   <ProjectSettingsView

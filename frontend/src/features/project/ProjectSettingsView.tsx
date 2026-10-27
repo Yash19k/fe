@@ -595,9 +595,9 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     const q = auditFilter.toLowerCase();
     return sourceRecords.filter((log: AuditLogEntry) => {
       const actor = getAuditActor(log, allUsers);
-      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+      const entity = getAuditEntityInfo(log, projectTasks, currentProject?.name || '');
       const actionInfo = formatAuditAction(log.action);
-      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
+      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject?.name || '');
 
       return (
         actionInfo.label.toLowerCase().includes(q) ||

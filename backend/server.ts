@@ -7,6 +7,7 @@ import { AppDataSource } from "./config/data.source";
 
 import { refreshSlaStatuses } from "./services/sla.service";
 import { attachChatWebSocket } from "./websocket/chat.gateway";
+import { attachWhiteboardSocket } from "./websocket/whiteboard.gateway";
 
 import { startScheduler, stopScheduler } from "./services/scheduler.service";
 
@@ -29,6 +30,7 @@ async function startServer(): Promise<void> {
 
     const server = createServer(app);
     attachChatWebSocket(server);
+    attachWhiteboardSocket(server);
     server.listen(config.port, config.host, () => {
       console.log(
         `Server running at http://${config.host}:${config.port}`,

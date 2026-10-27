@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Workflow,
   Network,
+  PenTool,
   Lock,
   Globe,
   LucideIcon,
@@ -55,6 +56,7 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
     { id: 'timeline', label: 'Timeline', icon: GitCommit },
     { id: 'calendar', label: 'Calendar', icon: CalendarDays },
     { id: 'sprint', label: 'Sprint', icon: Zap },
+    { id: 'whiteboards', label: 'Whiteboards', icon: PenTool },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
