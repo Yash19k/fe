@@ -29,6 +29,7 @@ const roomName = (whiteboardId: string) => `whiteboard:${whiteboardId}`;
 const recentUpdates = new Map<string, number>();
 const writeQueues = new Map<string, Promise<void>>();
 const cursorTimestamps = new Map<string, number>();
+const cursorRateWindows = new Map<string, number[]>();
 const MAX_SCENE_BYTES = 900_000;
 const CURSOR_INTERVAL_MS = 50;
 
@@ -114,6 +115,14 @@ async function authenticateSocket(socket: Socket): Promise<SocketActor> {
   };
 }
 
+async function isActiveActor(actor: SocketActor): Promise<boolean> {
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: { id: actor.id },
+    select: { id: true, status: true },
+  });
+  return user?.status === UserStatus.ACTIVE;
+}
+
 function presence(io: Server, whiteboardId: string): WhiteboardPresence[] {
   const users = new Map<string, WhiteboardPresence>();
   for (const socket of io.sockets.adapter.rooms.get(roomName(whiteboardId)) ?? []) {
@@ -158,6 +167,11 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
     };
 
     socket.on("whiteboard:join", async (payload: unknown, acknowledge?: (response: unknown) => void) => {
+      if (!(await isActiveActor(socket.actor))) {
+        acknowledge?.({ ok: false, message: "Authentication required." });
+        socket.disconnect(true);
+        return;
+      }
       if (!validJoin(payload)) {
         acknowledge?.({ ok: false, message: "A valid whiteboard ID is required." });
         return;
@@ -188,6 +202,11 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
     });
 
     socket.on("whiteboard:scene-update", async (payload: unknown, acknowledge?: (response: unknown) => void) => {
+      if (!(await isActiveActor(socket.actor))) {
+        acknowledge?.({ ok: false, message: "Authentication required." });
+        socket.disconnect(true);
+        return;
+      }
       if (!validUpdate(payload) || !socket.whiteboards.has(payload.whiteboardId)) {
         acknowledge?.({ ok: false, message: "Join the whiteboard before updating it." });
         return;
@@ -242,10 +261,18 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
       }
     });
 
-    socket.on("whiteboard:cursor-move", (payload: unknown) => {
+    socket.on("whiteboard:cursor-move", async (payload: unknown) => {
+      if (!(await isActiveActor(socket.actor))) {
+        socket.disconnect(true);
+        return;
+      }
       if (!validCursor(payload) || !socket.whiteboards.has(payload.whiteboardId)) return;
-      const cursorKey = `${socket.id}:${payload.whiteboardId}`;
       const now = Date.now();
+      const timestamps = (cursorRateWindows.get(socket.id) ?? []).filter((timestamp) => now - timestamp < 1000);
+      if (timestamps.length >= 30) return;
+      timestamps.push(now);
+      cursorRateWindows.set(socket.id, timestamps);
+      const cursorKey = `${socket.id}:${payload.whiteboardId}`;
       if (now - (cursorTimestamps.get(cursorKey) ?? 0) < CURSOR_INTERVAL_MS) return;
       cursorTimestamps.set(cursorKey, now);
       socket.to(roomName(payload.whiteboardId)).emit("whiteboard:cursor-update", {
@@ -254,6 +281,7 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
         displayName: socket.actor.displayName,
         x: payload.x,
         y: payload.y,
+        pressed: payload.pressed === true,
       });
     });
 
@@ -262,6 +290,7 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
       for (const key of cursorTimestamps.keys()) {
         if (key.startsWith(`${socket.id}:`)) cursorTimestamps.delete(key);
       }
+      cursorRateWindows.delete(socket.id);
     });
   });
 

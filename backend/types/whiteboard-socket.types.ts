@@ -20,6 +20,7 @@ export interface WhiteboardCursorPayload {
   whiteboardId: string;
   x: number;
   y: number;
+  pressed?: boolean;
 }
 
 export interface WhiteboardPresence {

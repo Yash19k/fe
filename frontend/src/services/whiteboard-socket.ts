@@ -7,6 +7,15 @@ export interface WhiteboardPresence {
   displayName: string;
 }
 
+export interface WhiteboardCursor {
+  whiteboardId: string;
+  userId: string;
+  displayName: string;
+  x: number;
+  y: number;
+  pressed?: boolean;
+}
+
 export interface WhiteboardSceneUpdate {
   whiteboardId: string;
   updateId: string;
