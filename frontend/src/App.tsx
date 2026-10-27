@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { AppProvider } from './state/AppContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { useApp } from './hooks/useApp';
-import { GlobalRail } from './components/navigation/GlobalRail';
 import { WorkspaceSidebar } from './components/navigation/WorkspaceSidebar';
 import { Topbar } from './components/navigation/Topbar';
 import { ProjectHeader } from './components/navigation/ProjectHeader';
@@ -86,6 +85,24 @@ function MainAppShell() {
   } = useApp();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('taskflow_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleSidebarCollapse = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('taskflow_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [createTaskSprintId, setCreateTaskSprintId] = useState<string | undefined>();
   const [createSprintOpen, setCreateSprintOpen] = useState(false);
@@ -156,14 +173,13 @@ function MainAppShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas text-text-primary antialiased">
-      {/* 1. Global Navigation Rail */}
-      <GlobalRail />
-
-      {/* 2. Workspace Sidebar */}
+      {/* Consolidated Collapsible Sidebar */}
       <WorkspaceSidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onOpenCreateProject={() => setCreateProjectOpen(true)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={handleToggleSidebarCollapse}
       />
 
       {/* 3. Main Workspace Area */}
@@ -173,6 +189,8 @@ function MainAppShell() {
           onToggleSidebar={() => setSidebarOpen(true)}
           onOpenCreateTask={() => setCreateTaskOpen(true)}
           onOpenSearch={() => setSearchOpen(true)}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebarCollapse={handleToggleSidebarCollapse}
         />
 
         {/* Persistent Project Header if in project context and accessible */}

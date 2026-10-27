@@ -12,6 +12,7 @@ import type {
   Sprint,
   Role,
   SprintStatus,
+  User,
 } from '../types';
 
 export const API_BASE_URL =
@@ -359,6 +360,8 @@ export interface CreateWorkItemApiInput {
   status?: string;
   dueDate?: string | null;
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
+  labelId?: string | null;
+  labels?: string[];
 }
 
 export async function getProjectWorkItemsApi(
@@ -579,10 +582,20 @@ export interface GetProjectAuditLogsResponse {
 }
 
 export async function getProjectAuditLogsApi(
-  projectId: string
+  projectId: string,
+  page?: number,
+  limit?: number
 ): Promise<GetProjectAuditLogsResponse> {
+  const query = new URLSearchParams();
+  if (page !== undefined && page !== null) {
+    query.set('page', String(page));
+  }
+  if (limit !== undefined && limit !== null) {
+    query.set('limit', String(limit));
+  }
+  const queryString = query.toString() ? `?${query.toString()}` : '';
   return request<GetProjectAuditLogsResponse>(
-    `/api/projects/${encodeURIComponent(projectId)}/audit-logs`,
+    `/api/projects/${encodeURIComponent(projectId)}/audit-logs${queryString}`,
     { method: 'GET' }
   );
 }
@@ -603,17 +616,32 @@ export async function undoAuditLogApi(projectId: string, auditId: string): Promi
 
 // Notifications
 export async function getUserNotificationsApi(): Promise<any> {
-  return request<any>('/api/notifications', { method: 'GET' });
+  try {
+    return await request<any>('/api/notifications', { method: 'GET' });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking notifications fetch failure:', err.message);
+    return { success: false, count: 0, data: [] };
+  }
 }
 
 export async function markNotificationReadApi(notifId: string): Promise<any> {
-  return request<any>(`/api/notifications/${encodeURIComponent(notifId)}/read`, {
-    method: 'PATCH',
-  });
+  try {
+    return await request<any>(`/api/notifications/${encodeURIComponent(notifId)}/read`, {
+      method: 'PATCH',
+    });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark notification read notice:', err.message);
+    return { success: false };
+  }
 }
 
 export async function markAllNotificationsReadApi(): Promise<any> {
-  return request<any>('/api/notifications/read-all', { method: 'PATCH' });
+  try {
+    return await request<any>('/api/notifications/read-all', { method: 'PATCH' });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark all notifications read notice:', err.message);
+    return { success: false };
+  }
 }
 
 export async function createNotificationApi(payload: any): Promise<any> {
@@ -623,14 +651,73 @@ export async function createNotificationApi(payload: any): Promise<any> {
   });
 }
 
+// SLA Settings
+export interface OrganizationSlaPolicy {
+  id?: string;
+  organizationId?: string;
+  urgentHours?: number;
+  highHours: number;
+  mediumHours: number;
+  lowHours: number;
+  escalateHours: number;
+  warningThresholdHours?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function getOrganizationSlaApi(): Promise<{ success: boolean; data: OrganizationSlaPolicy }> {
+  return request<{ success: boolean; data: OrganizationSlaPolicy }>('/api/sla', { method: 'GET' });
+}
+
+export async function updateOrganizationSlaApi(
+  payload: Partial<OrganizationSlaPolicy>
+): Promise<{ success: boolean; message: string; data: OrganizationSlaPolicy }> {
+  return request<{ success: boolean; message: string; data: OrganizationSlaPolicy }>('/api/sla', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 // Chat / Messaging
+export interface ChatConversationMember {
+  userId: string;
+  lastReadAt?: string | null;
+  user?: {
+    id: string;
+    fullName?: string | null;
+    email: string;
+    role?: string;
+    status?: string;
+    [key: string]: any;
+  };
+}
+
+export interface ChatParticipant {
+  id: string;
+  fullName?: string | null;
+  email: string;
+}
+
+export interface ChatLastMessage {
+  id: string;
+  content: string;
+  createdAt: string;
+  senderId: string;
+}
+
 export interface ChatConversation {
   id: string;
   type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
-  name?: string;
-  projectId?: string;
+  name?: string | null;
+  projectId?: string | null;
+  organizationId?: string | null;
   updatedAt: string;
-  members: Array<{ userId: string; user?: any }>;
+  createdAt?: string;
+  members: ChatConversationMember[];
+  otherParticipant?: ChatParticipant | null;
+  lastMessage?: ChatLastMessage | null;
+  unreadCount?: number;
+  lastReadAt?: string | null;
 }
 
 export interface ChatMessage {
@@ -639,7 +726,13 @@ export interface ChatMessage {
   senderId: string;
   content: string;
   createdAt: string;
-  sender?: any;
+  sender?: {
+    id: string;
+    fullName?: string | null;
+    email: string;
+    role?: string;
+    [key: string]: any;
+  } | null;
 }
 
 export async function getChatConversationsApi(): Promise<any> {
@@ -648,8 +741,11 @@ export async function getChatConversationsApi(): Promise<any> {
 
 export async function createChatConversationApi(payload: {
   type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
-  name?: string;
-  projectId?: string;
+  name?: string | null;
+  projectId?: string | null;
+  organizationId?: string;
+  participantId?: string;
+  memberIds?: string[];
   recipientUserIds?: string[];
 }): Promise<any> {
   return request<any>('/api/chat/conversations', {
@@ -669,9 +765,61 @@ export async function getChatMessagesApi(
 }
 
 // Helpers & Converters
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export function isUuid(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return UUID_REGEX.test(id.trim());
+}
+
 export function isPersistedWorkItemId(id?: string | null): boolean {
-  if (!id) return false;
-  return !id.startsWith('tf-') && !id.startsWith('sub-') && !id.startsWith('att-');
+  return isUuid(id);
+}
+
+export function toUserFriendlyErrorMessage(
+  err: any,
+  fallbackMessage: string = 'An error occurred. Please try again.'
+): string {
+  if (!err) return fallbackMessage;
+
+  const raw = String(err?.message || err?.details?.message || err || '').trim();
+
+  // Check for raw database, SQL, TypeORM, or internal exception patterns
+  const isRawDbError =
+    /invalid input syntax for type uuid/i.test(raw) ||
+    /invalid.*uuid/i.test(raw) ||
+    /syntax error at or near/i.test(raw) ||
+    /relation ".*" does not exist/i.test(raw) ||
+    /column ".*" does not exist/i.test(raw) ||
+    /violates foreign key constraint/i.test(raw) ||
+    /violates not-null constraint/i.test(raw) ||
+    /violates check constraint/i.test(raw) ||
+    /duplicate key/i.test(raw) ||
+    /deadlock detected/i.test(raw) ||
+    /QueryFailedError/i.test(raw) ||
+    /TypeORM/i.test(raw) ||
+    /SELECT |INSERT |UPDATE |DELETE |FROM |WHERE /i.test(raw) ||
+    /node:internal/i.test(raw) ||
+    /at (?:async )?[A-Za-z0-9_.]+\s*\(/i.test(raw) ||
+    raw === 'Internal Server Error' ||
+    raw === 'INTERNAL_SERVER_ERROR';
+
+  if (isRawDbError) {
+    if (/uuid/i.test(raw)) {
+      return 'The requested identifier is invalid or not yet saved.';
+    }
+    if (/duplicate key|unique constraint/i.test(raw)) {
+      return 'A conflict occurred with an existing record.';
+    }
+    if (/foreign key/i.test(raw)) {
+      return 'The referenced item was not found or is no longer available.';
+    }
+    return fallbackMessage;
+  }
+
+  // Strip technical prefix like "error: " or "Error: "
+  const cleaned = raw.replace(/^error:\s*/i, '');
+  return cleaned || fallbackMessage;
 }
 
 export function frontendStatusToBackend(status: string): string {
@@ -743,9 +891,10 @@ export function frontendPriorityToBackend(priority?: Priority | string | null): 
 export function normalizeRole(backendRole?: string | null): Role {
   switch (backendRole?.toUpperCase()) {
     case 'ADMIN': return 'Admin';
-    case 'MANAGER': return 'Manager';
-   
+    case 'MANAGER':
+    case 'LEAD': return 'Manager';
     case 'TEAMMATE':
+    case 'MEMBER':
     default:
       return 'Teammate';
   }
@@ -763,41 +912,123 @@ export function toBackendRole(role?: Role | string | null): string {
 }
 
 export function toBackendProjectRole(role?: Role | string | null): string {
-  return toBackendRole(role);
+  switch (role) {
+    case 'Admin': return 'ADMIN';
+    case 'Manager': return 'LEAD';
+    case 'Teammate':
+    default:
+      return 'MEMBER';
+  }
 }
 
 export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Task {
+  if (!item) return {} as Task;
+
+  const entity = item.workItem || item;
+  const assignments = item.assignments || entity.assignments;
+  const rawAssignees = item.assignees || entity.assignees;
+
+  let assigneeIds: string[] = [];
+  let assignees: User[] = [];
+
+  if (Array.isArray(item.assigneeIds) && item.assigneeIds.length > 0) {
+    assigneeIds = item.assigneeIds;
+  } else if (Array.isArray(entity.assigneeIds) && entity.assigneeIds.length > 0) {
+    assigneeIds = entity.assigneeIds;
+  } else if (Array.isArray(assignments) && assignments.length > 0) {
+    assigneeIds = assignments
+      .map((a: any) => a.userId || a.user?.id || a.id)
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+  } else if (Array.isArray(rawAssignees) && rawAssignees.length > 0) {
+    assigneeIds = rawAssignees
+      .map((a: any) => (typeof a === 'string' ? a : a.userId || a.id))
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+  } else if (item.assigneeId || entity.assigneeId) {
+    const single = item.assigneeId || entity.assigneeId;
+    if (typeof single === 'string' && single.length > 0) assigneeIds = [single];
+  }
+
+  if (Array.isArray(assignments) && assignments.length > 0) {
+    assignees = assignments
+      .map((a: any) => {
+        const u = a.user || a;
+        if (!u || typeof u !== 'object') return null;
+        return {
+          id: a.userId || u.id,
+          name: u.fullName || u.name || u.email?.split('@')[0] || 'Member',
+          email: u.email || '',
+          role: normalizeRole(u.role),
+          initials: (u.fullName || u.name || u.email || 'M').slice(0, 2).toUpperCase(),
+        } as User;
+      })
+      .filter((u): u is User => Boolean(u && u.id));
+  } else if (Array.isArray(rawAssignees) && rawAssignees.length > 0) {
+    assignees = rawAssignees
+      .map((a: any) => {
+        if (!a || typeof a !== 'object') return null;
+        const u = a.user || a;
+        return {
+          id: a.userId || u.id,
+          name: u.fullName || u.name || u.email?.split('@')[0] || 'Member',
+          email: u.email || '',
+          role: normalizeRole(u.role),
+          initials: (u.fullName || u.name || u.email || 'M').slice(0, 2).toUpperCase(),
+        } as User;
+      })
+      .filter((u): u is User => Boolean(u && u.id));
+  }
+
+  const primaryAssigneeId =
+    assigneeIds[0] ||
+    item.assigneeId ||
+    entity.assigneeId ||
+    null;
+
+  let labels: string[] = [];
+  const rawLabels = item.labels || entity.labels;
+  const singleLabel = item.label || entity.label;
+
+  if (Array.isArray(rawLabels) && rawLabels.length > 0) {
+    labels = rawLabels
+      .map((l: any) => (typeof l === 'string' ? l : l.name || l.title || l.id))
+      .filter((name: any): name is string => typeof name === 'string' && name.length > 0);
+  } else if (singleLabel) {
+    const labelName = typeof singleLabel === 'string' ? singleLabel : singleLabel.name;
+    if (labelName) labels = [labelName];
+  }
+
   return {
-    id: item.id,
-    projectId: item.projectId || fallbackProjectId || '',
-    sprintId: item.sprintId || null,
-    parentId: item.parentWorkItemId || item.parentId || null,
-    type: backendTypeToFrontend(item.type),
-    title: item.title || 'Untitled Task',
-    description: item.description || '',
-    status: backendStatusToFrontend(item.status),
-    priority: backendPriorityToFrontend(item.priority),
-    assigneeId: item.assignees?.[0]?.userId || item.assigneeId || null,
-    assigneeIds: item.assignees ? item.assignees.map((a: any) => a.userId) : [],
-    creatorId: item.creatorId || '',
-    startDate: item.startDate || null,
-    dueDate: item.dueDate || null,
-    estimateHours: item.estimateHours ? Number(item.estimateHours) : null,
-    actualHours: item.actualHours ? Number(item.actualHours) : 0,
-    dependencyIds: Array.isArray(item.dependencies)
-      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id)
+    id: entity.id || item.id,
+    projectId: entity.projectId || item.projectId || fallbackProjectId || '',
+    sprintId: entity.sprintId ?? item.sprintId ?? null,
+    parentId: entity.parentWorkItemId || entity.parentId || item.parentWorkItemId || item.parentId || null,
+    type: backendTypeToFrontend(entity.type || item.type),
+    title: entity.title || item.title || 'Untitled Task',
+    description: entity.description ?? item.description ?? '',
+    status: backendStatusToFrontend(entity.status || item.status),
+    priority: backendPriorityToFrontend(entity.priority ?? item.priority),
+    assigneeId: primaryAssigneeId,
+    assigneeIds,
+    assignees,
+    creatorId: entity.createdById || entity.creatorId || item.createdById || item.creatorId || '',
+    startDate: entity.startDate || item.startDate || null,
+    dueDate: entity.dueDate || item.dueDate || null,
+    estimateHours: (entity.estimateHours ?? item.estimateHours) ? Number(entity.estimateHours ?? item.estimateHours) : null,
+    actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
+    dependencyIds: Array.isArray(entity.dependencies || item.dependencies)
+      ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
-    labels: Array.isArray(item.labels) ? item.labels.map((l: any) => l.name || l) : [],
-    subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
-    comments: Array.isArray(item.comments) ? item.comments : [],
-    timeEntries: Array.isArray(item.timeEntries) ? item.timeEntries : [],
-    recurrenceRule: item.recurrenceRule || { frequency: 'none' },
-    sla: item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
-    version: item.version ? Number(item.version) : 1,
-    createdAt: item.createdAt || new Date().toISOString(),
-    updatedAt: item.updatedAt || new Date().toISOString(),
-    attachments: Array.isArray(item.attachments)
-      ? item.attachments.map((att: any) => ({
+    labels,
+    subtasks: Array.isArray(entity.subtasks || item.subtasks) ? (entity.subtasks || item.subtasks) : [],
+    comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
+    timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
+    recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
+    sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
+    version: entity.version ? Number(entity.version) : 1,
+    createdAt: entity.createdAt || item.createdAt || new Date().toISOString(),
+    updatedAt: entity.updatedAt || item.updatedAt || new Date().toISOString(),
+    attachments: Array.isArray(entity.attachments || item.attachments)
+      ? (entity.attachments || item.attachments).map((att: any) => ({
           id: att.id,
           name: att.originalName || att.name || 'attachment',
           size: Number(att.size) || 0,
@@ -806,7 +1037,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
           blobKey: att.blobKey || att.id,
           uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
         }))
-      : (item.attachments || []),
+      : (entity.attachments || item.attachments || []),
   };
 }
 

@@ -21,6 +21,9 @@ import {
   addOrganizationMemberApi,
   updateOrganizationMemberRoleApi,
   removeOrganizationMemberApi,
+  getOrganizationSlaApi,
+  updateOrganizationSlaApi,
+  toUserFriendlyErrorMessage,
 } from '../../services/api';
 
 export function SettingsView() {
@@ -30,6 +33,8 @@ export function SettingsView() {
   const [slaMedium, setSlaMedium] = useState<number | string>(48);
   const [slaLow, setSlaLow] = useState<number | string>(96);
   const [warningThreshold, setWarningThreshold] = useState<number | string>(8);
+  const [isLoadingSla, setIsLoadingSla] = useState<boolean>(false);
+  const [isSavingSla, setIsSavingSla] = useState<boolean>(false);
 
   // Organization Member Management State
   const [members, setMembers] = useState<any[]>([]);
@@ -75,9 +80,67 @@ export function SettingsView() {
     }
   }, [canManageOrgMembers]);
 
-  function handleSaveSlaSettings(e: React.FormEvent) {
+  useEffect(() => {
+    let isCancelled = false;
+    setIsLoadingSla(true);
+    getOrganizationSlaApi()
+      .then((res) => {
+        if (!isCancelled && res?.data) {
+          if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+          if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+          if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+          if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load SLA settings:', err);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingSla(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  async function handleSaveSlaSettings(e: React.FormEvent) {
     e.preventDefault();
-    showToast('SLA threshold policy updated successfully', 'success');
+    const high = Number(slaHigh);
+    const medium = Number(slaMedium);
+    const low = Number(slaLow);
+    const escalate = Number(warningThreshold);
+
+    if (
+      isNaN(high) || high <= 0 ||
+      isNaN(medium) || medium <= 0 ||
+      isNaN(low) || low <= 0 ||
+      isNaN(escalate) || escalate <= 0
+    ) {
+      showToast('All SLA thresholds must be positive numbers greater than 0', 'error');
+      return;
+    }
+
+    setIsSavingSla(true);
+    try {
+      const res = await updateOrganizationSlaApi({
+        highHours: high,
+        mediumHours: medium,
+        lowHours: low,
+        escalateHours: escalate,
+      });
+      if (res?.data) {
+        if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+        if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+        if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+        if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+      }
+      showToast(res?.message || 'SLA threshold policy updated successfully', 'success');
+    } catch (err: any) {
+      showToast(toUserFriendlyErrorMessage(err, 'Unable to save SLA settings. Please try again.'), 'error');
+    } finally {
+      setIsSavingSla(false);
+    }
   }
 
   async function handleAddMemberSubmit(e: React.FormEvent) {
@@ -435,8 +498,14 @@ export function SettingsView() {
           />
 
           <div className="sm:col-span-2 flex justify-end">
-            <Button variant="primary" size="sm" type="submit" icon={Check}>
-              Save SLA Settings
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              icon={isSavingSla ? RefreshCw : Check}
+              disabled={isSavingSla || isLoadingSla}
+            >
+              {isSavingSla ? 'Saving...' : 'Save SLA Settings'}
             </Button>
           </div>
         </form>

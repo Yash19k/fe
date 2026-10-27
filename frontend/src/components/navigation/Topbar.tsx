@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Menu, Shield, LogOut } from 'lucide-react';
+import { Search, Bell, Menu, Shield, LogOut, PanelLeftOpen } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { NotificationPopover } from './NotificationPopover';
 import { Avatar } from '../ui/Avatar';
@@ -9,9 +9,17 @@ export interface TopbarProps {
   onToggleSidebar?: () => void;
   onOpenCreateTask?: () => void;
   onOpenSearch?: () => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebarCollapse?: () => void;
 }
 
-export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, onOpenSearch }: TopbarProps) {
+export function Topbar({
+  onToggleSidebar,
+  onOpenCreateTask: _onOpenCreateTask,
+  onOpenSearch,
+  isSidebarCollapsed = false,
+  onToggleSidebarCollapse,
+}: TopbarProps) {
   const { currentUser, notifications, navigate, logout } = useApp();
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -36,7 +44,7 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
 
   return (
     <header className="sticky top-0 z-30 h-13 bg-surface border-b border-border flex items-center justify-between px-4 sm:px-6 flex-shrink-0 select-none">
-      {/* Left section: mobile hamburger & breadcrumb */}
+      {/* Left section: mobile hamburger, desktop expand toggle & search */}
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleSidebar}
@@ -45,6 +53,17 @@ export function Topbar({ onToggleSidebar, onOpenCreateTask: _onOpenCreateTask, o
         >
           <Menu size={19} />
         </button>
+
+        {isSidebarCollapsed && (
+          <button
+            onClick={onToggleSidebarCollapse}
+            className="hidden lg:flex items-center gap-1.5 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title="Expand navigation menu"
+            aria-label="Expand navigation menu"
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        )}
 
         {/* Global Search trigger bar */}
         <button

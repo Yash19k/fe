@@ -33,7 +33,7 @@ import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../doma
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
-import { getWorkItemCommentsApi } from '../../services/api';
+import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
 import { LabelPicker } from '../ui/LabelPicker';
 
 interface TaskDetailsContentProps {
@@ -109,6 +109,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }), [task]);
 
   const [draft, setDraft] = useState(initialDraft);
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
+
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
@@ -119,7 +124,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   // Fetch comments from backend when task opens or comments tab is active
   useEffect(() => {
     let isCancelled = false;
-    if (task?.id && task.id.includes('-') && (activeTab === 'comments' || !task.comments)) {
+    if (isPersistedWorkItemId(task?.id) && (activeTab === 'comments' || !task.comments)) {
       getWorkItemCommentsApi(task.id)
         .then((res) => {
           if (res?.data && Array.isArray(res.data) && !isCancelled) {
@@ -241,7 +246,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     }));
   }
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     if (!draft.title.trim()) {
       showToast('Work item title is required', 'error');
       return;
@@ -293,9 +298,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         environment: draft.environment,
       };
 
-      updateTask(task.id, updates, snapshotVersion);
+      const result = await updateTask(task.id, updates, snapshotVersion);
+      if (result && !result.success && result.reason) {
+        showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
+      }
     } catch (err: any) {
-      showToast(err.message || 'Failed to save work item changes', 'error');
+      showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
     } finally {
       setIsSaving(false);
     }
@@ -333,14 +341,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     try {
       await addComment(task.id, text);
       setNewCommentText('');
-      if (task.id && task.id.includes('-')) {
+      if (isPersistedWorkItemId(task.id)) {
         const res = await getWorkItemCommentsApi(task.id).catch(() => null);
         if (res?.data && Array.isArray(res.data)) {
           setBackendComments(res.data);
         }
       }
     } catch (err: any) {
-      setCommentError(err?.message || 'Failed to post comment to server');
+      setCommentError(toUserFriendlyErrorMessage(err, 'Failed to post comment to server'));
     } finally {
       setIsSubmittingComment(false);
     }
