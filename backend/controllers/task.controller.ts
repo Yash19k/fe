@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import { In } from "typeorm";
 import { AppDataSource } from "../config/data.source";
 import {
   WorkItem,
@@ -376,6 +375,9 @@ export const deleteWorkItem = async (
     );
     await manager.getRepository(WorkItem).remove(workItem);
   });
+  const workItem = await getAccessibleWorkItem(workItemId, actor);
+
+  await AppDataSource.getRepository(WorkItem).remove(workItem);
 
   res.status(200).json({
     success: true,

@@ -79,3 +79,25 @@ export const onboardingSchema = Joi.object({
   email: Joi.string().trim().lowercase().email().max(255).required(),
   password: passwordSchema,
 });
+
+ export const authForgotPasswordSchema = Joi.object({
+   email: Joi.string().trim().lowercase().email().max(255).required().messages({
+     "string.email": "Please provide a valid email address",
+     "string.empty": "Email is required",
+     "any.required": "Email is required",
+   }),
+ });
+
+ export const authResetPasswordSchema = Joi.object({
+   token: Joi.string().trim().min(32).max(512).required().messages({
+     "string.min": "Reset token is invalid",
+     "string.empty": "Reset token is required",
+     "any.required": "Reset token is required",
+   }),
+   newPassword: passwordSchema,
+   confirmPassword: Joi.string().valid(Joi.ref("newPassword")).required().messages({
+     "any.only": "Passwords do not match",
+     "string.empty": "Confirm password is required",
+     "any.required": "Confirm password is required",
+   }),
+ });

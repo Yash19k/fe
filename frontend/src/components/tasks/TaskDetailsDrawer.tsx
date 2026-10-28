@@ -34,6 +34,7 @@ import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { LabelPicker } from '../ui/LabelPicker';
 
 interface TaskDetailsContentProps {
@@ -46,6 +47,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     tasks,
     updateTask,
     deleteTask,
+    uploadTaskAttachments,
     addSubtask,
     toggleSubtask,
     deleteSubtask,
@@ -102,6 +104,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         ? ''
         : String(task.plannedDurationWorkingDays),
     isSchedulePinned: Boolean(task.isSchedulePinned),
+    dueDate: toDateInputValue(task.dueDate),
     estimateHours: task.estimateHours !== null && task.estimateHours !== undefined ? task.estimateHours : '',
     parentId: task.parentId || '',
     businessGoal: task.businessGoal || '',
@@ -122,6 +125,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -423,17 +427,19 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => simulateExternalTaskEdit(task.id)}
-            className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
-            title="Simulate remote edit (tests conflict collision modal)"
-          >
-            <Zap size={15} />
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => simulateExternalTaskEdit(task.id)}
+              className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
+              title="Simulate remote edit (tests conflict collision modal)"
+            >
+              <Zap size={15} />
+            </button>
+          )}
 
           {currentUser.role !== 'Teammate' && (
             <button
-              onClick={() => deleteTask(task.id)}
+              onClick={() => setConfirmDeleteOpen(true)}
               className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-surface-hover transition-colors"
               title="Delete task"
             >
@@ -565,7 +571,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <label className="text-[11px] text-text-muted block mb-1">Due Date</label>
             <input
               type="date"
-              value={draft.dueDate}
+              value={toDateInputValue(draft.dueDate)}
               onChange={(e) => setDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
             />
@@ -868,6 +874,17 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         <TaskAttachments
           attachments={task.attachments || []}
           onChange={(newAtts) => updateTask(task.id, { attachments: newAtts }, snapshotVersion)}
+          onFilesChange={async (files) => {
+            if (!files || files.length === 0) return;
+            if (isPersistedWorkItemId(task.id)) {
+              try {
+                const uploaded = await uploadTaskAttachments(task.id, files);
+                showToast(`Successfully uploaded ${uploaded.length} attachment(s)`, 'success');
+              } catch (err: any) {
+                showToast(toUserFriendlyErrorMessage(err, 'Failed to upload attachments to server'), 'error');
+              }
+            }
+          }}
         />
 
         {/* SLA & Escalation section */}
@@ -1399,6 +1416,31 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             }}
           >
             Discard & Close
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        isOpen={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        title="Delete Work Item"
+        description={`Are you sure you want to delete "${task.title}"? This action cannot be undone.`}
+        maxWidth="max-w-md"
+      >
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+          <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => {
+              setConfirmDeleteOpen(false);
+              deleteTask(task.id);
+              onClose();
+            }}
+          >
+            Delete
           </Button>
         </div>
       </Dialog>

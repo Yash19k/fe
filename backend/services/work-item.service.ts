@@ -3,6 +3,7 @@ import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
 import { Project, ProjectVisibility } from "../entities/project.entity";
 import { ProjectMember } from "../entities/project.member.entity";
+import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import {
   WorkItem,
   WorkItemType,
@@ -30,6 +31,7 @@ import { AppError } from "../errors/app.error";
 import { NotificationType } from "../entities/notification.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { createNotificationsBestEffort } from "./notification.service";
+import { notificationService } from "./notification.service";
 import {
   applySlaState,
   calculateSlaDeadline,
@@ -260,6 +262,14 @@ export async function validateAssignees(
       400,
       "INVALID_ASSIGNEE",
     );
+    const newMembers = missingMemberIds.map((userId) =>
+      manager.getRepository(ProjectMember).create({
+        projectId,
+        userId,
+        role: ProjectRole.MEMBER,
+      }),
+    );
+    await manager.getRepository(ProjectMember).save(newMembers);
   }
 }
 
@@ -288,48 +298,6 @@ export async function createWorkItemOrchestration(
 
   if (recurrence) {
     validateRecurrence(recurrence, type);
-  }
-
-  if (
-    (plannedStartDate == null) !==
-    (plannedDurationWorkingDays == null)
-  ) {
-    throw new AppError(
-      "Planned start date and working-day duration must be provided together.",
-      400,
-      "INVALID_SCHEDULE_DATA",
-    );
-  }
-  if (
-    plannedDurationWorkingDays != null &&
-    (!Number.isInteger(plannedDurationWorkingDays) ||
-      plannedDurationWorkingDays < 1)
-  ) {
-    throw new AppError(
-      "Planned duration must be a positive whole number of working days.",
-      400,
-      "INVALID_SCHEDULE_DATA",
-    );
-  }
-  let plannedFinish: Date | null = null;
-  if (plannedStartDate && plannedDurationWorkingDays) {
-    plannedFinish = dateToProjectTimestamp(
-      calculatePlannedFinish(
-        plannedStartDate,
-        plannedDurationWorkingDays,
-      ),
-    );
-  }
-  if (
-    plannedFinish &&
-    dueDate &&
-    getProjectDate(plannedFinish) !== getProjectDate(dueDate)
-  ) {
-    throw new AppError(
-      "Due date must match the planned start date and working-day duration.",
-      400,
-      "INVALID_SCHEDULE_DATA",
-    );
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
@@ -414,10 +382,7 @@ export async function createWorkItemOrchestration(
       description: description?.trim() || null,
       priority: priority ?? null,
       status,
-      dueDate:
-        plannedFinish ?? (dueDate == null ? null : new Date(dueDate)),
-      plannedStartDate: plannedStartDate ?? null,
-      plannedDurationWorkingDays: plannedDurationWorkingDays ?? null,
+      dueDate: dueDate == null ? null : new Date(dueDate),
     });
 
     const savedWorkItem = await workItemRepository.save(workItem);

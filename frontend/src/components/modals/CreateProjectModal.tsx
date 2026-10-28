@@ -11,6 +11,7 @@ import {
   validateProjectDates,
   normalizeProjectId,
 } from '../../domain/projects';
+import { toDateInputValue } from '../../utils/dateUtils';
 
 export interface CreateProjectModalProps {
   isOpen: boolean;
@@ -233,13 +234,13 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
             <Input
               label="Start Date (Optional)"
               type="date"
-              value={startDate}
+              value={toDateInputValue(startDate)}
               onChange={handleStartDateChange}
             />
             <Input
               label="Target Delivery Date (Optional)"
               type="date"
-              value={dueDate}
+              value={toDateInputValue(dueDate)}
               onChange={handleDueDateChange}
             />
           </div>

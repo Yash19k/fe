@@ -18,24 +18,24 @@ import { canUserAccessProject } from './domain/permissions';
 
 // Feature Views
 import { HomeView } from './features/home/HomeView';
-import { MyTasksView } from './features/my-tasks/MyTasksView';
-import { ProjectsView } from './features/projects/ProjectsView';
-import { ProjectOverviewView } from './features/project/ProjectOverviewView';
-import { ProjectListView } from './features/project/ProjectListView';
-import { ProjectBoardView } from './features/project/ProjectBoardView';
-import { ProjectTimelineView } from './features/project/ProjectTimelineView';
-import { ProjectCalendarView } from './features/project/ProjectCalendarView';
-import { ProjectDashboardView } from './features/project/ProjectDashboardView';
-import { SprintDashboardView } from './features/project/SprintDashboardView';
-import { WorkflowBuilderView } from './features/project/WorkflowBuilderView';
-import { DependenciesView } from './features/project/DependenciesView';
-import { ProjectSettingsView, SettingsSection } from './features/project/ProjectSettingsView';
-import { SettingsView } from './features/settings/SettingsView';
 import { AuthView } from './features/auth/AuthView';
-import { CompanySetupView } from './features/onboarding/CompanySetupView';
+import { PasswordRecoveryView } from './features/auth/PasswordRecoveryView';
+import type { SettingsSection } from './features/project/ProjectSettingsView';
 
-import { ChatView } from './features/chat/ChatView';
-
+const MyTasksView = React.lazy(() => import('./features/my-tasks/MyTasksView').then((m) => ({ default: m.MyTasksView })));
+const ProjectsView = React.lazy(() => import('./features/projects/ProjectsView').then((m) => ({ default: m.ProjectsView })));
+const ProjectOverviewView = React.lazy(() => import('./features/project/ProjectOverviewView').then((m) => ({ default: m.ProjectOverviewView })));
+const ProjectListView = React.lazy(() => import('./features/project/ProjectListView').then((m) => ({ default: m.ProjectListView })));
+const ProjectBoardView = React.lazy(() => import('./features/project/ProjectBoardView').then((m) => ({ default: m.ProjectBoardView })));
+const ProjectTimelineView = React.lazy(() => import('./features/project/ProjectTimelineView').then((m) => ({ default: m.ProjectTimelineView })));
+const ProjectCalendarView = React.lazy(() => import('./features/project/ProjectCalendarView').then((m) => ({ default: m.ProjectCalendarView })));
+const SprintDashboardView = React.lazy(() => import('./features/project/SprintDashboardView').then((m) => ({ default: m.SprintDashboardView })));
+const WhiteboardsView = React.lazy(() => import('./features/project/WhiteboardsView').then((m) => ({ default: m.WhiteboardsView })));
+const WhiteboardEditorView = React.lazy(() => import('./features/project/WhiteboardEditorView').then((m) => ({ default: m.WhiteboardEditorView })));
+const ProjectSettingsView = React.lazy(() => import('./features/project/ProjectSettingsView').then((m) => ({ default: m.ProjectSettingsView })));
+const SettingsView = React.lazy(() => import('./features/settings/SettingsView').then((m) => ({ default: m.SettingsView })));
+const CompanySetupView = React.lazy(() => import('./features/onboarding/CompanySetupView').then((m) => ({ default: m.CompanySetupView })));
+const ChatView = React.lazy(() => import('./features/chat/ChatView').then((m) => ({ default: m.ChatView })));
 import { NotFoundView } from './features/not-found/NotFoundView';
 
 
@@ -49,7 +49,7 @@ function isSettingsTab(tab: string): boolean {
 
 function isValidProjectTab(tab: string): boolean {
   return (
-    ['overview', 'dashboard', 'list', 'board', 'timeline', 'calendar', 'sprint'].includes(tab) ||
+    ['overview', 'dashboard', 'list', 'board', 'timeline', 'calendar', 'sprint', 'whiteboards'].includes(tab) ||
     isSettingsTab(tab)
   );
 }
@@ -69,6 +69,17 @@ function getSettingsSectionFromTab(tab: string): SettingsSection {
   if (tab === 'labels') return 'labels';
   if (tab === 'danger' || tab === 'security') return 'danger';
   return 'general';
+}
+
+function ViewLoadingFallback() {
+  return (
+    <div className="flex-1 h-full min-h-[300px] flex items-center justify-center p-8">
+      <div className="flex flex-col items-center gap-3 text-text-muted">
+        <div className="w-8 h-8 rounded-full border-2 border-brand-primary/30 border-t-brand-primary animate-spin" />
+        <p className="text-xs font-medium tracking-wide">Loading view...</p>
+      </div>
+    </div>
+  );
 }
 
 function MainAppShell() {
@@ -126,7 +137,12 @@ function MainAppShell() {
 
   // Sync route to /login if unauthenticated user attempts direct navigation to protected routes
   useEffect(() => {
-    if (!isInitializingAuth && !isAuthenticated && activeRoute !== '/login' && activeRoute !== '/signup') {
+    if (
+      !isInitializingAuth &&
+      !isAuthenticated &&
+      !['/login', '/signup', '/forgot-password'].includes(activeRoute.split('?')[0]) &&
+      !activeRoute.startsWith('/reset-password')
+    ) {
       navigate('/login');
     }
   }, [isInitializingAuth, isAuthenticated, activeRoute, navigate]);
@@ -137,6 +153,12 @@ function MainAppShell() {
   }
   if (activeRoute === '/signup') {
     return <AuthView isSignup={true} />;
+  }
+  if (activeRoute === '/forgot-password') {
+    return <PasswordRecoveryView mode="forgot" />;
+  }
+  if (activeRoute.startsWith('/reset-password')) {
+    return <PasswordRecoveryView mode="reset" />;
   }
 
   // Loading state while verifying authentication session
@@ -161,7 +183,11 @@ function MainAppShell() {
   // or is explicitly on the /onboarding/company route and has not completed setup.
   const needsOnboarding = Boolean(currentUser && currentUser.onboardingCompleted === false);
   if (needsOnboarding || (activeRoute === '/onboarding/company' && !currentUser?.onboardingCompleted)) {
-    return <CompanySetupView />;
+    return (
+      <React.Suspense fallback={<ViewLoadingFallback />}>
+        <CompanySetupView />
+      </React.Suspense>
+    );
   }
 
   const routeProjectId = activeRoute.startsWith('/project/')
@@ -169,7 +195,8 @@ function MainAppShell() {
     : '';
   const effectiveProjectId = currentProjectId || routeProjectId;
   const isProjectRoute = activeRoute.startsWith('/project/') && Boolean(effectiveProjectId);
-  const hasProjectAccess = currentProject && currentUser?.id ? canUserAccessProject(currentProject, currentUser.id) : true;
+  const whiteboardEditorId = activeRoute.match(/^\/project\/[^/]+\/whiteboards\/([^/?#]+)/)?.[1];
+  const hasProjectAccess = currentProject && currentUser?.id ? canUserAccessProject(currentProject, currentUser.id, currentUser.role) : true;
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas text-text-primary antialiased">
@@ -203,7 +230,8 @@ function MainAppShell() {
 
         {/* Main View Router */}
         <main className="flex-1 overflow-y-auto">
-          {isProjectRoute ? (
+          <React.Suspense fallback={<ViewLoadingFallback />}>
+            {isProjectRoute ? (
             !currentProject ? (
               isLoadingProjectData ? (
                 <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center bg-canvas">
@@ -246,7 +274,9 @@ function MainAppShell() {
               </div>
             ) : (
               <>
-                {projectTab === 'overview' && <ProjectOverviewView />}
+                {whiteboardEditorId ? (
+                  <WhiteboardEditorView whiteboardId={whiteboardEditorId} />
+                ) : projectTab === 'overview' && <ProjectOverviewView />}
                 {/* Legacy /dashboard URL renders consolidated Overview (Req 2.5) */}
                 {projectTab === 'dashboard' && <ProjectOverviewView />}
                 {projectTab === 'list' && (
@@ -273,6 +303,7 @@ function MainAppShell() {
                     }}
                   />
                 )}
+                {projectTab === 'whiteboards' && !whiteboardEditorId && <WhiteboardsView />}
                 {/* Unified Project Settings & Subsection Navigation */}
                 {isSettingsTab(projectTab) && (
                   <ProjectSettingsView
@@ -298,6 +329,7 @@ function MainAppShell() {
           ) : (
             <NotFoundView />
           )}
+          </React.Suspense>
         </main>
       </div>
 

@@ -151,6 +151,9 @@ export async function addWorkItemTimeEntry(req: Request, res: Response) {
   ) {
     throw new AppError(
       "Duration must be a positive whole number of minutes within the supported range.",
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new AppError(
+      "durationMinutes or hours must be a positive number.",
       400,
       "VALIDATION_ERROR",
     );
@@ -267,6 +270,60 @@ export async function getWorkItemDependencies(req: Request, res: Response) {
   const deps = await AppDataSource.getRepository(WorkItemDependency).find({
     where: { workItemId },
     order: { id: "ASC" },
+  if (workItemId === dependsOnWorkItemId) {
+    throw new AppError(
+      "A work item cannot depend on itself.",
+      400,
+      "INVALID_DEPENDENCY",
+    );
+  }
+
+  const primaryWorkItem = await assertWorkItemAccess(workItemId, req);
+
+  // Verify the dependency target belongs to the same organization and project
+  const targetWorkItem = await AppDataSource.getRepository(WorkItem).findOne({
+    where: { id: dependsOnWorkItemId },
+    select: { id: true, projectId: true, organizationId: true },
+  });
+
+  if (
+    !targetWorkItem ||
+    targetWorkItem.organizationId !== primaryWorkItem.organizationId ||
+    targetWorkItem.projectId !== primaryWorkItem.projectId
+  ) {
+    throw new AppError(
+      "Dependent work item must exist in the same project and organization.",
+      400,
+      "INVALID_DEPENDENCY",
+    );
+  }
+
+  const repo = AppDataSource.getRepository(WorkItemDependency);
+  const existing = await repo.findOne({
+    where: { workItemId, dependsOnWorkItemId },
+  });
+
+  if (existing) {
+    return res.json({ success: true, data: existing });
+  }
+
+  const dep = await repo.save(
+    repo.create({
+      workItemId,
+      dependsOnWorkItemId,
+    }),
+  );
+
+  return res.status(201).json({ success: true, data: dep });
+}
+
+export async function getWorkItemDependencies(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+
+  await assertWorkItemAccess(workItemId, req);
+
+  const deps = await AppDataSource.getRepository(WorkItemDependency).find({
+    where: { workItemId },
   });
 
   return res.json({
@@ -291,4 +348,13 @@ export async function deleteWorkItemDependency(req: Request, res: Response) {
     dependencies: result.dependencies,
     rescheduledTasks: result.rescheduledTasks,
   });
+
+  await assertWorkItemAccess(workItemId, req);
+
+  await AppDataSource.getRepository(WorkItemDependency).delete({
+    workItemId,
+    dependsOnWorkItemId: depId,
+  });
+
+  return res.json({ success: true });
 }

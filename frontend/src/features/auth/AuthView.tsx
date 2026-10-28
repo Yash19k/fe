@@ -54,9 +54,10 @@ export interface AuthViewProps {
 }
 
 export function AuthView({ isSignup = false }: AuthViewProps) {
-  const { registerUser, navigate, showToast, login, setPendingSignupPassword } = useApp();
+  const { register, registerUser, navigate, showToast, login } = useApp();
 
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -67,11 +68,13 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
   async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const errs: Record<string, string> = {};
 
     if (isSignup && !name.trim()) errs.name = 'Full name is required';
     if (!email.trim() || !email.includes('@')) errs.email = 'Valid email is required';
-    if (!password || password.length < 6) errs.password = 'Password must be at least 6 characters';
+    if (!password || password.length < 8) errs.password = 'Password must be at least 8 characters';
     if (isSignup && password !== confirmPassword) errs.confirm = 'Passwords do not match';
 
     if (Object.keys(errs).length > 0) {
@@ -80,10 +83,32 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
     }
 
     if (isSignup) {
-      setPendingSignupPassword?.(password);
-      registerUser({ name, email });
-      showToast('Account created! Please set up your company workspace.', 'success');
-      navigate('/onboarding/company');
+      setIsSubmitting(true);
+      setAuthError(null);
+      try {
+        if (register) {
+          const ok = await register({
+            name: name.trim(),
+            email: email.trim(),
+            password,
+            companyName: companyName.trim() || undefined,
+          });
+          if (ok) {
+            showToast('Account created! Welcome to your company workspace.', 'success');
+            navigate('/onboarding/company');
+          } else {
+            setAuthError('Registration could not be completed. Please try again.');
+          }
+        } else {
+          registerUser({ name, email });
+          showToast('Account created! Please set up your company workspace.', 'success');
+          navigate('/onboarding/company');
+        }
+      } catch (err: any) {
+        setAuthError(classifyAuthError(err));
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
       if (login) {
         setIsSubmitting(true);
@@ -148,18 +173,32 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
           )}
 
           {isSignup && (
-            <Input
-              label="Full Name"
-              placeholder="e.g. Yash Kshatriya"
-              value={name}
-              focusVariant="subtle"
-              onChange={(e) => {
-                setName(e.target.value);
-                if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
-                if (authError) setAuthError(null);
-              }}
-              error={errors.name}
-            />
+            <>
+              <Input
+                label="Full Name"
+                placeholder="e.g. Yash Kshatriya"
+                value={name}
+                focusVariant="subtle"
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
+                  if (authError) setAuthError(null);
+                }}
+                error={errors.name}
+              />
+              <Input
+                label="Company / Workspace Name"
+                placeholder="e.g. Acme Corp"
+                value={companyName}
+                focusVariant="subtle"
+                onChange={(e) => {
+                  setCompanyName(e.target.value);
+                  if (errors.company) setErrors((prev) => ({ ...prev, company: '' }));
+                  if (authError) setAuthError(null);
+                }}
+                error={errors.company}
+              />
+            </>
           )}
 
           <Input
@@ -204,6 +243,17 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               </button>
             }
           />
+
+          {!isSignup && (
+            <div className="-mt-2 text-right">
+              <a
+                href="#/forgot-password"
+                className="inline-block text-xs font-medium text-brand-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 rounded-sm"
+              >
+                Forgot password?
+              </a>
+            </div>
+          )}
 
           {isSignup && (
             <Input

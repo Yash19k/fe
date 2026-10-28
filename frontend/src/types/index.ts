@@ -299,6 +299,7 @@ export interface AppContextValue {
   currentUser: User;
   currentCompany: Company | null;
   registerUser: (userData: { name: string; email: string }) => User;
+  register?: (params: { name: string; email: string; password: string; companyName?: string }) => Promise<boolean>;
   completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
   finishOnboarding: () => void;
   projects: Project[];
@@ -335,9 +336,10 @@ export interface AppContextValue {
   confirmRescheduleImpact: () => void;
   addDependency: (predecessorId: string, successorId: string) => any;
   removeDependency: (predecessorId: string, successorId: string) => void;
-  addSubtask: (taskId: string, title: string) => void;
-  toggleSubtask: (taskId: string, subtaskId: string) => void;
-  deleteSubtask: (taskId: string, subtaskId: string) => void;
+  addSubtask: (taskId: string, title: string, assigneeId?: string | null) => Promise<void> | void;
+  toggleSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  loadCrossProjectTasks?: () => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
   pendingSignupPassword?: string;
   setPendingSignupPassword?: (pwd: string) => void;

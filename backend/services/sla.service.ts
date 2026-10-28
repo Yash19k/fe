@@ -216,6 +216,9 @@ export async function refreshSlaStatuses(
       ELSE 0
     END
   `;
+export async function refreshSlaStatuses(manager: EntityManager): Promise<number> {
+  const now = new Date();
+  // Select items that are unfinished, prioritized by items requiring immediate attention or oldest updated
   const candidates = await manager
     .getRepository(WorkItem)
     .createQueryBuilder("workItem")
@@ -272,6 +275,7 @@ export async function refreshSlaStatuses(
       { now, atRisk: SlaStatus.AT_RISK },
     )
     .orderBy("COALESCE(workItem.slaDeadline, workItem.createdAt)", "ASC")
+    .orderBy("COALESCE(workItem.updatedAt, workItem.createdAt)", "ASC")
     .addOrderBy("workItem.id", "ASC")
     .take(500)
     .setLock("pessimistic_write")
@@ -381,6 +385,36 @@ export async function refreshSlaStatuses(
             escalatedAt: item.escalatedAt?.toISOString() ?? null,
           },
         });
+      try {
+        const assignments = await manager.getRepository(WorkItemAssignee).find({
+          where: { workItemId: item.id },
+          select: { userId: true },
+        });
+        const recipients = new Set<string>([
+          ...assignments.map((assignment) => assignment.userId),
+          item.createdById,
+        ]);
+
+        await Promise.all(
+          Array.from(recipients).map((userId) =>
+            notificationService.createNotification({
+              userId,
+              organizationId: item.organizationId,
+              type: NotificationType.SLA_ESCALATED,
+              title: "SLA escalation",
+              message: `"${item.title}" has been automatically escalated because of SLA breach.`,
+              workItemId: item.id,
+              projectId: item.projectId,
+              link: `/tasks/${item.id}`,
+              metadata: {
+                reason: item.escalationReason,
+                escalatedAt: item.escalatedAt?.toISOString() ?? null,
+              },
+            }),
+          ),
+        );
+      } catch (notifErr) {
+        console.error("SLA escalation notification delivery failed:", notifErr);
       }
 
       changed += 1;

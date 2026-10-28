@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { AppDataSource } from "../config/data.source";
 import { AuditLog } from "../entities/audit.log.entity";
 import { ProjectMember } from "../entities/project.member.entity";
+import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { Project } from "../entities/project.entity";
 import { User, UserRole } from "../entities/user.entity";
 import {
@@ -49,26 +50,6 @@ function snapshotString(
   return value;
 }
 
-function snapshotEnum<T extends string>(
-  value: unknown,
-  values: readonly T[],
-  field: string,
-): T {
-  const normalized =
-    typeof value === "string"
-      ? value.toUpperCase().replace(/[-\s]/g, "_")
-      : "";
-  const match = values.find((candidate) => candidate === normalized);
-  if (!match) {
-    throw new AppError(
-      `The stored ${field} value is invalid.`,
-      400,
-      "ACTION_NOT_REVERSIBLE",
-    );
-  }
-  return match;
-}
-
 /**
  * Validates that the user has access to read the project's audit logs.
  */
@@ -89,6 +70,95 @@ async function assertAuditProjectAccess(
   if (role === UserRole.ADMIN) {
     return project;
   }
+
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId, userId },
+  });
+
+  if (!membership && project.visibility !== "PUBLIC") {
+    throw new AppError(
+      "You do not have access to this project's audit logs.",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  return project;
+}
+
+export async function createAuditLog(req: Request, res: Response) {
+  const organizationId = req.user?.organizationId;
+  const userId = req.user?.id;
+  const { action, entityType, entityId, previousState, newState } = req.body;
+
+  if (!userId || !organizationId) {
+    throw new AppError(
+      "Authentication and organization context required.",
+      401,
+      "UNAUTHORIZED",
+    );
+  }
+
+  let pId =
+    req.body.projectId ||
+    (req.params.projectId && req.params.projectId !== "audit-logs"
+      ? req.params.projectId
+      : null);
+
+  const desc =
+    req.body.description ||
+    req.body.details?.description ||
+    `${action || ""} ${entityType || ""}`.trim() ||
+    "Activity";
+
+  if (!action || !entityType) {
+    throw new AppError(
+      `The stored ${field} value is invalid.`,
+      400,
+      "ACTION_NOT_REVERSIBLE",
+    );
+  }
+  return match;
+}
+
+  // If pId is missing and this is a task event, attempt to resolve from WorkItem record
+  if (!pId && entityType === "task" && entityId) {
+    try {
+      const task = await AppDataSource.getRepository(WorkItem).findOne({
+        where: { id: String(entityId), organizationId },
+        select: { id: true, projectId: true },
+      });
+      if (task?.projectId) {
+        pId = task.projectId;
+      }
+    } catch {
+      // non-uuid entityId
+    }
+  }
+
+  if (pId) {
+    await assertAuditProjectAccess(
+      String(pId),
+      userId,
+      organizationId,
+      req.user?.role,
+    );
+  }
+
+  const repo = AppDataSource.getRepository(AuditLog);
+  const log = await repo.save(
+    repo.create({
+      organizationId,
+      projectId: pId ? String(pId) : null,
+      userId,
+      action: String(action),
+      entityType: String(entityType),
+      entityId: String(entityId || ""),
+      description: String(desc),
+      previousState: previousState || req.body.details?.previousValue || null,
+      newState: newState || req.body.details?.newValue || null,
+    }),
+  );
 
   const membership = await AppDataSource.getRepository(ProjectMember).findOne({
     where: { projectId, userId },
@@ -128,9 +198,6 @@ export async function undoAuditLog(req: Request, res: Response) {
       401,
       "UNAUTHORIZED",
     );
-  }
-  if (!UUID_PATTERN.test(logId)) {
-    throw new AppError("Audit log ID must be a UUID.", 400, "VALIDATION_ERROR");
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
@@ -205,24 +272,17 @@ export async function undoAuditLog(req: Request, res: Response) {
       );
     }
 
-    const project = await manager.getRepository(Project).findOne({
-      where: { id: workItem.projectId, organizationId },
-      select: { id: true },
-    });
-    if (!project) {
-      throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
-    }
-
-    if (req.user?.role !== UserRole.ADMIN) {
+    // Require project-level update permissions
+    if (targetLog.projectId && req.user?.role !== UserRole.ADMIN) {
       const membership = await manager.getRepository(ProjectMember).findOne({
-        where: { projectId: workItem.projectId, userId },
+        where: { projectId: targetLog.projectId, userId },
       });
       if (
         !membership ||
-        !hasProjectPermission(membership.role, "task:update")
+        ![ProjectRole.ADMIN, ProjectRole.LEAD].includes(membership.role)
       ) {
         throw new AppError(
-          "You do not have permission to undo task changes in this project.",
+          "You must be a project administrator or lead to undo actions.",
           403,
           "FORBIDDEN",
         );
@@ -254,47 +314,25 @@ export async function undoAuditLog(req: Request, res: Response) {
     let restoredTask: RestoredTask | null = null;
 
     if (targetLog.entityType === "task") {
-      const prev: Record<string, unknown> = targetLog.previousState;
+      const workItemRepo = manager.getRepository(WorkItem);
+      const workItem = await workItemRepo.findOne({
+        where: { id: targetLog.entityId, organizationId },
+      });
 
-      workItem.title = snapshotString(prev.title, "title").trim();
-      const description = snapshotString(
-        prev.description,
-        "description",
-        true,
-      );
-      workItem.description = description?.trim() || null;
-      workItem.status = snapshotEnum(
-        prev.status,
-        Object.values(WorkItemStatus),
-        "status",
-      );
-      workItem.type = snapshotEnum(
-        prev.type,
-        Object.values(WorkItemType),
-        "type",
-      );
-      workItem.priority =
-        prev.priority === null
-          ? null
-          : snapshotEnum(
-              prev.priority,
-              Object.values(WorkItemPriority),
-              "priority",
-            );
+      if (!workItem) {
+        throw new AppError(
+          "Target work item no longer exists.",
+          404,
+          "WORK_ITEM_NOT_FOUND",
+        );
+      }
 
-      const dueDate = snapshotString(prev.dueDate, "due date", true);
-      if (dueDate === null) {
-        workItem.dueDate = null;
-      } else {
-        const parsedDueDate = new Date(dueDate);
-        if (Number.isNaN(parsedDueDate.getTime())) {
-          throw new AppError(
-            "The stored due date is invalid.",
-            400,
-            "ACTION_NOT_REVERSIBLE",
-          );
-        }
-        workItem.dueDate = parsedDueDate;
+      if (targetLog.projectId && workItem.projectId !== targetLog.projectId) {
+        throw new AppError(
+          "Target work item does not match audit project.",
+          403,
+          "FORBIDDEN",
+        );
       }
 
       const parentWorkItemId = snapshotString(
@@ -326,20 +364,15 @@ export async function undoAuditLog(req: Request, res: Response) {
           );
         }
       }
-      workItem.parentWorkItemId = parentWorkItemId;
 
-      const sprintId = snapshotString(prev.sprintId, "sprint ID", true);
-      if (sprintId) {
-        const sprint = await manager.getRepository(Sprint).findOne({
-          where: { id: sprintId, projectId: workItem.projectId },
-          select: { id: true },
-        });
-        if (!sprint) {
-          throw new AppError(
-            "The stored sprint is unavailable.",
-            400,
-            "ACTION_NOT_REVERSIBLE",
-          );
+      if (prev.priority !== undefined && prev.priority !== null) {
+        const normPriority = String(prev.priority).toUpperCase();
+        if (
+          Object.values(WorkItemPriority).includes(
+            normPriority as WorkItemPriority,
+          )
+        ) {
+          workItem.priority = normPriority as WorkItemPriority;
         }
       }
       workItem.sprintId = sprintId;

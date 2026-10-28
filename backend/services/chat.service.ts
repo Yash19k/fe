@@ -197,6 +197,42 @@ export async function listConversations(
 
   for (const count of unreadCounts) {
     unreadCountMap.set(count.conversationId, Number(count.unreadCount));
+  if (result.length === 0) return [];
+
+  const convIds = result.map((c) => c.id);
+
+  // Batched query: get recent messages for all conversations
+  const recentMessages = await messages()
+    .createQueryBuilder("message")
+    .where("message.conversation_id IN (:...convIds)", { convIds })
+    .andWhere("message.deleted_at IS NULL")
+    .orderBy("message.created_at", "DESC")
+    .addOrderBy("message.id", "DESC")
+    .getMany();
+
+  const lastMessageMap = new Map<string, { id: string; content: string; createdAt: Date; senderId: string }>();
+  for (const msg of recentMessages) {
+    if (!lastMessageMap.has(msg.conversationId)) {
+      lastMessageMap.set(msg.conversationId, {
+        id: msg.id,
+        content: msg.content,
+        createdAt: msg.createdAt,
+        senderId: msg.senderId,
+      });
+    }
+  }
+
+  // Batched query: compute unread counts per conversation
+  const unreadCountMap = new Map<string, number>();
+  for (const conversation of result) {
+    const currentMember = conversation.members.find((member) => member.userId === actor.id);
+    const unread = recentMessages.filter(
+      (msg) =>
+        msg.conversationId === conversation.id &&
+        msg.senderId !== actor.id &&
+        (!currentMember?.lastReadAt || msg.createdAt > currentMember.lastReadAt),
+    ).length;
+    unreadCountMap.set(conversation.id, unread);
   }
 
   return result.map((conversation) => {

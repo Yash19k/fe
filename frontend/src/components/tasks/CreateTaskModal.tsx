@@ -13,6 +13,7 @@ import { formatRecurrenceRule } from '../../domain/recurrence';
 import { WorkItemType, Priority, BugSeverity, TaskAttachment } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { LabelPicker } from '../ui/LabelPicker';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { Repeat } from 'lucide-react';
 
 export interface CreateTaskModalProps {
@@ -592,7 +593,7 @@ export function CreateTaskModal({
           <Input
             label="Start Date"
             type="date"
-            value={startDate}
+            value={toDateInputValue(startDate)}
             onChange={(e) => setStartDate(e.target.value)}
             disabled={isSubmitting}
           />
@@ -600,7 +601,7 @@ export function CreateTaskModal({
           <Input
             label="Due Date"
             type="date"
-            value={dueDate}
+            value={toDateInputValue(dueDate)}
             onChange={(e) => setDueDate(e.target.value)}
             disabled={isSubmitting}
           />
