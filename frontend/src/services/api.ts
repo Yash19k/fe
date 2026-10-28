@@ -20,19 +20,34 @@ export const API_BASE_URL =
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
 
+let memoryToken: string | null = null;
+
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  if (memoryToken) return memoryToken;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
+  return null;
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  memoryToken = token;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+    }
+  } catch {}
 }
 
 export function clearAuthToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  memoryToken = null;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
 }
 
 export class ApiError extends Error {
@@ -79,7 +94,7 @@ async function executeTokenRefresh(): Promise<string | null> {
         setAuthToken(data.token);
         return data.token;
       }
-      return getAuthToken() || 'active_session';
+      return getAuthToken();
     } catch {
       clearAuthToken();
       return null;
@@ -100,12 +115,16 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+    ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
 
   try {
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers,
+    });
 
     if (response.status === 401 && !options._retry) {
       options._retry = true;
@@ -156,16 +175,22 @@ export async function checkBackendHealth(): Promise<boolean> {
 
 // Auth & Users
 export interface RegisterOrganizationInput {
-  organizationName: string;
-  adminName: string;
-  email: string;
-  password?: string;
+  user: {
+    fullName: string;
+    email: string;
+    password: string;
+  };
+  organization: {
+    name: string;
+  };
 }
 
 export interface RegisterOrganizationResponse {
   user: any;
   organization: any;
   token?: string;
+  organizationId?: string;
+  userId?: string;
 }
 
 export async function registerOrganizationApi(
@@ -259,9 +284,10 @@ export async function updateOrganizationMemberRoleApi(
   memberId: string,
   role: string
 ): Promise<any> {
+  const canonicalRole = toBackendRole(role as Role) || role.toUpperCase();
   return request<any>(`/api/organization/members/${encodeURIComponent(memberId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role: canonicalRole }),
   });
 }
 
@@ -317,6 +343,96 @@ export async function getProjectMembersApi(projectId: string): Promise<any> {
   });
 }
 
+export interface WhiteboardScene {
+  elements: readonly Record<string, unknown>[];
+  appState: Record<string, unknown>;
+  files: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface WhiteboardSummary {
+  id: string;
+  projectId: string;
+  name: string;
+  revision: number;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Whiteboard extends WhiteboardSummary {
+  sceneData: WhiteboardScene;
+}
+
+export interface WhiteboardRevision {
+  id: string;
+  whiteboardId: string;
+  revisionNumber: number;
+  createdById: string | null;
+  sceneSnapshot: WhiteboardScene;
+  changeSummary: string | null;
+  createdAt: string;
+}
+
+export async function createWhiteboardApi(projectId: string, name: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function listWhiteboardsApi(
+  projectId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardSummary[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardApi(whiteboardId: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'GET' });
+}
+
+export async function listWhiteboardRevisionsApi(
+  whiteboardId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardRevision[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardRevisionApi(
+  whiteboardId: string,
+  revisionNumber: number
+): Promise<{ data: WhiteboardRevision }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions/${revisionNumber}`, { method: 'GET' });
+}
+
+export async function updateWhiteboardApi(
+  whiteboardId: string,
+  payload: { sceneData: WhiteboardScene; revision: number }
+): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function renameWhiteboardApi(whiteboardId: string, name: string): Promise<{ data: WhiteboardSummary }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/name`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteWhiteboardApi(whiteboardId: string): Promise<{ data: { id: string } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'DELETE' });
+}
+
 export async function addProjectMemberApi(
   projectId: string,
   member: { memberId: string; role?: string }
@@ -359,8 +475,6 @@ export interface CreateWorkItemApiInput {
   priority?: string | null;
   status?: string;
   dueDate?: string | null;
-  plannedStartDate?: string | null;
-  plannedDurationWorkingDays?: number | null;
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
   labelId?: string | null;
   labels?: string[];
@@ -404,8 +518,9 @@ export async function uploadWorkItemAttachmentsApi(
     `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
     {
       method: 'POST',
+      credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+        ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData,
     }
@@ -433,7 +548,7 @@ export async function updateWorkItemApi(workItemId: string, updates: any): Promi
 
 export async function escalateWorkItemApi(workItemId: string, reason?: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/escalate`, {
-    method: 'POST',
+    method: 'PATCH',
     body: JSON.stringify({ reason }),
   });
 }
@@ -528,10 +643,10 @@ export async function addWorkItemDependencyApi(
 
 export async function deleteWorkItemDependencyApi(
   workItemId: string,
-  dependencyIdentifier: string
+  dependsOnWorkItemId: string
 ): Promise<any> {
   return request<any>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependencyIdentifier)}`,
+    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependsOnWorkItemId)}`,
     { method: 'DELETE' }
   );
 }
@@ -579,8 +694,9 @@ export interface AuditPaginationMeta {
 }
 
 export interface GetProjectAuditLogsResponse {
+  success: boolean;
   data: any[];
-  meta?: AuditPaginationMeta;
+  pagination?: AuditPaginationMeta;
 }
 
 export async function getProjectAuditLogsApi(
@@ -828,10 +944,19 @@ export function frontendStatusToBackend(status: string): string {
   switch (status) {
     case 'In Progress': return 'IN_PROGRESS';
     case 'In Review': return 'IN_REVIEW';
+    case 'Testing / QA': return 'TESTING_QA';
+    case 'Blocked': return 'BLOCKED';
     case 'Done': return 'DONE';
-    case 'Backlog':
-    default:
+    case 'On Hold': return 'ON_HOLD';
+    case 'Backlog': return 'BACKLOG';
+    default: {
+      const upper = String(status || '').toUpperCase().replace(/[\s\/-]+/g, '_');
+      if (['BACKLOG', 'IN_PROGRESS', 'IN_REVIEW', 'TESTING_QA', 'BLOCKED', 'DONE', 'ON_HOLD'].includes(upper)) {
+        return upper;
+      }
+      console.warn(`[TaskFlow API] Unknown task status "${status}", falling back to BACKLOG`);
       return 'BACKLOG';
+    }
   }
 }
 
@@ -839,10 +964,17 @@ export function backendStatusToFrontend(status?: string | null): TaskStatus {
   switch (status?.toUpperCase()) {
     case 'IN_PROGRESS': return 'In Progress';
     case 'IN_REVIEW': return 'In Review';
+    case 'TESTING_QA': return 'Testing / QA';
+    case 'BLOCKED': return 'Blocked';
     case 'DONE': return 'Done';
-    case 'BACKLOG':
-    default:
+    case 'ON_HOLD': return 'On Hold';
+    case 'BACKLOG': return 'Backlog';
+    default: {
+      if (status) {
+        console.warn(`[TaskFlow API] Unrecognized backend status "${status}", falling back to Backlog`);
+      }
       return 'Backlog';
+    }
   }
 }
 
@@ -999,24 +1131,6 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     if (labelName) labels = [labelName];
   }
 
-  const rawDueDate = entity.dueDate || item.dueDate || null;
-  const dueDate = (() => {
-    if (!rawDueDate) return null;
-    if (typeof rawDueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDueDate)) {
-      return rawDueDate;
-    }
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(new Date(rawDueDate));
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return `${values.year}-${values.month}-${values.day}`;
-  })();
-  const plannedStartDate =
-    entity.plannedStartDate || item.plannedStartDate || entity.startDate || item.startDate || null;
-
   return {
     id: entity.id || item.id,
     projectId: entity.projectId || item.projectId || fallbackProjectId || '',
@@ -1031,12 +1145,8 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     assigneeIds,
     assignees,
     creatorId: entity.createdById || entity.creatorId || item.createdById || item.creatorId || '',
-    startDate: plannedStartDate,
-    plannedStartDate,
-    dueDate,
-    plannedDurationWorkingDays:
-      entity.plannedDurationWorkingDays ?? item.plannedDurationWorkingDays ?? null,
-    isSchedulePinned: Boolean(entity.isSchedulePinned ?? item.isSchedulePinned),
+    startDate: entity.startDate || item.startDate || null,
+    dueDate: entity.dueDate || item.dueDate || null,
     estimateHours: (entity.estimateHours ?? item.estimateHours) ? Number(entity.estimateHours ?? item.estimateHours) : null,
     actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
     dependencyIds: Array.isArray(entity.dependencies || item.dependencies)

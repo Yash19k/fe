@@ -24,6 +24,7 @@ import {
   getOrganizationSlaApi,
   updateOrganizationSlaApi,
   toUserFriendlyErrorMessage,
+  toBackendRole,
 } from '../../services/api';
 
 export function SettingsView() {
@@ -182,16 +183,27 @@ export function SettingsView() {
   }
 
   async function handleRoleChange(userId: string, newRole: string) {
+    const canonicalRole = toBackendRole(newRole as any) || newRole.toUpperCase();
+    if (!['ADMIN', 'MANAGER', 'TEAMMATE'].includes(canonicalRole)) {
+      showToast('Invalid role specified', 'error');
+      return;
+    }
+    const previousMember = members.find((m) => m.id === userId);
     setUpdatingRoleId(userId);
     try {
-      const res = await updateOrganizationMemberRoleApi(userId, newRole);
+      const res = await updateOrganizationMemberRoleApi(userId, canonicalRole);
       showToast(res?.message || 'Member role updated successfully', 'success');
       setMembers((prev) =>
-        prev.map((m) => (m.id === userId ? { ...m, role: newRole } : m))
+        prev.map((m) => (m.id === userId ? { ...m, role: canonicalRole } : m))
       );
     } catch (err: any) {
       const msg = err?.message || 'Failed to update member role';
       showToast(msg, 'error');
+      if (previousMember) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === userId ? { ...m, role: previousMember.role } : m))
+        );
+      }
     } finally {
       setUpdatingRoleId(null);
     }
@@ -425,14 +437,14 @@ export function SettingsView() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-text-muted text-[11px]">Role:</span>
                         <select
-                          value={m.role}
+                          value={toBackendRole(m.role) || String(m.role).toUpperCase()}
                           disabled={isSelf || isUpdating}
                           onChange={(e) => handleRoleChange(m.id, e.target.value)}
                           className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
                         >
-                          <option value="Admin">Admin</option>
-                          <option value="Manager">Manager</option>
-                          <option value="Teammate">Teammate</option>
+                          <option value="ADMIN">Admin</option>
+                          <option value="MANAGER">Manager</option>
+                          <option value="TEAMMATE">Teammate</option>
                         </select>
                       </div>
 

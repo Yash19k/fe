@@ -4,6 +4,7 @@ import { Input, Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useApp } from '../../hooks/useApp';
 import { isPersistedWorkItemId } from '../../services/api';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { WorkItemTypeBadge, StatusBadge } from '../ui/Badge';
 import { Avatar } from '../ui/Avatar';
 import {
@@ -216,7 +217,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
             <input
               id="sprint-start"
               type="date"
-              value={startDate}
+              value={toDateInputValue(startDate)}
               onChange={(e) => {
                 setStartDate(e.target.value);
                 if (errors.startDate) setErrors((prev) => ({ ...prev, startDate: '' }));
@@ -236,7 +237,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
             <input
               id="sprint-end"
               type="date"
-              value={endDate}
+              value={toDateInputValue(endDate)}
               onChange={(e) => {
                 setEndDate(e.target.value);
                 if (errors.endDate) setErrors((prev) => ({ ...prev, endDate: '' }));

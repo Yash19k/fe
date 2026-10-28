@@ -146,7 +146,12 @@ export function ProjectMembersView() {
             </div>
           ) : (
             filteredMembers.map((member: User) => {
-              const memberTasks = projectTasks.filter((t: Task) => t.assigneeId === member.id);
+              const memberTasks = projectTasks.filter((t: Task) => {
+                if (t.assigneeId === member.id) return true;
+                if (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(member.id)) return true;
+                if (Array.isArray(t.assignees) && t.assignees.some((a: any) => a.id === member.id || a.userId === member.id)) return true;
+                return false;
+              });
               const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
               const activeCount = memberTasks.length - doneTasks.length;
               const isOwner = member.id === currentProject.ownerId;

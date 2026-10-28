@@ -34,7 +34,7 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
 
   if (!isOpen) return null;
 
-  const accessibleProjects = projects.filter((p) => canUserAccessProject(p, currentUser.id));
+  const accessibleProjects = projects.filter((p) => canUserAccessProject(p, currentUser?.id, currentUser?.role));
   const accessibleProjectIds = new Set(accessibleProjects.map((p) => p.id));
   const accessibleTasks = tasks.filter((t) => accessibleProjectIds.has(t.projectId));
 

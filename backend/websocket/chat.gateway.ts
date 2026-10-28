@@ -52,6 +52,14 @@ async function authenticateUpgrade(request: IncomingMessage): Promise<ChatActor 
   return { id: user.id, organizationId: user.organizationId ?? undefined, role: user.role };
 }
 
+async function isActiveActor(actor: ChatActor): Promise<boolean> {
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: { id: actor.id },
+    select: { id: true, status: true },
+  });
+  return user?.status === UserStatus.ACTIVE;
+}
+
 function sendError(socket: ChatSocket, message: string) {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ event: "chat:error", message }));
@@ -157,6 +165,11 @@ export function attachChatWebSocket(server: HttpServer) {
       const conversationId = event.conversationId;
 
       void (async () => {
+        if (!(await isActiveActor(socket.actor))) {
+          sendError(socket, "Authentication required.");
+          socket.close(1008, "Authentication required.");
+          return;
+        }
         if (!(await canAccessConversation(socket.actor, conversationId))) {
           sendError(socket, "You do not have access to this conversation.");
           return;

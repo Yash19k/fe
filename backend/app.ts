@@ -13,6 +13,7 @@ import slaRoutes from "./routes/sla.routes";
 import { errorHandler } from "./middleware/error.handler";
 import { config } from "./config/config";
 import chatRoutes from "./routes/chat.routes";
+import whiteboardRoutes from "./routes/whiteboard.routes";
 
 export const app = express();
 
@@ -60,6 +61,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/chat/conversations", chatRoutes);
 app.use("/api/conversations", chatRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api", whiteboardRoutes);
 
 app.use("/api/sla", slaRoutes);
 app.use("/api/organization/sla", slaRoutes);
