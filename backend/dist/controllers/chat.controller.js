@@ -25,6 +25,10 @@ const createSchema = joi_1.default.object({
     memberIds: joi_1.default.array().items(uuid).unique(),
 }).or("participantId", "memberIds");
 const memberSchema = joi_1.default.object({ userId: uuid.required() });
+const conversationQuerySchema = joi_1.default.object({
+    page: joi_1.default.number().integer().min(1).max(1000000).default(1),
+    limit: joi_1.default.number().integer().min(1).max(100).default(50),
+});
 const messageQuerySchema = joi_1.default.object({
     limit: joi_1.default.number().integer().min(1).max(100).default(50),
     before: joi_1.default.date().iso(),
@@ -62,7 +66,16 @@ async function createConversationController(req, res) {
     return res.status(200).json({ success: true, data: conversation });
 }
 async function listConversationsController(req, res) {
-    return res.json({ success: true, data: await (0, chat_service_1.listConversations)(actor(req)) });
+    const { error, value } = conversationQuerySchema.validate(req.query, {
+        stripUnknown: true,
+        convert: true,
+    });
+    if (error)
+        return validationError(res, error);
+    return res.json({
+        success: true,
+        data: await (0, chat_service_1.listConversations)(actor(req), value.page, value.limit),
+    });
 }
 async function listMembersController(req, res) {
     return res.json({ success: true, data: await (0, chat_service_1.listMembers)(actor(req)) });

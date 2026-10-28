@@ -16,6 +16,10 @@ const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET ||
 if (!accessTokenSecret || accessTokenSecret.length < 32) {
     throw new Error("ACCESS_TOKEN_SECRET (or JWT_SECRET) must be configured with a strong secret of at least 32 characters.");
 }
+const databaseSynchronize = process.env.DB_SYNCHRONIZE === "true";
+if (process.env.NODE_ENV === "production" && databaseSynchronize) {
+    throw new Error("DB_SYNCHRONIZE must be disabled in production.");
+}
 exports.config = {
     host: process.env.HOST ?? "127.0.0.1",
     port: Number(process.env.PORT ?? 3000),
@@ -29,7 +33,7 @@ exports.config = {
         username: process.env.DB_USERNAME ?? "postgres",
         password: process.env.DB_PASSWORD ?? "",
         name: process.env.DB_NAME ?? "taskflow",
-        synchronize: process.env.DB_SYNCHRONIZE === "true",
+        synchronize: databaseSynchronize,
         logging: process.env.DB_LOGGING === "true",
     },
     accessTokenSecret,
