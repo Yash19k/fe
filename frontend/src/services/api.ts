@@ -228,6 +228,24 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
   return res;
 }
 
+export async function requestPasswordResetApi(email: string): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPasswordApi(payload: {
+  token: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function currentUserApi(): Promise<any> {
   return request<any>('/api/users/me', { method: 'GET' });
 }

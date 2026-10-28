@@ -19,6 +19,7 @@ import { canUserAccessProject } from './domain/permissions';
 // Feature Views
 import { HomeView } from './features/home/HomeView';
 import { AuthView } from './features/auth/AuthView';
+import { PasswordRecoveryView } from './features/auth/PasswordRecoveryView';
 import type { SettingsSection } from './features/project/ProjectSettingsView';
 
 const MyTasksView = React.lazy(() => import('./features/my-tasks/MyTasksView').then((m) => ({ default: m.MyTasksView })));
@@ -136,7 +137,12 @@ function MainAppShell() {
 
   // Sync route to /login if unauthenticated user attempts direct navigation to protected routes
   useEffect(() => {
-    if (!isInitializingAuth && !isAuthenticated && activeRoute !== '/login' && activeRoute !== '/signup') {
+    if (
+      !isInitializingAuth &&
+      !isAuthenticated &&
+      !['/login', '/signup', '/forgot-password'].includes(activeRoute.split('?')[0]) &&
+      !activeRoute.startsWith('/reset-password')
+    ) {
       navigate('/login');
     }
   }, [isInitializingAuth, isAuthenticated, activeRoute, navigate]);
@@ -147,6 +153,12 @@ function MainAppShell() {
   }
   if (activeRoute === '/signup') {
     return <AuthView isSignup={true} />;
+  }
+  if (activeRoute === '/forgot-password') {
+    return <PasswordRecoveryView mode="forgot" />;
+  }
+  if (activeRoute.startsWith('/reset-password')) {
+    return <PasswordRecoveryView mode="reset" />;
   }
 
   // Loading state while verifying authentication session

@@ -244,6 +244,17 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             }
           />
 
+          {!isSignup && (
+            <div className="-mt-2 text-right">
+              <a
+                href="#/forgot-password"
+                className="inline-block text-xs font-medium text-brand-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 rounded-sm"
+              >
+                Forgot password?
+              </a>
+            </div>
+          )}
+
           {isSignup && (
             <Input
               label="Confirm Password"
