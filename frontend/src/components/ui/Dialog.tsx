@@ -23,6 +23,11 @@ export function Dialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
 
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -30,9 +35,33 @@ export function Dialog({
     previousActiveElementRef.current = document.activeElement as HTMLElement | null;
     document.body.style.overflow = 'hidden';
 
-    // Focus first focusable element inside dialog, or the container
+    // Focus appropriate element inside dialog, or the container
     const timer = setTimeout(() => {
       if (dialogRef.current) {
+        // If an element inside the dialog already has focus (e.g. via autoFocus or user interaction), do not steal focus
+        if (
+          dialogRef.current.contains(document.activeElement) &&
+          document.activeElement !== dialogRef.current
+        ) {
+          return;
+        }
+
+        const autoFocusEl = dialogRef.current.querySelector<HTMLElement>(
+          '[autofocus]:not([disabled])'
+        );
+        if (autoFocusEl) {
+          autoFocusEl.focus();
+          return;
+        }
+
+        const firstFormField = dialogRef.current.querySelector<HTMLElement>(
+          'input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+        );
+        if (firstFormField) {
+          firstFormField.focus();
+          return;
+        }
+
         const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
         );
@@ -47,7 +76,7 @@ export function Dialog({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -92,7 +121,7 @@ export function Dialog({
         previousActiveElementRef.current.focus();
       }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

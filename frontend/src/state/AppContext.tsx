@@ -8,7 +8,7 @@ import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject }
 import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
-import { normalizeProjectId, validateProjectId } from '../domain/projects';
+import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
 import {
   AppContextValue,
   User,
@@ -1769,63 +1769,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [auditLog, currentProjectId, currentUser, showToast]);
 
-  const createProject = useCallback((projectData: any) => {
+  const createProject = useCallback(async (projectData: any): Promise<Project | null> => {
     if (!hasPermission(currentUser.role, PERMISSIONS.CREATE_PROJECT)) {
       showToast('Permission denied: Only Managers and Admins can create projects', 'error');
       return null;
     }
 
-    const newId = `proj-${Date.now()}`;
-    const newProj: Project = {
-      id: newId,
-      name: projectData.name.trim(),
-      projectKey: projectData.projectKey?.trim() || projectData.id || `PRJ-${Date.now().toString().slice(-4)}`,
-      description: projectData.description || '',
-      visibility: projectData.visibility || 'global',
-      status: 'On Track',
-      color: projectData.color || '#7465F6',
-      ownerId: currentUser.id,
-      memberIds: [currentUser.id],
-      memberRoles: { [currentUser.id]: currentUser.role },
-      startDate: projectData.startDate || '',
-      dueDate: projectData.dueDate || '',
-      workflowId: projectData.workflowId || 'wf-1',
-      sections: [
-        { id: `sec-${Date.now()}-1`, name: 'Discovery & Plan', order: 1 },
-        { id: `sec-${Date.now()}-2`, name: 'Execution', order: 2 },
-        { id: `sec-${Date.now()}-3`, name: 'Review & Launch', order: 3 },
-      ],
-      settings: { slaHighHours: 24, slaMediumHours: 48, allowWeekendWork: false },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const rawKey = projectData.projectKey?.trim() || projectData.key?.trim() || '';
+      const finalKey = rawKey
+        ? normalizeProjectId(rawKey)
+        : generateSuggestedProjectId(projectData.name || 'PROJECT', projects);
 
-    setProjects((prev) => [...prev, newProj]);
-    setCurrentProjectId(newProj.id);
-    recordAudit('created', 'project', newProj.id, `Created project "${newProj.name}"`, null, newProj, false, newProj.id);
-    showToast(`Project "${newProj.name}" created`, 'success');
+      const res = await createProjectApi({
+        name: projectData.name.trim(),
+        key: finalKey,
+        description: projectData.description?.trim() || null,
+        startDate: projectData.startDate || null,
+        endDate: projectData.dueDate || projectData.endDate || null,
+        visibility: projectData.visibility === 'global' ? 'PUBLIC' : 'PRIVATE',
+      });
 
-    createProjectApi({
-      name: newProj.name,
-      key: newProj.projectKey || newProj.id.slice(0, 10).toUpperCase(),
-      description: newProj.description || null,
-      startDate: newProj.startDate || null,
-      endDate: newProj.dueDate || null,
-      visibility: newProj.visibility === 'global' ? 'PUBLIC' : 'PRIVATE',
-    }).then((res) => {
       const serverProj = res?.project || res?.data;
-      if (serverProj?.id) {
-        setProjects((prev) =>
-          prev.map((p) => (p.id === newId ? { ...p, id: serverProj.id } : p))
-        );
-        setCurrentProjectId((prev) => (prev === newId ? serverProj.id : prev));
+      if (!serverProj?.id) {
+        showToast(res?.message || 'Failed to create project', 'error');
+        return null;
       }
-    }).catch((err) => {
-      console.warn('TaskFlow: Backend project creation notice:', err.message);
-    });
 
-    return newProj;
-  }, [currentUser, recordAudit, showToast]);
+      const baseProj = backendProjectToFrontend(serverProj);
+      const newProj: Project = {
+        ...baseProj,
+        color: projectData.color || baseProj.color || '#7465F6',
+        workflowId: projectData.workflowId || baseProj.workflowId || 'wf-1',
+        ownerId: currentUser.id || baseProj.ownerId,
+        memberIds: baseProj.memberIds && baseProj.memberIds.length > 0 ? baseProj.memberIds : [currentUser.id],
+        memberRoles: baseProj.memberRoles && Object.keys(baseProj.memberRoles).length > 0 ? baseProj.memberRoles : { [currentUser.id]: currentUser.role },
+      };
+
+      setProjects((prev) => [...prev, newProj]);
+      setCurrentProjectId(newProj.id);
+      recordAudit('created', 'project', newProj.id, `Created project "${newProj.name}"`, null, newProj, false, newProj.id);
+      showToast(`Project "${newProj.name}" created`, 'success');
+
+      return newProj;
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to create project';
+      showToast(msg, 'error');
+      console.warn('TaskFlow: Backend project creation notice:', msg);
+      return null;
+    }
+  }, [currentUser, projects, recordAudit, showToast]);
 
   const updateProject = useCallback((projectId: string, updates: Partial<Project>) => {
     if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {

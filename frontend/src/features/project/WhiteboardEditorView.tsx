@@ -3,8 +3,9 @@ import { Excalidraw, exportToBlob, exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { ArrowLeft, Download, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Maximize2, Minimize2, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
+import { Dialog } from "../../components/ui/Dialog";
 import { useApp } from "../../hooks/useApp";
 import { deleteWhiteboardApi, getWhiteboardApi, updateWhiteboardApi, type Whiteboard, type WhiteboardScene } from "../../services/api";
 import { CollaboratorCursor, collaboratorColor } from "./CollaboratorCursor";
@@ -48,7 +49,7 @@ function mergeScenes(remote: WhiteboardScene, local: WhiteboardScene): Whiteboar
 }
 
 export function WhiteboardEditorView({ whiteboardId }: { whiteboardId: string }) {
-  const { currentProject, navigate } = useApp();
+  const { currentProject, navigate, showToast } = useApp();
   const [whiteboard, setWhiteboard] = useState<Whiteboard | null>(null);
   const [status, setStatus] = useState("Loading...");
   const [error, setError] = useState("");
@@ -64,6 +65,129 @@ export function WhiteboardEditorView({ whiteboardId }: { whiteboardId: string })
   const [cursors, setCursors] = useState<Record<string, WhiteboardCursor>>({});
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const lastCursor = useRef<{ x: number; y: number; sentAt: number } | null>(null);
+
+  // Fullscreen and in-app delete states
+  const containerRef = useRef<HTMLElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const isFallbackFullscreen = useRef(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Fullscreen event listeners and synchronization
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const isNativeFs = document.fullscreenElement === containerRef.current;
+      if (isNativeFs) {
+        setIsFullscreen(true);
+        isFallbackFullscreen.current = false;
+      } else if (!isFallbackFullscreen.current) {
+        setIsFullscreen(false);
+      }
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Handle escape key when fallback fullscreen is active
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && isFullscreen && isFallbackFullscreen.current) {
+        isFallbackFullscreen.current = false;
+        setIsFullscreen(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
+
+  // Clean up fullscreen on unmount
+  useEffect(() => {
+    return () => {
+      if (document.fullscreenElement && document.fullscreenElement === containerRef.current) {
+        void document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, []);
+
+  // Refresh Excalidraw canvas when fullscreen state changes to prevent clipping or blank canvas
+  useEffect(() => {
+    const refreshCanvas = () => {
+      if (editorApi.current && typeof editorApi.current.refresh === "function") {
+        editorApi.current.refresh();
+      }
+    };
+    refreshCanvas();
+    const raf = requestAnimationFrame(refreshCanvas);
+    const t1 = setTimeout(refreshCanvas, 100);
+    const t2 = setTimeout(refreshCanvas, 300);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isFullscreen]);
+
+  async function toggleFullscreen() {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (isFullscreen) {
+      if (document.fullscreenElement) {
+        try {
+          await document.exitFullscreen();
+        } catch {}
+      }
+      isFallbackFullscreen.current = false;
+      setIsFullscreen(false);
+    } else {
+      if (typeof container.requestFullscreen === "function") {
+        try {
+          await container.requestFullscreen();
+        } catch {
+          isFallbackFullscreen.current = true;
+          setIsFullscreen(true);
+        }
+      } else {
+        isFallbackFullscreen.current = true;
+        setIsFullscreen(true);
+      }
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => {});
+      }
+      await deleteWhiteboardApi(whiteboardId);
+      showToast(`Whiteboard deleted.`, "success");
+      if (currentProject) {
+        navigate(`/project/${currentProject.id}/whiteboards`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unable to delete whiteboard.";
+      setError(msg);
+      showToast(msg, "error");
+      setDeleting(false);
+      setDeleteModalOpen(false);
+    }
+  }
+
+  function handleBack() {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
+    if (currentProject) {
+      navigate(`/project/${currentProject.id}/whiteboards`);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -265,25 +389,139 @@ export function WhiteboardEditorView({ whiteboardId }: { whiteboardId: string })
   if (error && !whiteboard) return <div className="p-8 text-center text-sm text-status-danger-text">{error} <button className="underline" onClick={() => window.location.reload()}>Retry</button></div>;
   if (!whiteboard) return <div className="p-8 text-center text-sm text-text-muted">Loading whiteboard...</div>;
   const scene = whiteboard?.sceneData;
-  return <section className="h-full min-h-[600px] flex flex-col">
-    <header className="h-14 px-4 flex items-center justify-between gap-3 border-b border-border bg-surface">
-      <div className="flex items-center gap-3 min-w-0"><Button size="icon-sm" title="Back to whiteboards" icon={ArrowLeft} onClick={() => navigate(`/project/${currentProject.id}/whiteboards`)} /><h2 className="font-semibold truncate">{whiteboard?.name || "Whiteboard"}</h2><span className="text-xs text-text-muted">{connection} · {status}</span>{collaborators.length > 0 && <div className="flex items-center gap-2" aria-label={`${collaborators.length} users online`}><div className="flex -space-x-1">{collaborators.slice(0, 5).map((user) => <span key={user.userId} title={user.displayName} className="h-6 w-6 rounded-full border-2 border-surface flex items-center justify-center text-[10px] font-semibold text-white" style={{ backgroundColor: collaboratorColor(user.userId) }}>{user.displayName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span>)}</div><span className="text-xs text-text-muted">{collaborators.length} online</span></div>}</div>
-      <div className="flex gap-2"><Button size="sm" icon={Download} onClick={() => void exportScene("png")}>PNG</Button><Button size="sm" onClick={() => void exportScene("svg")}>SVG</Button><Button size="icon-sm" variant="danger" title="Delete whiteboard" icon={Trash2} onClick={async () => { if (!window.confirm("Delete this whiteboard?")) return; try { await deleteWhiteboardApi(whiteboardId); navigate(`/project/${currentProject.id}/whiteboards`); } catch (err) { setError(err instanceof Error ? err.message : "Unable to delete whiteboard."); } }} /></div>
-    </header>
-    {error && <div role="alert" className="px-4 py-2 text-xs text-status-danger-text bg-status-danger-bg">{error}</div>}
-    <div ref={canvasRef} className="flex-1 min-h-0 relative">
-      <Excalidraw
-        excalidrawAPI={(api) => { editorApi.current = api; }}
-        initialData={isScene(scene) ? { elements: scene.elements as readonly ExcalidrawElement[], appState: initialAppState(scene), files: scene.files as BinaryFiles } : undefined}
-        onChange={onChange}
-        onPointerUpdate={onPointerUpdate}
-      />
-      {Object.values(cursors).map((cursor) => {
-        const appState = editorApi.current?.getAppState();
-        return <CollaboratorCursor key={cursor.userId} cursor={cursor} color={collaboratorColor(cursor.userId)} zoom={appState?.zoom.value ?? 1} scrollX={appState?.scrollX ?? 0} scrollY={appState?.scrollY ?? 0} />;
-      })}
-    </div>
-  </section>;
+  return (
+    <section
+      ref={containerRef}
+      className={`flex flex-col bg-surface transition-all duration-150 ${
+        isFullscreen ? "fixed inset-0 z-50 w-screen h-screen" : "h-full min-h-[600px]"
+      }`}
+    >
+      <header className="h-14 px-4 flex items-center justify-between gap-3 border-b border-border bg-surface shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <Button
+            size="icon-sm"
+            title="Back to whiteboards"
+            ariaLabel="Back to whiteboards"
+            icon={ArrowLeft}
+            onClick={handleBack}
+          />
+          <h2 className="font-semibold truncate">{whiteboard?.name || "Whiteboard"}</h2>
+          <span className="text-xs text-text-muted">{connection} · {status}</span>
+          {collaborators.length > 0 && (
+            <div className="flex items-center gap-2" aria-label={`${collaborators.length} users online`}>
+              <div className="flex -space-x-1">
+                {collaborators.slice(0, 5).map((user) => (
+                  <span
+                    key={user.userId}
+                    title={user.displayName}
+                    className="h-6 w-6 rounded-full border-2 border-surface flex items-center justify-center text-[10px] font-semibold text-white"
+                    style={{ backgroundColor: collaboratorColor(user.userId) }}
+                  >
+                    {user.displayName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                ))}
+              </div>
+              <span className="text-xs text-text-muted">{collaborators.length} online</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" icon={Download} onClick={() => void exportScene("png")}>
+            PNG
+          </Button>
+          <Button size="sm" onClick={() => void exportScene("svg")}>
+            SVG
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="secondary"
+            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            ariaLabel={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            icon={isFullscreen ? Minimize2 : Maximize2}
+            onClick={() => void toggleFullscreen()}
+          />
+          <Button
+            size="icon-sm"
+            variant="danger"
+            title="Delete whiteboard"
+            ariaLabel="Delete whiteboard"
+            icon={Trash2}
+            onClick={() => setDeleteModalOpen(true)}
+          />
+        </div>
+      </header>
+
+      {error && <div role="alert" className="px-4 py-2 text-xs text-status-danger-text bg-status-danger-bg shrink-0">{error}</div>}
+
+      <div ref={canvasRef} className="flex-1 min-h-0 relative">
+        <Excalidraw
+          excalidrawAPI={(api) => { editorApi.current = api; }}
+          initialData={isScene(scene) ? { elements: scene.elements as readonly ExcalidrawElement[], appState: initialAppState(scene), files: scene.files as BinaryFiles } : undefined}
+          onChange={onChange}
+          onPointerUpdate={onPointerUpdate}
+        />
+        {Object.values(cursors).map((cursor) => {
+          const appState = editorApi.current?.getAppState();
+          return (
+            <CollaboratorCursor
+              key={cursor.userId}
+              cursor={cursor}
+              color={collaboratorColor(cursor.userId)}
+              zoom={appState?.zoom.value ?? 1}
+              scrollX={appState?.scrollX ?? 0}
+              scrollY={appState?.scrollY ?? 0}
+            />
+          );
+        })}
+      </div>
+
+      {/* In-App Delete Confirmation Dialog */}
+      <Dialog
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          if (!deleting) setDeleteModalOpen(false);
+        }}
+        title="Delete Whiteboard"
+        description="This action cannot be undone."
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+              <Trash2 size={20} />
+            </div>
+            <div className="text-xs text-text-secondary space-y-1">
+              <p>
+                Are you sure you want to delete <span className="font-semibold text-text-primary">"{whiteboard?.name || "this whiteboard"}"</span>?
+              </p>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                All drawings, shapes, and collaborative revisions on this whiteboard will be permanently removed.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={deleting}
+              onClick={() => setDeleteModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={deleting}
+              onClick={() => void handleConfirmDelete()}
+            >
+              {deleting ? "Deleting..." : "Delete Whiteboard"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    </section>
+  );
 }
 
 function download(blob: Blob, name: string) {

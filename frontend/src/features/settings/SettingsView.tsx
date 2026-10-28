@@ -436,16 +436,31 @@ export function SettingsView() {
                       {/* Role Selector with "All users can be managers" support */}
                       <div className="flex items-center gap-1.5">
                         <span className="text-text-muted text-[11px]">Role:</span>
-                        <select
-                          value={toBackendRole(m.role) || String(m.role).toUpperCase()}
-                          disabled={isSelf || isUpdating}
-                          onChange={(e) => handleRoleChange(m.id, e.target.value)}
-                          className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
-                        >
-                          <option value="ADMIN">Admin</option>
-                          <option value="MANAGER">Manager</option>
-                          <option value="TEAMMATE">Teammate</option>
-                        </select>
+                        {(() => {
+                          const backendRole = toBackendRole(m.role);
+                          const isRecognized = ['ADMIN', 'MANAGER', 'TEAMMATE'].includes(backendRole);
+                          const selectValue = isRecognized ? backendRole : (m.role ? String(m.role) : '');
+                          if (!isRecognized) {
+                            console.warn(`[Settings] Member ${m.id} (${m.email}) has unexpected or missing role:`, m.role);
+                          }
+                          return (
+                            <select
+                              value={selectValue}
+                              disabled={isSelf || isUpdating}
+                              onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                              className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
+                            >
+                              <option value="ADMIN">Admin</option>
+                              <option value="MANAGER">Manager</option>
+                              <option value="TEAMMATE">Teammate</option>
+                              {!isRecognized && (
+                                <option value={selectValue} disabled>
+                                  {m.role ? `Unrecognized (${m.role})` : 'Missing Role'}
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
                       </div>
 
                       {/* Remove Member Button */}

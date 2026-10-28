@@ -299,7 +299,7 @@ export interface AppContextValue {
   completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
   finishOnboarding: () => void;
   projects: Project[];
-  createProject: (projectData: Partial<Project>) => Project | null;
+  createProject: (projectData: Partial<Project>) => Promise<Project | null>;
   updateProject: (projectId: string, updates: Partial<Project>) => boolean;
   renameProject: (projectId: string, name: string) => boolean;
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;

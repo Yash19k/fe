@@ -1053,13 +1053,20 @@ export function normalizeRole(backendRole?: string | null): Role {
 }
 
 export function toBackendRole(role?: Role | string | null): string {
-  switch (role) {
-    case 'Admin': return 'ADMIN';
-    case 'Manager': return 'MANAGER';
-    case 'Guest': return 'GUEST';
-    case 'Teammate':
-    default:
+  if (!role) return '';
+  switch (String(role).trim().toUpperCase()) {
+    case 'ADMIN':
+      return 'ADMIN';
+    case 'MANAGER':
+    case 'LEAD':
+      return 'MANAGER';
+    case 'TEAMMATE':
+    case 'MEMBER':
       return 'TEAMMATE';
+    case 'GUEST':
+      return 'GUEST';
+    default:
+      return '';
   }
 }
 

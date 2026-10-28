@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Task, AuditLogEntry } from '../src/types/index.ts';
+import { toBackendRole } from '../src/services/api.ts';
 
 describe('Workflow, Settings, and Task Editing Tests (Sections 11, 12, 13, 15, 16)', () => {
   it('prevents deleting a workflow status if existing tasks occupy it (Section 12.3)', () => {
@@ -380,6 +381,135 @@ describe('Workflow, Settings, and Task Editing Tests (Sections 11, 12, 13, 15, 1
         resolveWorkflowName('Deliberate Custom Mobile Release Pipeline'),
         'Deliberate Custom Mobile Release Pipeline'
       );
+    });
+  });
+
+  describe('Organization Member Role Mapping & Settings Display (Section 3)', () => {
+    it('toBackendRole accurately maps uppercase, titlecase, and lowercase roles to backend canonical values', () => {
+      // Admin
+      assert.equal(toBackendRole('ADMIN'), 'ADMIN');
+      assert.equal(toBackendRole('Admin'), 'ADMIN');
+      assert.equal(toBackendRole('admin'), 'ADMIN');
+
+      // Manager
+      assert.equal(toBackendRole('MANAGER'), 'MANAGER');
+      assert.equal(toBackendRole('Manager'), 'MANAGER');
+      assert.equal(toBackendRole('manager'), 'MANAGER');
+      assert.equal(toBackendRole('LEAD'), 'MANAGER');
+      assert.equal(toBackendRole('lead'), 'MANAGER');
+
+      // Teammate
+      assert.equal(toBackendRole('TEAMMATE'), 'TEAMMATE');
+      assert.equal(toBackendRole('Teammate'), 'TEAMMATE');
+      assert.equal(toBackendRole('teammate'), 'TEAMMATE');
+      assert.equal(toBackendRole('MEMBER'), 'TEAMMATE');
+      assert.equal(toBackendRole('member'), 'TEAMMATE');
+
+      // Guest
+      assert.equal(toBackendRole('Guest'), 'GUEST');
+      assert.equal(toBackendRole('GUEST'), 'GUEST');
+
+      // Missing & unrecognized roles must NOT silently convert to TEAMMATE
+      assert.equal(toBackendRole(undefined), '');
+      assert.equal(toBackendRole(null), '');
+      assert.equal(toBackendRole(''), '');
+      assert.equal(toBackendRole('UNKNOWN_ROLE'), '');
+      assert.equal(toBackendRole('AUDITOR'), '');
+    });
+
+    it('Settings page resolves and selects each member actual backend-provided role simultaneously', () => {
+      // Simulate response from GET /api/organization/members
+      const serverMembers = [
+        { id: 'usr-admin-1', name: 'Alice Admin', email: 'alice@company.com', role: 'ADMIN' },
+        { id: 'usr-mgr-2', name: 'Bob Manager', email: 'bob@company.com', role: 'MANAGER' },
+        { id: 'usr-tm-3', name: 'Charlie Teammate', email: 'charlie@company.com', role: 'TEAMMATE' },
+      ];
+
+      function resolveMemberSelectValue(memberRole: any): { selectValue: string; isRecognized: boolean; displayLabel: string } {
+        const backendRole = toBackendRole(memberRole);
+        const isRecognized = ['ADMIN', 'MANAGER', 'TEAMMATE'].includes(backendRole);
+        const selectValue = isRecognized ? backendRole : (memberRole ? String(memberRole) : '');
+        const labels: Record<string, string> = {
+          ADMIN: 'Admin',
+          MANAGER: 'Manager',
+          TEAMMATE: 'Teammate',
+        };
+        const displayLabel = isRecognized ? labels[backendRole] : (memberRole ? `Unrecognized (${memberRole})` : 'Missing Role');
+        return { selectValue, isRecognized, displayLabel };
+      }
+
+      const member1 = resolveMemberSelectValue(serverMembers[0].role);
+      assert.equal(member1.selectValue, 'ADMIN');
+      assert.equal(member1.displayLabel, 'Admin');
+      assert.equal(member1.isRecognized, true);
+
+      const member2 = resolveMemberSelectValue(serverMembers[1].role);
+      assert.equal(member2.selectValue, 'MANAGER');
+      assert.equal(member2.displayLabel, 'Manager');
+      assert.equal(member2.isRecognized, true);
+
+      const member3 = resolveMemberSelectValue(serverMembers[2].role);
+      assert.equal(member3.selectValue, 'TEAMMATE');
+      assert.equal(member3.displayLabel, 'Teammate');
+      assert.equal(member3.isRecognized, true);
+
+      // Verify all members can display their distinct roles simultaneously without collision
+      assert.notEqual(member1.selectValue, member2.selectValue);
+      assert.notEqual(member2.selectValue, member3.selectValue);
+      assert.notEqual(member1.selectValue, member3.selectValue);
+    });
+
+    it('handles unexpected or missing backend roles safely without defaulting to Teammate', () => {
+      function resolveMemberSelectValue(memberRole: any) {
+        const backendRole = toBackendRole(memberRole);
+        const isRecognized = ['ADMIN', 'MANAGER', 'TEAMMATE'].includes(backendRole);
+        const selectValue = isRecognized ? backendRole : (memberRole ? String(memberRole) : '');
+        const displayLabel = isRecognized
+          ? (backendRole === 'ADMIN' ? 'Admin' : backendRole === 'MANAGER' ? 'Manager' : 'Teammate')
+          : (memberRole ? `Unrecognized (${memberRole})` : 'Missing Role');
+        return { selectValue, isRecognized, displayLabel };
+      }
+
+      const missing = resolveMemberSelectValue(undefined);
+      assert.equal(missing.isRecognized, false);
+      assert.equal(missing.selectValue, '');
+      assert.equal(missing.displayLabel, 'Missing Role');
+      assert.notEqual(missing.selectValue, 'TEAMMATE');
+
+      const nullRole = resolveMemberSelectValue(null);
+      assert.equal(nullRole.isRecognized, false);
+      assert.equal(nullRole.selectValue, '');
+      assert.equal(nullRole.displayLabel, 'Missing Role');
+      assert.notEqual(nullRole.selectValue, 'TEAMMATE');
+
+      const unexpected = resolveMemberSelectValue('CONTRACTOR');
+      assert.equal(unexpected.isRecognized, false);
+      assert.equal(unexpected.selectValue, 'CONTRACTOR');
+      assert.equal(unexpected.displayLabel, 'Unrecognized (CONTRACTOR)');
+      assert.notEqual(unexpected.selectValue, 'TEAMMATE');
+    });
+
+    it('updating a member role sends the canonical backend role and updates local state correctly', () => {
+      let members = [
+        { id: 'usr-1', name: 'Dev One', email: 'dev1@org.com', role: 'TEAMMATE' },
+      ];
+
+      function handleRoleUpdate(userId: string, newRoleSelection: string) {
+        const canonical = toBackendRole(newRoleSelection);
+        assert.ok(['ADMIN', 'MANAGER', 'TEAMMATE'].includes(canonical));
+        members = members.map((m) => (m.id === userId ? { ...m, role: canonical } : m));
+        return canonical;
+      }
+
+      // Promote to Manager
+      const updatedToManager = handleRoleUpdate('usr-1', 'MANAGER');
+      assert.equal(updatedToManager, 'MANAGER');
+      assert.equal(members[0].role, 'MANAGER');
+
+      // Promote to Admin
+      const updatedToAdmin = handleRoleUpdate('usr-1', 'ADMIN');
+      assert.equal(updatedToAdmin, 'ADMIN');
+      assert.equal(members[0].role, 'ADMIN');
     });
   });
 });
