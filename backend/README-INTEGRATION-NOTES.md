@@ -30,7 +30,17 @@ These files are a security-oriented starting update based on the supplied projec
 
 ## Email and organization rule
 
-A project member must already be a `User` in the same organization. The project member endpoint does not create a second user or move a user to another organization. Invitation acceptance must locate/create the one global user record and must reject attempts to attach an existing user to a different organization.
+A project member must already be a `User` in the same organization. The project
+member endpoint does not create a second user or move a user to another
+organization. Resending an invitation is limited to a pending account already
+associated with the same organization.
+
+Invited accounts remain pending until the one-time token from the invitation
+email is accepted through `POST /api/users/accept-invitation` (or the legacy
+`POST /api/organizations/accept` route). Acceptance sets the permanent password
+and consumes the token atomically; pending accounts cannot log in with
+credentials from an older invitation email. Reissue invitations to pending
+users who do not have a usable token.
 
 ## SLA and escalation
 
@@ -86,10 +96,12 @@ SLA endpoints are:
 Every endpoint verifies the authenticated user's organization, project access,
 and the relevant project action on the backend.
 
-The server starts a single in-process SLA refresh interval. Its default interval
-is 60 seconds and can be changed with `SLA_CHECK_INTERVAL_MS` (minimum 10
-seconds). For multi-instance deployments, run the refresh job in one designated
-instance or replace it with the deployment's existing scheduler.
+The server refreshes eligible SLA records once per minute. Stable records are
+excluded until their state needs reevaluation, and escalation notifications are
+attempted only after the database transaction commits. Notification delivery
+is best-effort and logged; it is not backed by a durable retry queue. For
+multi-instance deployments, use a shared scheduler or a deployment-level
+single-worker guarantee.
 
 ## Real-time chat
 
@@ -102,7 +114,9 @@ pnpm exec typeorm-ts-node-commonjs migration:run -d config/data.source.ts
 
 Authenticated REST endpoints are mounted below `/api/conversations` for
 creating and listing conversations, reading a conversation, managing members,
-and retrieving paginated messages. The WebSocket endpoint is
+and retrieving paginated messages. Conversation listing accepts `page` (default
+1) and `limit` (default 50, maximum 100); latest-message summaries and unread
+counts are loaded for that page only. The WebSocket endpoint is
 `/ws/chat`; it accepts the existing `token` HTTP-only cookie or an
 `Authorization: Bearer` header during the handshake. Browsers must use an
 origin listed in `CORS_ORIGINS`.
@@ -112,3 +126,28 @@ The WebSocket protocol supports `conversation:join`,
 before `message:new` is broadcast to sockets that joined the same authorized
 conversation. Connections are limited to 64 KiB frames and 30 events per
 10-second window.
+
+## Task dependencies and scheduling
+
+`AddWorkItemSchedulingFields1793030000000` adds nullable
+`planned_start_date` and `planned_duration_working_days`, plus
+`is_schedule_pinned` (default `false`). It intentionally does not backfill
+planned dates or durations: existing due dates, assignment estimates, and
+logged time do not reliably establish task-level schedule semantics. Existing
+`due_date` remains a nullable `timestamptz`; ordinary tasks can still omit it.
+The migration has a matching `down` path and must be applied through the
+normal TypeORM migration process; it was not run as part of this code change.
+
+Dependency edges are serialized on the project row and task rows are locked by
+ID order. Both endpoints must have due dates. A successor that must move needs
+a planned start and positive working-day duration; Monday-Friday dates use
+Finish-to-Start with zero lag and `Asia/Kolkata` when no project timezone is
+configured. Cascades only move eligible tasks later. Completed or pinned tasks
+that would need to move cause the whole operation to fail. Removing an edge
+does not pull successors earlier.
+
+Dependency POST responses contain the persisted edge and `rescheduledTasks`;
+task-update responses include any rescheduled successors. The dependency GET
+response retains predecessor IDs in `data` and also returns canonical edge
+rows in `dependencies`. DELETE accepts either an edge UUID or the predecessor
+work-item ID used by existing callers.

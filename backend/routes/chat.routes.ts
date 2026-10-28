@@ -17,6 +17,8 @@ const router = Router();
 router.use(isLoggedIn);
 router.post("/", asyncHandler(createConversationController));
 router.get("/", asyncHandler(listConversationsController));
+router.get("/conversations", asyncHandler(listConversationsController));
+router.post("/conversations", asyncHandler(createConversationController));
 router.get("/members", asyncHandler(listMembersController));
 router.get("/:conversationId", asyncHandler(getConversationController));
 router.post("/:conversationId/members", asyncHandler(addConversationMemberController));

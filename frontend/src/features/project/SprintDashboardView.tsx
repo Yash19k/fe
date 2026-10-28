@@ -3,7 +3,7 @@ import { useApp } from '../../hooks/useApp';
 import { getProjectSprintsApi, backendSprintToFrontend } from '../../services/api';
 import { Sprint, Task } from '../../types';
 import { Button } from '../../components/ui/Button';
-import { Avatar } from '../../components/ui/Avatar';
+import { Avatar, resolveTaskAssignees } from '../../components/ui/Avatar';
 import { StatusBadge, WorkItemTypeBadge } from '../../components/ui/Badge';
 import {
   Zap,
@@ -158,21 +158,24 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
     > = {};
 
     sprintTasks.forEach((t) => {
-      const assigneeKey = t.assigneeId || 'unassigned';
-      if (!memberMap[assigneeKey]) {
-        memberMap[assigneeKey] = { total: 0, completed: 0, inProgress: 0, tasks: [] };
-      }
-      memberMap[assigneeKey].total += 1;
-      if (t.status === 'Done') {
-        memberMap[assigneeKey].completed += 1;
-      } else {
-        memberMap[assigneeKey].inProgress += 1;
-      }
-      memberMap[assigneeKey].tasks.push(t);
+      const assignees = resolveTaskAssignees(t, allUsers);
+      const keys = assignees.length > 0 ? assignees.map((u) => u.id) : ['unassigned'];
+      keys.forEach((assigneeKey) => {
+        if (!memberMap[assigneeKey]) {
+          memberMap[assigneeKey] = { total: 0, completed: 0, inProgress: 0, tasks: [] };
+        }
+        memberMap[assigneeKey].total += 1;
+        if (t.status === 'Done') {
+          memberMap[assigneeKey].completed += 1;
+        } else {
+          memberMap[assigneeKey].inProgress += 1;
+        }
+        memberMap[assigneeKey].tasks.push(t);
+      });
     });
 
     return memberMap;
-  }, [sprintTasks]);
+  }, [sprintTasks, allUsers]);
 
   const canCreateSprint = currentUser?.role !== 'Teammate';
 

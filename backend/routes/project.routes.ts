@@ -16,11 +16,12 @@ import {
   deleteProjectLabel,
   getProjectWorkflow,
   saveProjectWorkflow,
+} from "../controllers/project-settings.controller";
+import {
   getProjectAuditLogs,
   createAuditLog,
-
-} from "../controllers/feature-persistence.controller";
-import { undoAuditLog } from "../controllers/auditlog.controller";
+  undoAuditLog,
+} from "../controllers/auditlog.controller";
 import {
   validateCreateProject,
   validateUpdateProject,
@@ -32,6 +33,7 @@ import {
 import { isLoggedIn } from "../middleware/is.loggedin";
 import { asyncHandler } from "../middleware/async.handler";
 import { checkPermission } from "../middleware/check.permissions";
+import { requireProjectPermission } from "../middleware/project.permission";
 
 const router = Router();
 
@@ -53,7 +55,7 @@ router.get(
 router.get(
   "/:projectId",
   isLoggedIn,
-  checkPermission("project:read"),
+  requireProjectPermission("project:view"),
   validateProjectId,
   asyncHandler(viewProject),
 );
@@ -61,7 +63,7 @@ router.get(
 router.patch(
   "/:projectId",
   isLoggedIn,
-  checkPermission("project:update"),
+  requireProjectPermission("project:update"),
   validateProjectId,
   validateUpdateProject,
   asyncHandler(updateProject),
@@ -70,15 +72,16 @@ router.patch(
 router.delete(
   "/:projectId",
   isLoggedIn,
-  checkPermission("project:delete"),
+  requireProjectPermission("project:delete"),
   validateProjectId,
   asyncHandler(deleteProject),
 );
 
+// Project Members
 router.get(
   "/:projectId/members",
   isLoggedIn,
-  checkPermission("project:read"),
+  requireProjectPermission("project:view"),
   validateProjectId,
   asyncHandler(getProjectMembers),
 );
@@ -86,7 +89,7 @@ router.get(
 router.post(
   "/:projectId/members",
   isLoggedIn,
-  checkPermission("project:member:manage"),
+  requireProjectPermission("member:add"),
   validateProjectId,
   validateAddProjectMember,
   asyncHandler(addProjectMember),
@@ -95,7 +98,7 @@ router.post(
 router.delete(
   "/:projectId/members/:memberId",
   isLoggedIn,
-  checkPermission("project:member:manage"),
+  requireProjectPermission("member:remove"),
   validateProjectMemberParams,
   asyncHandler(removeProjectMember),
 );
@@ -103,7 +106,7 @@ router.delete(
 router.patch(
   "/:projectId/members/:memberId",
   isLoggedIn,
-  checkPermission("project:member:manage"),
+  requireProjectPermission("member:role:update"),
   validateProjectMemberParams,
   validateUpdateProjectMemberRole,
   asyncHandler(updateProjectMemberRole),
@@ -113,16 +116,19 @@ router.patch(
 router.get(
   "/:projectId/labels",
   isLoggedIn,
+  requireProjectPermission("project:view"),
   asyncHandler(getProjectLabels),
 );
 router.post(
   "/:projectId/labels",
   isLoggedIn,
+  requireProjectPermission("project:update"),
   asyncHandler(createProjectLabel),
 );
 router.delete(
   "/:projectId/labels/:labelId",
   isLoggedIn,
+  requireProjectPermission("project:update"),
   asyncHandler(deleteProjectLabel),
 );
 
@@ -130,21 +136,21 @@ router.delete(
 router.get(
   "/:projectId/workflow",
   isLoggedIn,
-  checkPermission("project:read"),
+  requireProjectPermission("project:view"),
   validateProjectId,
   asyncHandler(getProjectWorkflow),
 );
 router.post(
   "/:projectId/workflow",
   isLoggedIn,
-  checkPermission("project:update"),
+  requireProjectPermission("project:update"),
   validateProjectId,
   asyncHandler(saveProjectWorkflow),
 );
 router.put(
   "/:projectId/workflow",
   isLoggedIn,
-  checkPermission("project:update"),
+  requireProjectPermission("project:update"),
   validateProjectId,
   asyncHandler(saveProjectWorkflow),
 );
@@ -153,21 +159,25 @@ router.put(
 router.post(
   "/audit-logs",
   isLoggedIn,
+  requireProjectPermission("task:update"),
   asyncHandler(createAuditLog),
 );
 router.get(
   "/:projectId/audit-logs",
   isLoggedIn,
+  requireProjectPermission("project:view"),
   asyncHandler(getProjectAuditLogs),
 );
 router.post(
   "/:projectId/audit-logs",
   isLoggedIn,
+  requireProjectPermission("project:update"),
   asyncHandler(createAuditLog),
 );
 router.post(
   "/:projectId/audit-logs/:logId/undo",
   isLoggedIn,
+  requireProjectPermission("project:update"),
   asyncHandler(undoAuditLog),
 );
 router.post(

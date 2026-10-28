@@ -23,6 +23,10 @@ const createSchema = Joi.object({
   memberIds: Joi.array().items(uuid).unique(),
 }).or("participantId", "memberIds");
 const memberSchema = Joi.object({ userId: uuid.required() });
+const conversationQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).max(1_000_000).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(50),
+});
 const messageQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(100).default(50),
   before: Joi.date().iso(),
@@ -64,7 +68,15 @@ export async function createConversationController(req: Request, res: Response) 
 }
 
 export async function listConversationsController(req: Request, res: Response) {
-  return res.json({ success: true, data: await listConversations(actor(req)) });
+  const { error, value } = conversationQuerySchema.validate(req.query, {
+    stripUnknown: true,
+    convert: true,
+  });
+  if (error) return validationError(res, error);
+  return res.json({
+    success: true,
+    data: await listConversations(actor(req), value.page, value.limit),
+  });
 }
 
 export async function listMembersController(req: Request, res: Response) {

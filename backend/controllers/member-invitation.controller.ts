@@ -5,32 +5,37 @@ import {
   acceptOrganizationInvitation,
 } from "../services/member-invitation.service";
 import { UserRole } from "../entities/user.entity";
+import { AppError } from "../errors/app.error";
+
+const singleMemberSchema = Joi.object({
+  email: Joi.string().email().required(),
+  role: Joi.string()
+    .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
+    .default(UserRole.TEAMMATE),
+});
 
 const invitedMembersSchema = Joi.alternatives().try(
-  Joi.array().items(
-    Joi.object({
-      email: Joi.string().email().required(),
-      role: Joi.string()
-        .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
-        .default(UserRole.TEAMMATE),
-    })
-  ),
+  Joi.array().items(singleMemberSchema),
   Joi.object({
-    members: Joi.array().items(
-      Joi.object({
-        email: Joi.string().email().required(),
-        role: Joi.string()
-          .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
-          .default(UserRole.TEAMMATE),
-      })
-    ).required(),
-  })
+    members: Joi.array().items(singleMemberSchema).required(),
+  }),
+  Joi.object({
+    invitations: Joi.array().items(singleMemberSchema).required(),
+  }),
 );
 
-const acceptInvitationSchema = Joi.object({
-  token: Joi.string().required(),
+export const acceptInvitationSchema = Joi.object({
+  token: Joi.string().hex().length(64).required(),
   fullName: Joi.string().trim().min(1).max(100).required(),
-  password: Joi.string().min(6).max(100).required(),
+  password: Joi.string()
+    .min(8)
+    .max(72)
+    .custom((value, helpers) =>
+      Buffer.byteLength(value, "utf8") > 72
+        ? helpers.error("string.max")
+        : value,
+    )
+    .required(),
 });
 
 export async function inviteMembersController(
@@ -45,40 +50,48 @@ export async function inviteMembersController(
     });
 
     if (error) {
-      return res.status(400).json({
-        message: "Validation failed",
-        errors: error.details.map((detail) => detail.message),
-      });
+      throw new AppError(
+        error.details.map((detail) => detail.message).join(", "),
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     const authenticatedUser = req.user;
 
     if (!authenticatedUser) {
-      return res.status(401).json({
-        message: "Authentication required",
-      });
+      throw new AppError("Authentication required", 401, "UNAUTHORIZED");
     }
 
     if (authenticatedUser.role !== UserRole.ADMIN) {
-      return res.status(403).json({
-        message: "Only organization admins can invite members",
-      });
+      throw new AppError(
+        "Only organization admins can invite members",
+        403,
+        "FORBIDDEN",
+      );
     }
 
     if (!authenticatedUser.organizationId) {
-      return res.status(400).json({
-        message: "Your account is not associated with an organization",
-      });
+      throw new AppError(
+        "Your account is not associated with an organization",
+        400,
+        "ORGANIZATION_REQUIRED",
+      );
     }
 
-    const membersList = Array.isArray(value) ? value : value.members;
+    const membersList = Array.isArray(value)
+      ? value
+      : value.members || value.invitations;
 
     const result = await inviteOrganizationMembers(
       authenticatedUser.organizationId,
       membersList,
     );
 
-    return res.status(200).json(result);
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
   } catch (error) {
     if (error instanceof Error) {
       if (
@@ -86,12 +99,14 @@ export async function inviteMembersController(
         error.message === "Duplicate email addresses are not allowed"
       ) {
         return res.status(400).json({
+          success: false,
           message: error.message,
         });
       }
 
-      if (error.message.startsWith("These email addresses already exist:")) {
+      if (error.message.startsWith("These email addresses already exist")) {
         return res.status(409).json({
+          success: false,
           message: error.message,
         });
       }
@@ -107,16 +122,22 @@ export async function acceptInvitationController(
   next: NextFunction,
 ) {
   try {
-    const { error, value } = acceptInvitationSchema.validate(req.body, {
+    const payload = {
+      ...req.body,
+      token: req.body?.token || req.query?.token,
+    };
+
+    const { error, value } = acceptInvitationSchema.validate(payload, {
       abortEarly: false,
       stripUnknown: true,
     });
 
     if (error) {
-      return res.status(400).json({
-        message: "Validation failed",
-        errors: error.details.map((detail: any) => detail.message),
-      });
+      throw new AppError(
+        error.details.map((detail) => detail.message).join(", "),
+        400,
+        "VALIDATION_ERROR",
+      );
     }
 
     const result = await acceptOrganizationInvitation(
@@ -125,7 +146,10 @@ export async function acceptInvitationController(
       value.password,
     );
 
-    return res.status(200).json(result);
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
   } catch (error) {
     if (error instanceof Error) {
       const clientErrors = [
@@ -137,6 +161,7 @@ export async function acceptInvitationController(
 
       if (clientErrors.includes(error.message)) {
         return res.status(400).json({
+          success: false,
           message: error.message,
         });
       }

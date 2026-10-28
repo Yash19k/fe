@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { Avatar, AvatarGroup } from '../../components/ui/Avatar';
+import { Avatar, AvatarGroup, resolveTaskAssignees } from '../../components/ui/Avatar';
 import { TaskRow } from '../../components/tasks/TaskRow';
 import { WorkItemTypeBadge } from '../../components/ui/Badge';
 import { calculateCriticalPath } from '../../domain/criticalPath';
@@ -189,15 +189,17 @@ export function ProjectOverviewView() {
     let unassignedCount = 0;
 
     projectTasks.forEach((t: Task) => {
-      if (!t.assigneeId) {
+      const assignees = resolveTaskAssignees(t, allUsers);
+      if (assignees.length === 0) {
         unassignedCount++;
       } else {
-        const u = allUsers.find((user) => user.id === t.assigneeId);
-        const key = t.assigneeId;
-        if (!counts[key]) {
-          counts[key] = { count: 0, user: u };
-        }
-        counts[key].count++;
+        assignees.forEach((u) => {
+          const key = u.id;
+          if (!counts[key]) {
+            counts[key] = { count: 0, user: u };
+          }
+          counts[key].count++;
+        });
       }
     });
 

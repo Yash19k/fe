@@ -33,7 +33,7 @@ import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../doma
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
-import { getWorkItemCommentsApi } from '../../services/api';
+import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
 import { LabelPicker } from '../ui/LabelPicker';
 
 interface TaskDetailsContentProps {
@@ -96,6 +96,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       : (task.assigneeId ? [task.assigneeId] : []),
     labels: task.labels ? [...task.labels] : [],
     dueDate: task.dueDate || '',
+    plannedStartDate: task.plannedStartDate || '',
+    plannedDurationWorkingDays:
+      task.plannedDurationWorkingDays == null
+        ? ''
+        : String(task.plannedDurationWorkingDays),
+    isSchedulePinned: Boolean(task.isSchedulePinned),
     estimateHours: task.estimateHours !== null && task.estimateHours !== undefined ? task.estimateHours : '',
     parentId: task.parentId || '',
     businessGoal: task.businessGoal || '',
@@ -109,6 +115,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }), [task]);
 
   const [draft, setDraft] = useState(initialDraft);
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
+
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
@@ -119,7 +130,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   // Fetch comments from backend when task opens or comments tab is active
   useEffect(() => {
     let isCancelled = false;
-    if (task?.id && task.id.includes('-') && (activeTab === 'comments' || !task.comments)) {
+    if (isPersistedWorkItemId(task?.id) && (activeTab === 'comments' || !task.comments)) {
       getWorkItemCommentsApi(task.id)
         .then((res) => {
           if (res?.data && Array.isArray(res.data) && !isCancelled) {
@@ -157,6 +168,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       draft.status !== initialDraft.status ||
       draft.priority !== initialDraft.priority ||
       draft.dueDate !== initialDraft.dueDate ||
+      draft.plannedStartDate !== initialDraft.plannedStartDate ||
+      draft.plannedDurationWorkingDays !== initialDraft.plannedDurationWorkingDays ||
+      draft.isSchedulePinned !== initialDraft.isSchedulePinned ||
       String(draft.estimateHours) !== String(initialDraft.estimateHours) ||
       draft.parentId !== initialDraft.parentId ||
       JSON.stringify(draft.assigneeIds) !== JSON.stringify(initialDraft.assigneeIds) ||
@@ -241,7 +255,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     }));
   }
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     if (!draft.title.trim()) {
       showToast('Work item title is required', 'error');
       return;
@@ -280,7 +294,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         assigneeId: allAssignees[0] || null,
         assigneeIds: allAssignees,
         labels: draft.labels,
-        dueDate: draft.dueDate || null,
         estimateHours: draft.estimateHours !== '' ? Number(draft.estimateHours) : null,
         parentId: draft.parentId || null,
         businessGoal: draft.businessGoal,
@@ -292,10 +305,31 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         actualBehavior: draft.actualBehavior,
         environment: draft.environment,
       };
+      if (draft.dueDate !== initialDraft.dueDate) {
+        updates.dueDate = draft.dueDate || null;
+      }
+      if (draft.plannedStartDate !== initialDraft.plannedStartDate) {
+        updates.plannedStartDate = draft.plannedStartDate || null;
+      }
+      if (
+        draft.plannedDurationWorkingDays !==
+        initialDraft.plannedDurationWorkingDays
+      ) {
+        updates.plannedDurationWorkingDays =
+          draft.plannedDurationWorkingDays === ''
+            ? null
+            : Number(draft.plannedDurationWorkingDays);
+      }
+      if (draft.isSchedulePinned !== initialDraft.isSchedulePinned) {
+        updates.isSchedulePinned = draft.isSchedulePinned;
+      }
 
-      updateTask(task.id, updates, snapshotVersion);
+      const result = await updateTask(task.id, updates, snapshotVersion);
+      if (result && !result.success && result.reason) {
+        showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
+      }
     } catch (err: any) {
-      showToast(err.message || 'Failed to save work item changes', 'error');
+      showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
     } finally {
       setIsSaving(false);
     }
@@ -333,14 +367,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     try {
       await addComment(task.id, text);
       setNewCommentText('');
-      if (task.id && task.id.includes('-')) {
+      if (isPersistedWorkItemId(task.id)) {
         const res = await getWorkItemCommentsApi(task.id).catch(() => null);
         if (res?.data && Array.isArray(res.data)) {
           setBackendComments(res.data);
         }
       }
     } catch (err: any) {
-      setCommentError(err?.message || 'Failed to post comment to server');
+      setCommentError(toUserFriendlyErrorMessage(err, 'Failed to post comment to server'));
     } finally {
       setIsSubmittingComment(false);
     }
@@ -536,6 +570,45 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
             />
           </div>
+
+          <div>
+            <label className="text-[11px] text-text-muted block mb-1">Planned Start</label>
+            <input
+              type="date"
+              value={draft.plannedStartDate}
+              onChange={(e) => setDraft((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
+              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="text-[11px] text-text-muted block mb-1">Duration (working days)</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={draft.plannedDurationWorkingDays}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  plannedDurationWorkingDays: e.target.value,
+                }))
+              }
+              placeholder="e.g. 3"
+              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-[11px] text-text-muted">
+            <input
+              type="checkbox"
+              checked={draft.isSchedulePinned}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, isSchedulePinned: e.target.checked }))
+              }
+            />
+            Pin schedule against automatic moves
+          </label>
 
           {/* Estimated Hours */}
           <div>

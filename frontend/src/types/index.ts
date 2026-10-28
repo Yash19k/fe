@@ -16,6 +16,9 @@ export interface User {
   id: string;
   name: string;
   fullName?: string;
+  displayName?: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   role: Role;
   avatar?: string;
@@ -126,13 +129,17 @@ export interface Task {
   creatorId?: string;
   parentId?: string | null;
   startDate?: string | null;
+  plannedStartDate?: string | null;
   dueDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
+  isSchedulePinned?: boolean;
   estimatedHours?: number | null;
   estimateHours?: number | null;
   actualHours?: number;
   tags?: string[];
   order?: number;
   dependencies?: string[];
+  dependencyIds?: string[];
   subtasks?: EmbeddedSubtask[];
   comments?: TaskComment[];
   timeEntries?: TimeEntry[];
@@ -321,7 +328,7 @@ export interface AppContextValue {
     reason?: string;
   }>;
   uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
-  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => { success: boolean; reason?: string };
+  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string }> | { success: boolean; reason?: string };
   deleteTask: (taskId: string) => void;
   changeTaskStatus: (taskId: string, newStatus: string) => boolean;
   requestReschedule: (taskId: string, newDueDate: string) => void;

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, CalendarDays } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Avatar } from '../../components/ui/Avatar';
+import { TaskAssignees } from '../../components/ui/Avatar';
 import { WorkItemTypeBadge, StatusBadge } from '../../components/ui/Badge';
 import type { Task } from '../../types';
 
@@ -366,20 +366,7 @@ export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewPro
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {assignedUsers.length > 0 ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="flex -space-x-1.5 overflow-hidden">
-                              {assignedUsers.slice(0, 3).map((u) => (
-                                <Avatar key={u.id} user={u} size="xs" />
-                              ))}
-                            </div>
-                            <span className="text-[11px] text-text-secondary truncate max-w-[120px]">
-                              {assignedUsers.map((u) => u.name).join(', ')}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-text-muted">Unassigned</span>
-                        )}
+                        <TaskAssignees task={task} allUsers={allUsers} size="xs" max={3} showNameForSingle />
                       </div>
                     </div>
                   </div>

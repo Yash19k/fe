@@ -81,6 +81,8 @@ import {
   getAuthToken,
   clearAuthToken,
   isPersistedWorkItemId,
+  isUuid,
+  toUserFriendlyErrorMessage,
 } from '../services/api';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -266,10 +268,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (membersRes && !('error' in membersRes) && membersRes?.data && Array.isArray(membersRes.data)) {
         const memberUserList: User[] = membersRes.data.map((m: any) => ({
           id: m.userId,
-          name: m.name || m.email?.split('@')[0] || 'Member',
+          name: m.fullName || m.name || m.email?.split('@')[0] || 'Member',
+          fullName: m.fullName || m.name || undefined,
+          displayName: m.displayName || m.fullName || m.name || undefined,
           email: m.email || '',
           role: normalizeRole(m.role),
-          initials: (m.name || m.email || 'M').slice(0, 2).toUpperCase(),
+          initials: (m.fullName || m.name || m.email || 'M').slice(0, 2).toUpperCase(),
         }));
 
         setAllUsers((prev) => {
@@ -471,9 +475,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const mappedUsers: User[] = usersRes.data.map((usr: any) => ({
               id: usr.id,
               name: usr.fullName || usr.name || usr.email.split('@')[0],
+              fullName: usr.fullName || usr.name || undefined,
+              displayName: usr.displayName || usr.fullName || usr.name || undefined,
               email: usr.email,
               role: normalizeRole(usr.role),
-              initials: (usr.fullName || usr.email || 'U').slice(0, 2).toUpperCase(),
+              initials: (usr.fullName || usr.name || usr.email || 'U').slice(0, 2).toUpperCase(),
               companyId: usr.organizationId,
             }));
             setAllUsers(mappedUsers);
@@ -621,15 +627,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       previousValue,
       newValue,
       timestamp: new Date().toISOString(),
-      canUndo,
+      canUndo: entityType === 'task' ? false : canUndo,
     };
     setAuditLog((prev) => [entry, ...prev]);
 
-    const isTempId = typeof entityId === 'string' && entityId.startsWith('tf-');
-    if (resolvedProjectId && resolvedProjectId.includes('-') && !isTempId) {
+    if (entityType !== 'task' && isPersistedWorkItemId(resolvedProjectId)) {
       createAuditLogApi({
         projectId: resolvedProjectId,
-        workItemId: entityType === 'task' ? entityId : undefined,
         action,
         entityType,
         entityId,
@@ -725,7 +729,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const sanitized = sanitizeWorkItemData(formData);
     const targetProjectId = sanitized.projectId || currentProjectId;
     const targetProject = projects.find((p) => p.id === targetProjectId);
-    const isServerProject = Boolean(targetProject && targetProject.id.includes('-'));
+    const isServerProject = Boolean(targetProject && isPersistedWorkItemId(targetProject.id));
 
     if (!isServerProject) {
       showToast('A persisted backend project is required to create this task', 'error');
@@ -737,12 +741,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const backendPriority = frontendPriorityToBackend(sanitized.priority);
 
+    // Resolve label for creation if specified
+    let targetLabelId: string | null = null;
+    if (Array.isArray(sanitized.labels) && sanitized.labels.length > 0) {
+      const firstLabelName = sanitized.labels[0];
+      const matched = labels.find((l) => l.name === firstLabelName || l.id === firstLabelName);
+      targetLabelId = matched?.id || (isUuid(firstLabelName) ? firstLabelName : null);
+    } else if (sanitized.labelId && isUuid(sanitized.labelId)) {
+      targetLabelId = sanitized.labelId;
+    }
+
     try {
       // 1. Create the work item in backend to obtain the database UUID
       const res = await createWorkItemApi({
         projectId: targetProjectId,
         sprintId: isPersistedWorkItemId(sanitized.sprintId) ? sanitized.sprintId : null,
         parentWorkItemId: isPersistedWorkItemId(sanitized.parentId) ? sanitized.parentId : null,
+        labelId: targetLabelId || null,
+        labels: targetLabelId ? [targetLabelId] : [],
         type: frontendTypeToBackend(sanitized.type || WORK_ITEM_TYPES.TASK),
         title: sanitized.title.trim(),
         description: sanitized.description || null,
@@ -755,7 +771,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : sanitized.assigneeId
               ? [sanitized.assigneeId]
               : []
-        ).map((userId: string) => ({ userId })),
+        )
+          .filter((userId: string) => isUuid(userId))
+          .map((userId: string) => ({ userId })),
       });
 
       const serverItem = res?.data || res?.workItem;
@@ -818,24 +836,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         'success'
       );
 
-      if (authoritativeTask.projectId?.includes('-')) {
-        await createAuditLogApi({
-          projectId: authoritativeTask.projectId,
-          workItemId: serverItem.id,
-          action: 'created',
-          entityType: 'task',
-          entityId: serverItem.id,
-          description: `Created ${authoritativeTask.type || 'Task'} "${authoritativeTask.title}"`,
-          previousState: null,
-          newState: authoritativeTask,
-        }).catch(() => null);
-      }
-
       return { success: true, task: authoritativeTask };
     } catch (err: any) {
-      const reason = err?.message || 'Failed to create task';
-      console.warn('TaskFlow: Backend task creation failed:', reason);
-      showToast(`Failed to create task: ${reason}`, 'error');
+      const reason = toUserFriendlyErrorMessage(err, 'Failed to create task');
+      console.warn('TaskFlow: Backend task creation failed:', err?.message || reason);
+      showToast(reason, 'error');
       return { success: false, reason };
     }
   }, [
@@ -897,7 +902,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return persistedAttachments;
   }, []);
 
-  const updateTask = useCallback((taskId: string, updates: any, snapshotVersion: number | null = null) => {
+  const updateTask = useCallback(async (taskId: string, updates: any, snapshotVersion: number | null = null): Promise<{ success: boolean; task?: Task; reason?: string }> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return { success: false, reason: 'Task not found' };
 
@@ -933,6 +938,152 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updatedAt: new Date().toISOString(),
     };
 
+    if (isPersistedWorkItemId(taskId)) {
+      const backendUpdates: any = {};
+      if (updates.sprintId !== undefined) backendUpdates.sprintId = isPersistedWorkItemId(updates.sprintId) ? updates.sprintId : null;
+      if (updates.title !== undefined) backendUpdates.title = updates.title;
+      if (updates.description !== undefined) backendUpdates.description = updates.description;
+      if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
+      if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
+      if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
+      if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
+      if (updates.plannedStartDate !== undefined) backendUpdates.plannedStartDate = updates.plannedStartDate || null;
+      if (updates.plannedDurationWorkingDays !== undefined) backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
+      if (updates.isSchedulePinned !== undefined) backendUpdates.isSchedulePinned = updates.isSchedulePinned;
+      if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
+
+      if (updates.assignees !== undefined) {
+        const mapped = Array.isArray(updates.assignees)
+          ? updates.assignees
+              .map((a: any) => (typeof a === 'string' ? a.trim() : a.userId || a.id))
+              .filter((id: any) => typeof id === 'string' && isUuid(id.trim()))
+          : [];
+        backendUpdates.assigneeIds = mapped;
+        backendUpdates.assignees = mapped.map((uid: string) => ({ userId: uid }));
+        backendUpdates.assigneeId = mapped[0] || null;
+      } else if (updates.assigneeIds !== undefined) {
+        const validIds = Array.isArray(updates.assigneeIds)
+          ? updates.assigneeIds
+              .map((id: any) => (typeof id === 'string' ? id.trim() : ''))
+              .filter((id: string) => isUuid(id))
+          : [];
+        backendUpdates.assigneeIds = validIds;
+        backendUpdates.assignees = validIds.map((uid: string) => ({ userId: uid }));
+        backendUpdates.assigneeId = validIds[0] || null;
+      } else if (updates.assigneeId !== undefined) {
+        const validId =
+          updates.assigneeId && typeof updates.assigneeId === 'string' && isUuid(updates.assigneeId.trim())
+            ? updates.assigneeId.trim()
+            : null;
+        backendUpdates.assigneeId = validId;
+        backendUpdates.assigneeIds = validId ? [validId] : [];
+        backendUpdates.assignees = validId ? [{ userId: validId }] : [];
+      }
+
+      if (updates.labels !== undefined) {
+        if (Array.isArray(updates.labels) && updates.labels.length > 0) {
+          const firstLabel = updates.labels[0];
+          const matched = labels.find((l) => l.name === firstLabel || l.id === firstLabel);
+          const resolvedLabelId = matched?.id || (isUuid(firstLabel) ? firstLabel : null);
+          backendUpdates.labelId = resolvedLabelId || null;
+          backendUpdates.labels = resolvedLabelId ? [resolvedLabelId] : null;
+        } else {
+          backendUpdates.labelId = null;
+          backendUpdates.labels = null;
+        }
+      } else if (updates.labelId !== undefined) {
+        backendUpdates.labelId = isUuid(updates.labelId) ? updates.labelId : null;
+        backendUpdates.labels = backendUpdates.labelId ? [backendUpdates.labelId] : null;
+      }
+
+      try {
+        let authoritativeTask: Task = updated;
+        let authoritativeRescheduledTasks: Task[] = [];
+        if (Object.keys(backendUpdates).length > 0) {
+          const res = await updateWorkItemApi(taskId, backendUpdates);
+          if (res?.data) {
+            const serverTask = backendWorkItemToTask(
+              res.data,
+              res.data.projectId || res.data.workItem?.projectId || currentProjectId,
+            );
+            authoritativeTask = {
+              ...target,
+              ...serverTask,
+              dependencyIds: target.dependencyIds || [],
+              subtasks: target.subtasks,
+              comments: target.comments,
+              timeEntries: target.timeEntries,
+              attachments: target.attachments,
+              tags: target.tags,
+              estimateHours: target.estimateHours,
+              actualHours: target.actualHours,
+              sla: res.data.sla || target.sla,
+            };
+            authoritativeRescheduledTasks = Array.isArray(res.data.rescheduledTasks)
+              ? res.data.rescheduledTasks.map((task: any) => {
+                  const mapped = backendWorkItemToTask(
+                    task,
+                    task.projectId || currentProjectId,
+                  );
+                  const existing = tasks.find((current) => current.id === task.id);
+                  if (!existing) return mapped;
+                  return {
+                    ...existing,
+                    startDate: mapped.startDate,
+                    plannedStartDate: mapped.plannedStartDate,
+                    dueDate: mapped.dueDate,
+                    plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
+                    isSchedulePinned: mapped.isSchedulePinned,
+                    updatedAt: task.updatedAt || existing.updatedAt,
+                  };
+                })
+              : [];
+          }
+        }
+
+        setTasks((prev) => {
+          const serverUpdates = new Map(
+            [...authoritativeRescheduledTasks, authoritativeTask].map((task) => [
+              task.id,
+              task,
+            ]),
+          );
+          let nextList = prev.map((task) =>
+            serverUpdates.has(task.id)
+              ? { ...task, ...serverUpdates.get(task.id) }
+              : task,
+          );
+
+          if (authoritativeTask.type === WORK_ITEM_TYPES.SUBTASK && authoritativeTask.parentId) {
+            nextList = nextList.map((t) => {
+              if (t.id === authoritativeTask.parentId) {
+                const subtasks = (t.subtasks || []).map((s: any) =>
+                  s.id === taskId
+                    ? { ...s, title: authoritativeTask.title, completed: authoritativeTask.status === 'Done', assigneeId: authoritativeTask.assigneeId }
+                    : s
+                );
+                return { ...t, subtasks };
+              }
+              return t;
+            });
+          }
+
+          return nextList;
+        });
+
+        recordAudit('updated', 'task', taskId, `Updated ${authoritativeTask.type || 'task'} "${authoritativeTask.title}"`, target, authoritativeTask, true, authoritativeTask.projectId);
+        broadcastEvent('TASK_UPDATED', authoritativeTask);
+        authoritativeRescheduledTasks.forEach((task) => broadcastEvent('TASK_UPDATED', task));
+        showToast(`${authoritativeTask.type || 'Task'} "${authoritativeTask.title}" updated`, 'success');
+        return { success: true, task: authoritativeTask };
+      } catch (err: any) {
+        const friendly = toUserFriendlyErrorMessage(err, 'Unable to save changes. Please try again.');
+        console.warn('TaskFlow: Backend task update error:', err?.message || err);
+        showToast(friendly, 'error');
+        return { success: false, reason: friendly };
+      }
+    }
+
     setTasks((prev) => {
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
 
@@ -956,67 +1107,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('updated', 'task', taskId, `Updated ${updated.type || 'task'} "${updated.title}"`, target, updated, true, updated.projectId);
     broadcastEvent('TASK_UPDATED', updated);
     showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
-
-    if (isPersistedWorkItemId(taskId)) {
-      const backendUpdates: any = {};
-      if (updates.sprintId !== undefined) backendUpdates.sprintId = updates.sprintId || null;
-      if (updates.title !== undefined) backendUpdates.title = updates.title;
-      if (updates.description !== undefined) backendUpdates.description = updates.description;
-      if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
-      if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
-      if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
-      if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
-      if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = updates.parentId || null;
-      if (updates.assignees !== undefined) {
-        const mapped = Array.isArray(updates.assignees)
-          ? updates.assignees
-              .map((a: any) => (typeof a === 'string' ? a : a.userId || a.id))
-              .filter((id: any) => typeof id === 'string' && id.trim().length > 0)
-          : [];
-        backendUpdates.assigneeIds = mapped;
-        backendUpdates.assignees = mapped.map((uid: string) => ({ userId: uid }));
-        backendUpdates.assigneeId = mapped[0] || null;
-      } else if (updates.assigneeIds !== undefined) {
-        const validIds = Array.isArray(updates.assigneeIds)
-          ? updates.assigneeIds.filter((id: any) => typeof id === 'string' && id.trim().length > 0)
-          : [];
-        backendUpdates.assigneeIds = validIds;
-        backendUpdates.assignees = validIds.map((uid: string) => ({ userId: uid }));
-        backendUpdates.assigneeId = validIds[0] || null;
-      } else if (updates.assigneeId !== undefined) {
-        const validId =
-          updates.assigneeId && typeof updates.assigneeId === 'string' && updates.assigneeId.trim().length > 0
-            ? updates.assigneeId.trim()
-            : null;
-        backendUpdates.assigneeId = validId;
-        backendUpdates.assigneeIds = validId ? [validId] : [];
-        backendUpdates.assignees = validId ? [{ userId: validId }] : [];
-      }
-
-      if (Object.keys(backendUpdates).length > 0) {
-        updateWorkItemApi(taskId, backendUpdates)
-          .then((res) => {
-            if (res?.data) {
-              const authoritativeTask = backendWorkItemToTask(
-                res.data,
-                res.data.projectId || currentProjectId
-              );
-              setTasks((currentTasks) =>
-                currentTasks.map((t) =>
-                  t.id === taskId ? { ...t, ...authoritativeTask } : t
-                )
-              );
-            }
-          })
-          .catch((err) => {
-            console.warn('TaskFlow: Backend task update notice:', err.message);
-            showToast(`Failed to persist changes: ${err.message}`, 'error');
-          });
-      }
-    }
-
-    return { success: true };
-  }, [tasks, recordAudit, showToast, currentProjectId]);
+    return { success: true, task: updated };
+  }, [tasks, labels, currentProjectId, recordAudit, showToast, broadcastEvent]);
 
   const deleteTask = useCallback((taskId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_TASK)) {
@@ -1129,38 +1221,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [tasks, currentUser.role, currentWorkflow, recordAudit, showToast]);
 
-  const requestReschedule = useCallback((taskId: string, newDueDate: string) => {
+  const requestReschedule = useCallback(async (taskId: string, newDueDate: string) => {
     const impact = calculateScheduleImpact(taskId, newDueDate, tasks);
     if (impact.affectedTasks && impact.affectedTasks.length > 0) {
       setImpactModalData(impact);
       return;
     }
-    const updatedTasks = applyScheduleChanges(impact, tasks);
-    setTasks(updatedTasks);
-    recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, null, { dueDate: newDueDate }, true);
-    broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
-    showToast(`Rescheduled to ${newDueDate}`, 'success');
-  }, [tasks, recordAudit, showToast]);
+    if (!isPersistedWorkItemId(taskId)) {
+      setTasks(applyScheduleChanges(impact, tasks));
+      showToast(`Rescheduled to ${newDueDate}`, 'success');
+      return;
+    }
+    await updateTask(taskId, { dueDate: newDueDate });
+  }, [tasks, updateTask, showToast]);
 
-  const confirmRescheduleImpact = useCallback(() => {
+  const confirmRescheduleImpact = useCallback(async () => {
     if (!impactModalData) return;
-    const updatedTasks = applyScheduleChanges(impactModalData, tasks);
-    setTasks(updatedTasks);
-    recordAudit(
-      'rescheduled',
-      'task',
-      impactModalData.taskId,
-      `Rescheduled "${impactModalData.taskTitle}" and cascade-shifted ${impactModalData.affectedTasks.length} dependent tasks`,
-      null,
-      impactModalData,
-      true
-    );
-    broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
-    setImpactModalData(null);
-    showToast(`Reschedule applied to ${impactModalData.affectedTasks.length + 1} tasks`, 'success');
-  }, [impactModalData, tasks, recordAudit, showToast]);
+    if (!isPersistedWorkItemId(impactModalData.taskId)) {
+      setTasks(applyScheduleChanges(impactModalData, tasks));
+      setImpactModalData(null);
+      showToast(
+        `Reschedule applied to ${impactModalData.affectedTasks.length + 1} local tasks`,
+        'success',
+      );
+      return;
+    }
+    const result = await updateTask(impactModalData.taskId, {
+      dueDate: impactModalData.newDueDate,
+    });
+    if (result.success) setImpactModalData(null);
+  }, [impactModalData, tasks, updateTask, showToast]);
 
-  const addDependency = useCallback((predecessorId: string, successorId: string) => {
+  const addDependency = useCallback(async (predecessorId: string, successorId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
       showToast('Permission denied: Role cannot modify dependencies', 'error');
       return { success: false, reason: 'Permission denied' };
@@ -1172,23 +1264,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, ...validation };
     }
 
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === successorId) {
-          const currentDeps = t.dependencyIds || [];
-          return {
-            ...t,
-            dependencyIds: [...currentDeps, predecessorId],
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      })
-    );
-
     const pred = tasks.find((t) => t.id === predecessorId);
     const succ = tasks.find((t) => t.id === successorId);
+    if (!pred?.dueDate || !succ?.dueDate) {
+      const reason = !pred?.dueDate
+        ? `Predecessor "${pred?.title || 'Task'}" must have a due date before it can be linked.`
+        : `Successor "${succ?.title || 'Task'}" must have a due date before it can be linked.`;
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    const successorIsPersisted = isPersistedWorkItemId(successorId);
+    const predecessorIsPersisted = isPersistedWorkItemId(predecessorId);
+    if (successorIsPersisted !== predecessorIsPersisted) {
+      const reason = 'Dependencies can only link tasks persisted in the same project.';
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    let response: any = null;
+    if (successorIsPersisted && predecessorIsPersisted) {
+      try {
+        response = await addWorkItemDependencyApi(successorId, predecessorId);
+      } catch (error: any) {
+        const reason = toUserFriendlyErrorMessage(error, 'Unable to save dependency.');
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
+    }
+
+    const canonicalDependencyIds = Array.isArray(response?.dependencies)
+      ? response.dependencies.map((edge: any) => edge.dependsOnWorkItemId)
+      : [...(succ.dependencyIds || []), predecessorId];
+    const rescheduledTasks: Task[] = Array.isArray(response?.rescheduledTasks)
+      ? response.rescheduledTasks.map((task: any) => {
+          const mapped = backendWorkItemToTask(
+            task,
+            task.projectId || succ.projectId,
+          );
+          const existing = tasks.find((current) => current.id === task.id);
+          if (!existing) return mapped;
+          return {
+            ...existing,
+            startDate: mapped.startDate,
+            plannedStartDate: mapped.plannedStartDate,
+            dueDate: mapped.dueDate,
+            plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
+            isSchedulePinned: mapped.isSchedulePinned,
+            updatedAt: task.updatedAt || existing.updatedAt,
+          };
+        })
+      : [];
+    setTasks((previous) => {
+      const changedById = new Map(rescheduledTasks.map((task) => [task.id, task]));
+      changedById.set(successorId, {
+        ...succ,
+        ...changedById.get(successorId),
+        dependencyIds: canonicalDependencyIds,
+      });
+      return previous.map((task) =>
+        changedById.has(task.id)
+          ? { ...task, ...changedById.get(task.id) }
+          : task,
+      );
+    });
+
     recordAudit(
       'dependency_added',
       'task',
@@ -1200,39 +1340,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     showToast(`Dependency linked: ${pred?.title} → ${succ?.title}`, 'success');
-
-    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
-      addWorkItemDependencyApi(successorId, predecessorId).catch((err) => {
-        console.warn('TaskFlow: Backend dependency link notice:', err.message);
-      });
-    }
-
     return { success: true };
   }, [currentUser.role, tasks, recordAudit, showToast]);
 
-  const removeDependency = useCallback((predecessorId: string, successorId: string) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === successorId) {
-          return {
-            ...t,
-            dependencyIds: (t.dependencyIds || []).filter((id: string) => id !== predecessorId),
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
+  const removeDependency = useCallback(async (predecessorId: string, successorId: string) => {
+    if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
+      showToast('Permission denied: Role cannot modify dependencies', 'error');
+      return { success: false, reason: 'Permission denied' };
+    }
+
+    const successor = tasks.find((task) => task.id === successorId);
+    if (!successor) return { success: false, reason: 'Successor task not found' };
+
+    let remainingDependencyIds: string[] | null = null;
+    if (isPersistedWorkItemId(successorId)) {
+      try {
+        const response = await deleteWorkItemDependencyApi(
+          successorId,
+          predecessorId,
+        );
+        if (Array.isArray(response?.dependencies)) {
+          remainingDependencyIds = response.dependencies.map(
+            (edge: any) => edge.dependsOnWorkItemId,
+          );
         }
-        return t;
-      })
+      } catch (error: any) {
+        const reason = toUserFriendlyErrorMessage(error, 'Unable to remove dependency.');
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
+    }
+
+    setTasks((previous) =>
+      previous.map((task) =>
+        task.id === successorId
+          ? {
+              ...task,
+              dependencyIds:
+                remainingDependencyIds ??
+                (task.dependencyIds || []).filter(
+                  (id: string) => id !== predecessorId,
+                ),
+            }
+          : task,
+      ),
     );
     recordAudit('dependency_removed', 'task', successorId, `Removed dependency link from ${predecessorId}`, null, null, true);
     showToast('Dependency removed', 'info');
-
-    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
-      deleteWorkItemDependencyApi(successorId, predecessorId).catch((err) => {
-        console.warn('TaskFlow: Backend dependency remove notice:', err.message);
-      });
-    }
-  }, [recordAudit, showToast]);
+    return { success: true };
+  }, [currentUser.role, tasks, recordAudit, showToast]);
 
   const addSubtask = useCallback((taskId: string, title: string, assigneeId: string | null = null) => {
     const parentTask = tasks.find((t) => t.id === taskId);
@@ -1633,7 +1789,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('updated', 'project', projectId, `Updated settings for project "${updated.name}"`, target, updated, false, projectId);
     showToast(`Project settings saved`, 'success');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       const backendPayload: any = {};
       if (updates.name) backendPayload.name = updates.name;
       if (updates.description !== undefined) backendPayload.description = updates.description;
@@ -1678,7 +1834,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('renamed', 'project', projectId, `Renamed project from "${previousName}" to "${trimmed}"`, { name: previousName }, { name: trimmed }, false, projectId);
     showToast(`Project renamed to "${trimmed}"`, 'success');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       updateProjectApi(projectId, { name: trimmed }).catch((err) => {
         console.warn('TaskFlow: Backend project rename notice:', err.message);
       });
@@ -1719,7 +1875,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     showToast(`Project visibility set to ${visibility === 'private' ? 'Private' : 'Global'}`, 'success');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       updateProjectApi(projectId, { visibility: visibility === 'global' ? 'PUBLIC' : 'PRIVATE' }).catch((err) => {
         console.warn('TaskFlow: Backend visibility update notice:', err.message);
       });
@@ -1748,7 +1904,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (previousKey === normalized) return { success: true };
 
     try {
-      if (typeof projectId === 'string' && projectId.includes('-')) {
+      if (isPersistedWorkItemId(projectId)) {
         await updateProjectApi(projectId, { key: normalized });
       }
 
@@ -1815,7 +1971,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast(`Project "${target.name}" and associated data deleted`, 'info');
     navigate('/projects');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       deleteProjectApi(projectId).catch((err) => {
         console.warn('TaskFlow: Backend project deletion notice:', err.message);
       });
@@ -1840,7 +1996,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       try {
         await addProjectMemberApi(projectId, { memberId: userId, role: toBackendProjectRole(role) });
       } catch (err: any) {
@@ -1909,7 +2065,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('member_removed', 'project', projectId, `Removed ${userObj?.name || userId} from project`, null, { userId }, false, projectId);
     showToast('Member removed from project', 'info');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       removeProjectMemberApi(projectId, userId).catch((err) => {
         console.warn('TaskFlow: Backend remove member notice:', err.message);
       });
@@ -1948,7 +2104,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('role_changed', 'project', projectId, `Changed role of ${userObj?.name || userId} to ${newRole}`, null, { userId, role: newRole }, false, projectId);
     showToast(`Role updated to ${newRole}`, 'success');
 
-    if (typeof projectId === 'string' && projectId.includes('-')) {
+    if (isPersistedWorkItemId(projectId)) {
       updateProjectMemberRoleApi(projectId, userId, toBackendProjectRole(newRole)).catch((err) => {
         console.warn('TaskFlow: Backend update member role notice:', err.message);
         showToast(err.message || 'Failed to persist member role update', 'error');
@@ -1960,7 +2116,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const markNotificationRead = useCallback((notifId: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === notifId ? { ...n, read: true } : n)));
-    if (notifId && notifId.includes('-')) {
+    if (isPersistedWorkItemId(notifId)) {
       markNotificationReadApi(notifId).catch((err) => {
         console.warn('TaskFlow: Backend mark notification read notice:', err.message);
       });
@@ -2009,9 +2165,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const mappedUsers: User[] = usersRes.data.map((usr: any) => ({
           id: usr.id,
           name: usr.fullName || usr.name || usr.email.split('@')[0],
+          fullName: usr.fullName || usr.name || undefined,
+          displayName: usr.displayName || usr.fullName || usr.name || undefined,
           email: usr.email,
           role: normalizeRole(usr.role),
-          initials: (usr.fullName || usr.email || 'U').slice(0, 2).toUpperCase(),
+          initials: (usr.fullName || usr.name || usr.email || 'U').slice(0, 2).toUpperCase(),
           companyId: usr.organizationId,
         }));
         setAllUsers(mappedUsers);
@@ -2221,7 +2379,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recordAudit('created', 'label', newLabel.id, `Created label "${newLabel.name}"`, null, newLabel, false, targetProjectId);
     showToast(`Label "${newLabel.name}" created`, 'success');
 
-    if (targetProjectId && targetProjectId.includes('-')) {
+    if (isPersistedWorkItemId(targetProjectId)) {
       createProjectLabelApi(targetProjectId, {
         name: newLabel.name,
         color: newLabel.color,
@@ -2252,7 +2410,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (target) {
       recordAudit('deleted', 'label', labelId, `Deleted label "${target.name}"`, target, null, false, target.projectId);
       const projId = target.projectId || currentProjectId;
-      if (projId && !labelId.startsWith('lbl-')) {
+      if (isPersistedWorkItemId(projId) && isPersistedWorkItemId(labelId)) {
         deleteProjectLabelApi(projId, labelId).catch((err) => {
           console.warn('TaskFlow: Backend label delete notice:', err.message);
           showToast(err.message || 'Failed to delete label on server', 'error');

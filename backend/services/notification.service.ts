@@ -6,7 +6,7 @@ import {
   NotificationType,
 } from "../entities/notification.entity";
 
-interface CreateNotificationInput {
+export interface CreateNotificationInput {
   userId: string;
   organizationId: string;
   type: NotificationType;
@@ -95,3 +95,38 @@ export class NotificationService {
 }
 
 export const notificationService = new NotificationService();
+
+export async function createNotificationsBestEffort(
+  inputs: CreateNotificationInput[],
+  context: {
+    operation: string;
+    organizationId?: string;
+    projectId?: string;
+  },
+): Promise<void> {
+  const results = await Promise.allSettled(
+    inputs.map((input) => notificationService.createNotification(input)),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected"
+      ? [
+          result.reason instanceof AppError
+            ? { name: result.reason.name, code: result.reason.code }
+            : {
+                name:
+                  result.reason instanceof Error
+                    ? result.reason.name
+                    : "UnknownError",
+              },
+        ]
+      : [],
+  );
+
+  if (failures.length > 0) {
+    console.error("Best-effort notification delivery failed.", {
+      ...context,
+      failureCount: failures.length,
+      failures,
+    });
+  }
+}

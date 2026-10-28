@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp } from '../../hooks/useApp';
 import { PriorityBadge, SlaBadge, WorkItemTypeBadge } from '../ui/Badge';
-import { Avatar } from '../ui/Avatar';
+import { Avatar, AvatarGroup, resolveTaskAssignees, formatAssigneesTooltip } from '../ui/Avatar';
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { isTaskBlocked } from '../../domain/dependencyGraph';
 import { evaluateTaskSla } from '../../domain/sla';
@@ -17,7 +17,7 @@ export interface TaskCardProps {
 export function TaskCard({ task, onDragStart }: TaskCardProps) {
   const { openTaskDrawer, allUsers, tasks } = useApp();
 
-  const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
+  const assignees = resolveTaskAssignees(task, allUsers);
   const isBlocked = isTaskBlocked(task, tasks);
   const slaInfo = evaluateTaskSla(task);
   const dateInfo = getRelativeDateLabel(task.dueDate);
@@ -98,7 +98,18 @@ export function TaskCard({ task, onDragStart }: TaskCardProps) {
           )}
         </div>
 
-        <Avatar user={assignee} size="xs" />
+        {assignees.length > 1 ? (
+          <div
+            className="flex items-center min-w-0"
+            title={formatAssigneesTooltip(assignees)}
+            aria-label={formatAssigneesTooltip(assignees)}
+            tabIndex={0}
+          >
+            <AvatarGroup users={assignees} size="xs" max={3} />
+          </div>
+        ) : (
+          <Avatar user={assignees[0] || null} size="xs" />
+        )}
       </div>
     </div>
   );

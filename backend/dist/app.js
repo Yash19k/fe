@@ -17,6 +17,7 @@ const notification_routes_1 = __importDefault(require("./routes/notification.rou
 const sla_routes_1 = __importDefault(require("./routes/sla.routes"));
 const error_handler_1 = require("./middleware/error.handler");
 const config_1 = require("./config/config");
+const chat_routes_1 = __importDefault(require("./routes/chat.routes"));
 exports.app = (0, express_1.default)();
 console.log("App.ts executed");
 exports.app.use(express_1.default.json({ limit: "1mb" }));
@@ -40,10 +41,20 @@ exports.app.use("/api/work-items", work_item_routes_1.default);
 exports.app.use("/api/organizations", organization_routes_1.default);
 exports.app.use("/api/organization", organization_routes_1.default);
 exports.app.use("/api/notifications", notification_routes_1.default);
+exports.app.use("/api/chat/conversations", chat_routes_1.default);
+exports.app.use("/api/conversations", chat_routes_1.default);
+exports.app.use("/api/chat", chat_routes_1.default);
 exports.app.use("/api/sla", sla_routes_1.default);
 exports.app.use("/api/organization/sla", sla_routes_1.default);
 exports.app.use("/api", sprint_routes_1.default);
 exports.app.use("/api", dashboard_route_1.default);
+exports.app.get("/health", (_req, res) => {
+    res.json({
+        status: "ok",
+        success: true,
+        message: "TaskFlow API is healthy",
+    });
+});
 exports.app.get("/", (_req, res) => {
     console.log("GET / request received");
     res.json({
