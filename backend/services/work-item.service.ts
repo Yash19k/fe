@@ -2,6 +2,7 @@ import { EntityManager, In } from "typeorm";
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
 import { Project, ProjectVisibility } from "../entities/project.entity";
+import { ProjectMember } from "../entities/project.member.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import {
   WorkItem,
@@ -28,12 +29,24 @@ import {
 } from "./recurrence.service";
 import { AppError } from "../errors/app.error";
 import { NotificationType } from "../entities/notification.entity";
+import { AuditLog } from "../entities/audit.log.entity";
+import { createNotificationsBestEffort } from "./notification.service";
 import { notificationService } from "./notification.service";
 import {
   applySlaState,
   calculateSlaDeadline,
   writeSlaAudit,
 } from "./sla.service";
+import { assertWorkItemStatusTransition } from "./work-item-workflow.service";
+import {
+  calculatePlannedFinish,
+  dateToProjectTimestamp,
+  getWorkItemDependencyState,
+  getProjectDate,
+  lockProjectSchedule,
+  rescheduleAfterTaskEdit,
+  updateTaskScheduleFields,
+} from "./work-item-dependency.service";
 
 export interface AssigneeInput {
   userId: string;
@@ -53,6 +66,8 @@ export interface CreateWorkItemInput {
   priority?: WorkItemPriority | null;
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
+  plannedStartDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
   slaDeadline?: string | Date | null;
   assignees?: AssigneeInput[];
   recurrence?: RecurrenceInput | null;
@@ -66,6 +81,9 @@ export interface UpdateWorkItemInput {
   priority?: WorkItemPriority | null;
   status?: WorkItemStatus;
   dueDate?: string | Date | null;
+  plannedStartDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
+  isSchedulePinned?: boolean;
   slaDeadline?: string | Date | null;
   parentWorkItemId?: string | null;
   assignees?: AssigneeInput[] | null;
@@ -239,6 +257,11 @@ export async function validateAssignees(
   const missingMemberIds = uniqueIds.filter((id) => !memberIds.has(id));
 
   if (missingMemberIds.length > 0) {
+    throw new AppError(
+      "All assignees must already be members of this project",
+      400,
+      "INVALID_ASSIGNEE",
+    );
     const newMembers = missingMemberIds.map((userId) =>
       manager.getRepository(ProjectMember).create({
         projectId,
@@ -266,6 +289,8 @@ export async function createWorkItemOrchestration(
     priority,
     status = WorkItemStatus.BACKLOG,
     dueDate,
+    plannedStartDate,
+    plannedDurationWorkingDays,
     assignees = [],
     recurrence,
     slaDeadline,
@@ -419,6 +444,35 @@ export async function createWorkItemOrchestration(
       await manager.getRepository(WorkItemAssignee).save(assignments);
     }
 
+    const auditRepo = manager.getRepository(AuditLog);
+    await auditRepo.save(
+      auditRepo.create({
+        organizationId: savedWorkItem.organizationId,
+        projectId: savedWorkItem.projectId,
+        userId: actor.id,
+        action: "created",
+        entityType: "task",
+        entityId: savedWorkItem.id,
+        description: `Created work item "${savedWorkItem.title}"`,
+        previousState: null,
+        newState: {
+          title: savedWorkItem.title,
+          description: savedWorkItem.description,
+          status: savedWorkItem.status,
+          priority: savedWorkItem.priority,
+          type: savedWorkItem.type,
+          dueDate: savedWorkItem.dueDate?.toISOString() ?? null,
+          plannedStartDate: savedWorkItem.plannedStartDate,
+          plannedDurationWorkingDays: savedWorkItem.plannedDurationWorkingDays,
+          parentWorkItemId: savedWorkItem.parentWorkItemId,
+          sprintId: savedWorkItem.sprintId,
+          labelId: savedWorkItem.labelId,
+          assigneeIds: assignees.map((assignee) => assignee.userId),
+        },
+        trustedForUndo: false,
+      }),
+    );
+
     let savedRecurrence: WorkItemRecurrence | null = null;
 
     if (recurrence) {
@@ -476,27 +530,25 @@ export async function createWorkItemOrchestration(
     };
   });
 
-  // Non-blocking notification dispatch
-  try {
-    await Promise.all(
-      result.assigneeIds
-        .filter((assigneeId) => assigneeId !== actor.id)
-        .map((assigneeId) =>
-          notificationService.createNotification({
-            userId: assigneeId,
-            organizationId: actor.organizationId,
-            type: NotificationType.TASK_ASSIGNED,
-            title: "Task assigned to you",
-            message: `You have been assigned "${result.workItem.title}".`,
-            workItemId: result.workItem.id,
-            projectId: result.workItem.projectId,
-            link: `/tasks/${result.workItem.id}`,
-          }),
-        ),
-    );
-  } catch (error) {
-    console.error("Assignment notification delivery failed:", error);
-  }
+  await createNotificationsBestEffort(
+    result.assigneeIds
+      .filter((assigneeId) => assigneeId !== actor.id)
+      .map((assigneeId) => ({
+        userId: assigneeId,
+        organizationId: actor.organizationId,
+        type: NotificationType.TASK_ASSIGNED,
+        title: "Task assigned to you",
+        message: `You have been assigned "${result.workItem.title}".`,
+        workItemId: result.workItem.id,
+        projectId: result.workItem.projectId,
+        link: `/tasks/${result.workItem.id}`,
+      })),
+    {
+      operation: "work-item-assignment",
+      organizationId: actor.organizationId,
+      projectId: result.workItem.projectId,
+    },
+  );
 
   return result;
 }
@@ -507,8 +559,28 @@ export async function updateWorkItemOrchestration(
   body: UpdateWorkItemInput,
 ) {
   const result = await AppDataSource.transaction(async (manager) => {
-    const workItem = await manager
-      .getRepository(WorkItem)
+    const touchesSchedule =
+      body.dueDate !== undefined ||
+      body.plannedStartDate !== undefined ||
+      body.plannedDurationWorkingDays !== undefined ||
+      body.isSchedulePinned !== undefined;
+    const workItemRepository = manager.getRepository(WorkItem);
+    const reference = await workItemRepository.findOne({
+      where: { id: workItemId, organizationId: actor.organizationId },
+      select: { id: true, projectId: true },
+    });
+    if (!reference) {
+      throw new AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
+    }
+    if (touchesSchedule) {
+      await lockProjectSchedule(
+        manager,
+        reference.projectId,
+        actor.organizationId,
+      );
+    }
+
+    const workItem = await workItemRepository
       .createQueryBuilder("workItem")
       .where("workItem.id = :workItemId", { workItemId })
       .andWhere("workItem.organizationId = :organizationId", {
@@ -527,6 +599,20 @@ export async function updateWorkItemOrchestration(
       manager,
     );
 
+    const previousTaskState = {
+      title: workItem.title,
+      description: workItem.description,
+      status: workItem.status,
+      priority: workItem.priority,
+      type: workItem.type,
+      dueDate: workItem.dueDate?.toISOString() ?? null,
+      plannedStartDate: workItem.plannedStartDate,
+      plannedDurationWorkingDays: workItem.plannedDurationWorkingDays,
+      isSchedulePinned: workItem.isSchedulePinned,
+      parentWorkItemId: workItem.parentWorkItemId,
+      sprintId: workItem.sprintId,
+      labelId: workItem.labelId,
+    };
     const previousPriority = workItem.priority;
     const previousStatus = workItem.status;
     const previousSlaState = {
@@ -623,9 +709,32 @@ export async function updateWorkItemOrchestration(
     }
     if (body.type !== undefined) workItem.type = body.type;
     if (body.priority !== undefined) workItem.priority = body.priority ?? null;
-    if (body.status !== undefined) workItem.status = body.status;
-    if (body.dueDate !== undefined) {
-      workItem.dueDate = body.dueDate == null ? null : new Date(body.dueDate);
+    if (body.status !== undefined) {
+      await assertWorkItemStatusTransition(
+        manager,
+        project.id,
+        workItem.status,
+        body.status,
+        actor.role,
+      );
+      workItem.status = body.status;
+    }
+    if (touchesSchedule) {
+      const dependencyState = await getWorkItemDependencyState(
+        manager,
+        workItem.id,
+      );
+      updateTaskScheduleFields(
+        workItem,
+        {
+          dueDate: body.dueDate,
+          plannedStartDate: body.plannedStartDate,
+          plannedDurationWorkingDays: body.plannedDurationWorkingDays,
+          isSchedulePinned: body.isSchedulePinned,
+        },
+        dependencyState.hasDependencies,
+        dependencyState.requiresPlannedSchedule,
+      );
     }
 
     if (body.slaDeadline !== undefined) {
@@ -682,6 +791,9 @@ export async function updateWorkItemOrchestration(
     }
 
     const savedWorkItem = await manager.getRepository(WorkItem).save(workItem);
+    const rescheduledTasks = touchesSchedule
+      ? await rescheduleAfterTaskEdit(manager, actor, savedWorkItem)
+      : [];
 
     const slaChanged =
       savedWorkItem.slaDeadline?.toISOString() !==
@@ -760,6 +872,39 @@ export async function updateWorkItemOrchestration(
 
     const currentAssigneeIds = currentAssignments.map((a) => a.userId);
 
+    const auditRepo = manager.getRepository(AuditLog);
+    await auditRepo.save(
+      auditRepo.create({
+        organizationId: savedWorkItem.organizationId,
+        projectId: savedWorkItem.projectId,
+        userId: actor.id,
+        action: "updated",
+        entityType: "task",
+        entityId: savedWorkItem.id,
+        description: `Updated work item "${savedWorkItem.title}"`,
+        previousState: {
+          ...previousTaskState,
+          assigneeIds: previousAssigneeIds,
+        },
+        newState: {
+          title: savedWorkItem.title,
+          description: savedWorkItem.description,
+          status: savedWorkItem.status,
+          priority: savedWorkItem.priority,
+          type: savedWorkItem.type,
+          dueDate: savedWorkItem.dueDate?.toISOString() ?? null,
+          plannedStartDate: savedWorkItem.plannedStartDate,
+          plannedDurationWorkingDays: savedWorkItem.plannedDurationWorkingDays,
+          isSchedulePinned: savedWorkItem.isSchedulePinned,
+          parentWorkItemId: savedWorkItem.parentWorkItemId,
+          sprintId: savedWorkItem.sprintId,
+          labelId: savedWorkItem.labelId,
+          assigneeIds: currentAssigneeIds,
+        },
+        trustedForUndo: true,
+      }),
+    );
+
     let assignedLabel: ProjectLabel | null = null;
     if (savedWorkItem.labelId) {
       assignedLabel = await manager.getRepository(ProjectLabel).findOne({
@@ -769,6 +914,7 @@ export async function updateWorkItemOrchestration(
 
     return {
       workItem: savedWorkItem,
+      rescheduledTasks,
       statusChanged,
       previousStatus,
       label: assignedLabel,
@@ -781,54 +927,46 @@ export async function updateWorkItemOrchestration(
     };
   });
 
-  // Non-blocking notification dispatch
-  try {
-    const newlyAssigned = result.assigneeIds.filter(
-      (id) => !result.previousAssigneeIds.includes(id) && id !== actor.id,
-    );
+  const newlyAssigned = result.assigneeIds.filter(
+    (id) => !result.previousAssigneeIds.includes(id) && id !== actor.id,
+  );
+  const notifications = newlyAssigned.map((userId) => ({
+    userId,
+    organizationId: actor.organizationId,
+    type: NotificationType.TASK_ASSIGNED,
+    title: "Task assigned to you",
+    message: `You have been assigned "${result.workItem.title}".`,
+    workItemId: result.workItem.id,
+    projectId: result.workItem.projectId,
+    link: `/tasks/${result.workItem.id}`,
+  }));
 
-    const notifications: Promise<any>[] = [];
-
-    for (const userId of newlyAssigned) {
-      notifications.push(
-        notificationService.createNotification({
+  if (result.statusChanged) {
+    notifications.push(
+      ...result.assigneeIds
+        .filter((id) => id !== actor.id)
+        .map((userId) => ({
           userId,
           organizationId: actor.organizationId,
-          type: NotificationType.TASK_ASSIGNED,
-          title: "Task assigned to you",
-          message: `You have been assigned "${result.workItem.title}".`,
+          type: NotificationType.TASK_UPDATED,
+          title: "Task status updated",
+          message: `"${result.workItem.title}" moved from ${result.previousStatus} to ${result.workItem.status}.`,
           workItemId: result.workItem.id,
           projectId: result.workItem.projectId,
           link: `/tasks/${result.workItem.id}`,
-        }),
-      );
-    }
-
-    if (result.statusChanged) {
-      const activeAssignees = result.assigneeIds.filter((id) => id !== actor.id);
-      for (const userId of activeAssignees) {
-        notifications.push(
-          notificationService.createNotification({
-            userId,
-            organizationId: actor.organizationId,
-            type: NotificationType.TASK_UPDATED,
-            title: "Task status updated",
-            message: `"${result.workItem.title}" moved from ${result.previousStatus} to ${result.workItem.status}.`,
-            workItemId: result.workItem.id,
-            projectId: result.workItem.projectId,
-            link: `/tasks/${result.workItem.id}`,
-          }),
-        );
-      }
-    }
-
-    await Promise.all(notifications);
-  } catch (err) {
-    console.error("Task update notification delivery failed:", err);
+        })),
+    );
   }
+
+  await createNotificationsBestEffort(notifications, {
+    operation: "work-item-update",
+    organizationId: actor.organizationId,
+    projectId: result.workItem.projectId,
+  });
 
   return {
     ...result.workItem,
+    rescheduledTasks: result.rescheduledTasks,
     label: result.label,
     labels: result.labels,
     assignments: result.assignments,

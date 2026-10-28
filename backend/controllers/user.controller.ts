@@ -323,77 +323,83 @@ export async function refreshAccessToken(req: Request, res: Response) {
     );
   }
 
-  const session = await sessionRepository.findOne({
-    where: {
-      tokenHash: hashRefreshToken(refreshToken),
-    },
-  });
-
-  if (
-    !session ||
-    session.revokedAt ||
-    session.expiresAt.getTime() <= Date.now()
-  ) {
-    clearAuthCookies(res);
-    throw new AppError(
-      "Refresh session is invalid or expired. Please log in again.",
-      401,
-      "INVALID_REFRESH_TOKEN",
-    );
-  }
-
-  const user = await userRepository.findOne({
-    where: { id: session.userId },
-  });
-
-  if (
-    !user ||
-    user.status !== UserStatus.ACTIVE ||
-    !user.organizationId
-  ) {
-    session.revokedAt = new Date();
-    await sessionRepository.save(session);
-    clearAuthCookies(res);
-
-    throw new AppError(
-      "Your account is unavailable. Please log in again.",
-      401,
-      "INVALID_SESSION_USER",
-    );
-  }
-
-  const organization = await organizationRepository.findOne({
-    where: { id: user.organizationId },
-  });
-
-  if (!organization) {
-    session.revokedAt = new Date();
-    await sessionRepository.save(session);
-    clearAuthCookies(res);
-
-    throw new AppError(
-      "Organization not found.",
-      401,
-      "INVALID_SESSION_ORGANIZATION",
-    );
-  }
-
-  // Rotate the refresh token: the previous token stops matching
-  // the stored hash after this update.
   const newRefreshToken = randomBytes(32).toString("hex");
+  const result = await AppDataSource.transaction(async (manager) => {
+    const sessions = manager.getRepository(UserSession);
+    const session = await sessions
+      .createQueryBuilder("session")
+      .setLock("pessimistic_write")
+      .where("session.tokenHash = :tokenHash", {
+        tokenHash: hashRefreshToken(refreshToken),
+      })
+      .getOne();
 
-  session.tokenHash = hashRefreshToken(newRefreshToken);
-  session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
-  session.lastUsedAt = new Date();
+    if (
+      !session ||
+      session.revokedAt ||
+      session.expiresAt.getTime() <= Date.now()
+    ) {
+      return {
+        error: new AppError(
+          "Refresh session is invalid or expired. Please log in again.",
+          401,
+          "INVALID_REFRESH_TOKEN",
+        ),
+      };
+    }
 
-  await sessionRepository.save(session);
+    const user = await manager.getRepository(User).findOne({
+      where: { id: session.userId },
+    });
 
-  const accessToken = createAccessToken({
-    id: user.id,
-    role: user.role,
-    organizationId: user.organizationId,
+    if (!user || user.status !== UserStatus.ACTIVE || !user.organizationId) {
+      session.revokedAt = new Date();
+      await sessions.save(session);
+      return {
+        error: new AppError(
+          "Your account is unavailable. Please log in again.",
+          401,
+          "INVALID_SESSION_USER",
+        ),
+      };
+    }
+
+    const organization = await manager
+      .getRepository(Organization)
+      .findOne({ where: { id: user.organizationId } });
+
+    if (!organization) {
+      session.revokedAt = new Date();
+      await sessions.save(session);
+      return {
+        error: new AppError(
+          "Organization not found.",
+          401,
+          "INVALID_SESSION_ORGANIZATION",
+        ),
+      };
+    }
+
+    session.tokenHash = hashRefreshToken(newRefreshToken);
+    session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+    session.lastUsedAt = new Date();
+    await sessions.save(session);
+
+    return {
+      accessToken: createAccessToken({
+        id: user.id,
+        role: user.role,
+        organizationId: user.organizationId,
+      }),
+    };
   });
 
+  if ("error" in result) {
+    clearAuthCookies(res);
+    throw result.error;
+  }
+
+  const accessToken = result.accessToken;
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, newRefreshToken);
 
@@ -508,4 +514,3 @@ export async function getOrganizationUsers(req: Request, res: Response) {
     })),
   });
 }
-

@@ -129,13 +129,17 @@ export interface Task {
   creatorId?: string;
   parentId?: string | null;
   startDate?: string | null;
+  plannedStartDate?: string | null;
   dueDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
+  isSchedulePinned?: boolean;
   estimatedHours?: number | null;
   estimateHours?: number | null;
   actualHours?: number;
   tags?: string[];
   order?: number;
   dependencies?: string[];
+  dependencyIds?: string[];
   subtasks?: EmbeddedSubtask[];
   comments?: TaskComment[];
   timeEntries?: TimeEntry[];

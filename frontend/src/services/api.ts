@@ -493,6 +493,8 @@ export interface CreateWorkItemApiInput {
   priority?: string | null;
   status?: string;
   dueDate?: string | null;
+  plannedStartDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
   labelId?: string | null;
   labels?: string[];
@@ -661,10 +663,10 @@ export async function addWorkItemDependencyApi(
 
 export async function deleteWorkItemDependencyApi(
   workItemId: string,
-  dependsOnWorkItemId: string
+  dependencyIdentifier: string
 ): Promise<any> {
   return request<any>(
-    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependsOnWorkItemId)}`,
+    `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependencyIdentifier)}`,
     { method: 'DELETE' }
   );
 }
@@ -1149,6 +1151,24 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     if (labelName) labels = [labelName];
   }
 
+  const rawDueDate = entity.dueDate || item.dueDate || null;
+  const dueDate = (() => {
+    if (!rawDueDate) return null;
+    if (typeof rawDueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDueDate)) {
+      return rawDueDate;
+    }
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(rawDueDate));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  })();
+  const plannedStartDate =
+    entity.plannedStartDate || item.plannedStartDate || entity.startDate || item.startDate || null;
+
   return {
     id: entity.id || item.id,
     projectId: entity.projectId || item.projectId || fallbackProjectId || '',
@@ -1163,6 +1183,12 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     assigneeIds,
     assignees,
     creatorId: entity.createdById || entity.creatorId || item.createdById || item.creatorId || '',
+    startDate: plannedStartDate,
+    plannedStartDate,
+    dueDate,
+    plannedDurationWorkingDays:
+      entity.plannedDurationWorkingDays ?? item.plannedDurationWorkingDays ?? null,
+    isSchedulePinned: Boolean(entity.isSchedulePinned ?? item.isSchedulePinned),
     startDate: entity.startDate || item.startDate || null,
     dueDate: entity.dueDate || item.dueDate || null,
     estimateHours: (entity.estimateHours ?? item.estimateHours) ? Number(entity.estimateHours ?? item.estimateHours) : null,

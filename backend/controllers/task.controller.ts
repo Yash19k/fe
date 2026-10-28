@@ -7,6 +7,10 @@ import {
   SlaStatus,
 } from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
+import { WorkItemComment } from "../entities/work.item.comment.entity";
+import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
+import { WorkItemAttachment } from "../entities/work.item.attachment.entity";
+import { WorkItemDependency } from "../entities/work.item.dependency.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { uploadAndPersistWorkItemAttachments } from "../services/work.item.attachment.service";
 import { AppError } from "../errors/app.error";
@@ -31,6 +35,7 @@ import {
   CreateWorkItemInput,
   UpdateWorkItemInput,
 } from "../services/work-item.service";
+import { lockProjectSchedule } from "../services/work-item-dependency.service";
 
 interface ViewWorkItemsQuery {
   page: number;
@@ -142,13 +147,7 @@ export const getProjectWorkItems = async (
 
   const query = AppDataSource.getRepository(WorkItem)
     .createQueryBuilder("workItem")
-    .leftJoinAndSelect("workItem.assignments", "assignments")
-    .leftJoinAndSelect("assignments.user", "assigneeUser")
     .leftJoinAndSelect("workItem.label", "label")
-    .leftJoinAndSelect("workItem.comments", "comments")
-    .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
-    .leftJoinAndSelect("workItem.children", "children")
-    .leftJoinAndSelect("workItem.attachments", "attachments")
     .where("workItem.projectId = :projectId", {
       projectId: project.id,
     })
@@ -169,6 +168,86 @@ export const getProjectWorkItems = async (
   }
 
   const [workItems, total] = await query.getManyAndCount();
+  if (workItems.length > 0) {
+    const workItemIds = workItems.map((workItem) => workItem.id);
+    const [assignments, comments, timeEntries, children, attachments, dependencies] =
+      await Promise.all([
+        AppDataSource.getRepository(WorkItemAssignee).find({
+          where: { workItemId: In(workItemIds) },
+          relations: { user: true },
+        }),
+        AppDataSource.getRepository(WorkItemComment).find({
+          where: { workItemId: In(workItemIds) },
+        }),
+        AppDataSource.getRepository(WorkItemTimeEntry).find({
+          where: { workItemId: In(workItemIds) },
+        }),
+        AppDataSource.getRepository(WorkItem).find({
+          where: { parentWorkItemId: In(workItemIds) },
+        }),
+        AppDataSource.getRepository(WorkItemAttachment).find({
+          where: { workItemId: In(workItemIds) },
+        }),
+        AppDataSource.getRepository(WorkItemDependency).find({
+          where: { workItemId: In(workItemIds) },
+          order: { id: "ASC" },
+        }),
+      ]);
+
+    const assignmentsByWorkItem = new Map<string, WorkItemAssignee[]>();
+    for (const assignment of assignments) {
+      const current = assignmentsByWorkItem.get(assignment.workItemId) ?? [];
+      current.push(assignment);
+      assignmentsByWorkItem.set(assignment.workItemId, current);
+    }
+
+    const commentsByWorkItem = new Map<string, WorkItemComment[]>();
+    for (const comment of comments) {
+      const current = commentsByWorkItem.get(comment.workItemId) ?? [];
+      current.push(comment);
+      commentsByWorkItem.set(comment.workItemId, current);
+    }
+
+    const timeEntriesByWorkItem = new Map<string, WorkItemTimeEntry[]>();
+    for (const entry of timeEntries) {
+      const current = timeEntriesByWorkItem.get(entry.workItemId) ?? [];
+      current.push(entry);
+      timeEntriesByWorkItem.set(entry.workItemId, current);
+    }
+
+    const childrenByParent = new Map<string, WorkItem[]>();
+    for (const child of children) {
+      if (!child.parentWorkItemId) continue;
+      const current = childrenByParent.get(child.parentWorkItemId) ?? [];
+      current.push(child);
+      childrenByParent.set(child.parentWorkItemId, current);
+    }
+
+    const attachmentsByWorkItem = new Map<string, WorkItemAttachment[]>();
+    for (const attachment of attachments) {
+      const current = attachmentsByWorkItem.get(attachment.workItemId) ?? [];
+      current.push(attachment);
+      attachmentsByWorkItem.set(attachment.workItemId, current);
+    }
+
+    const dependenciesByWorkItem = new Map<string, WorkItemDependency[]>();
+    for (const dependency of dependencies) {
+      const current =
+        dependenciesByWorkItem.get(dependency.workItemId) ?? [];
+      current.push(dependency);
+      dependenciesByWorkItem.set(dependency.workItemId, current);
+    }
+
+    for (const workItem of workItems) {
+      workItem.assignments = assignmentsByWorkItem.get(workItem.id) ?? [];
+      workItem.comments = commentsByWorkItem.get(workItem.id) ?? [];
+      workItem.timeEntries = timeEntriesByWorkItem.get(workItem.id) ?? [];
+      workItem.children = childrenByParent.get(workItem.id) ?? [];
+      workItem.attachments = attachmentsByWorkItem.get(workItem.id) ?? [];
+      workItem.dependencies = dependenciesByWorkItem.get(workItem.id) ?? [];
+    }
+  }
+
   for (const workItem of workItems) {
     if (!workItem.priority) {
       clearSlaState(workItem);
@@ -241,6 +320,61 @@ export const deleteWorkItem = async (
   const actor = await getActiveActor(requireUserId(req));
   const workItemId = requireWorkItemId(req);
 
+  await AppDataSource.transaction(async (manager) => {
+    const reference = await manager.getRepository(WorkItem).findOne({
+      where: { id: workItemId, organizationId: actor.organizationId },
+      select: { id: true, projectId: true },
+    });
+    if (!reference) {
+      throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+    }
+    await lockProjectSchedule(
+      manager,
+      reference.projectId,
+      actor.organizationId,
+    );
+
+    const workItem = await manager
+      .getRepository(WorkItem)
+      .createQueryBuilder("workItem")
+      .where("workItem.id = :workItemId", { workItemId })
+      .andWhere("workItem.organizationId = :organizationId", {
+        organizationId: actor.organizationId,
+      })
+      .setLock("pessimistic_write")
+      .getOne();
+
+    if (!workItem) {
+      throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+    }
+
+    await assertAccessibleProject(workItem.projectId, actor, manager);
+    const assignments = await manager.getRepository(WorkItemAssignee).find({
+      where: { workItemId: workItem.id },
+      select: { userId: true },
+    });
+    await manager.getRepository(AuditLog).save(
+      manager.getRepository(AuditLog).create({
+        organizationId: workItem.organizationId,
+        projectId: workItem.projectId,
+        userId: actor.id,
+        action: "deleted",
+        entityType: "task",
+        entityId: workItem.id,
+        description: `Deleted work item "${workItem.title}"`,
+        previousState: {
+          title: workItem.title,
+          type: workItem.type,
+          status: workItem.status,
+          priority: workItem.priority,
+          assigneeIds: assignments.map((assignment) => assignment.userId),
+        },
+        newState: null,
+        trustedForUndo: false,
+      }),
+    );
+    await manager.getRepository(WorkItem).remove(workItem);
+  });
   const workItem = await getAccessibleWorkItem(workItemId, actor);
 
   await AppDataSource.getRepository(WorkItem).remove(workItem);

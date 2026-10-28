@@ -2,6 +2,7 @@ import { In } from "typeorm";
 import { Request, Response } from "express";
 import { AppDataSource } from "../config/data.source";
 import { AuditLog } from "../entities/audit.log.entity";
+import { ProjectMember } from "../entities/project.member.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { Project } from "../entities/project.entity";
 import { User, UserRole } from "../entities/user.entity";
@@ -12,7 +13,42 @@ import {
   WorkItemType,
 } from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
+import { Sprint } from "../entities/sprint.entities";
+import { ProjectLabel } from "../entities/project.label.entity";
 import { AppError } from "../errors/app.error";
+import { hasProjectPermission } from "../middleware/project.permission";
+import { validateAssignees } from "../services/work-item.service";
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type RestoredTask = WorkItem & {
+  assignments: WorkItemAssignee[];
+  assigneeIds: string[];
+  assigneeId: string | null;
+};
+
+function snapshotString(value: unknown, field: string): string;
+function snapshotString(
+  value: unknown,
+  field: string,
+  nullable: true,
+): string | null;
+function snapshotString(
+  value: unknown,
+  field: string,
+  nullable = false,
+): string | null {
+  if (nullable && value === null) return null;
+  if (typeof value !== "string") {
+    throw new AppError(
+      `The stored ${field} value is invalid.`,
+      400,
+      "ACTION_NOT_REVERSIBLE",
+    );
+  }
+  return value;
+}
 
 /**
  * Validates that the user has access to read the project's audit logs.
@@ -77,11 +113,13 @@ export async function createAuditLog(req: Request, res: Response) {
 
   if (!action || !entityType) {
     throw new AppError(
-      "action and entityType are required.",
+      `The stored ${field} value is invalid.`,
       400,
-      "VALIDATION_ERROR",
+      "ACTION_NOT_REVERSIBLE",
     );
   }
+  return match;
+}
 
   // If pId is missing and this is a task event, attempt to resolve from WorkItem record
   if (!pId && entityType === "task" && entityId) {
@@ -122,13 +160,27 @@ export async function createAuditLog(req: Request, res: Response) {
     }),
   );
 
-  return res.status(201).json({
-    success: true,
-    data: {
-      ...log,
-      timestamp: log.createdAt,
-    },
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId, userId },
   });
+
+  if (!membership && project.visibility !== "PUBLIC") {
+    throw new AppError(
+      "You do not have access to this project's audit logs.",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  return project;
+}
+
+export async function createAuditLog() {
+  throw new AppError(
+    "Audit entries must be created by server-side operations.",
+    403,
+    "FORBIDDEN",
+  );
 }
 
 export async function undoAuditLog(req: Request, res: Response) {
@@ -168,13 +220,53 @@ export async function undoAuditLog(req: Request, res: Response) {
       throw new AppError("Access denied.", 403, "FORBIDDEN");
     }
 
+    if (!targetLog.trustedForUndo) {
+      throw new AppError(
+        "This audit entry was not created by a trusted server mutation.",
+        400,
+        "ACTION_NOT_REVERSIBLE",
+      );
+    }
+
+    if (targetLog.entityType !== "task" || !targetLog.projectId) {
+      throw new AppError(
+        "This audit entry has no verifiable task project and cannot be undone.",
+        400,
+        "ACTION_NOT_REVERSIBLE",
+      );
+    }
+    if (!UUID_PATTERN.test(targetLog.entityId)) {
+      throw new AppError(
+        "This audit entry has an invalid task identifier.",
+        400,
+        "ACTION_NOT_REVERSIBLE",
+      );
+    }
+
+    const workItemRepo = manager.getRepository(WorkItem);
+    const workItem = await workItemRepo
+      .createQueryBuilder("workItem")
+      .setLock("pessimistic_write")
+      .where("workItem.id = :workItemId", { workItemId: targetLog.entityId })
+      .andWhere("workItem.organization_id = :organizationId", {
+        organizationId,
+      })
+      .getOne();
+
+    if (!workItem) {
+      throw new AppError(
+        "Target work item no longer exists.",
+        404,
+        "WORK_ITEM_NOT_FOUND",
+      );
+    }
+
     if (
-      requestedProjectId &&
-      targetLog.projectId &&
-      targetLog.projectId !== requestedProjectId
+      workItem.projectId !== targetLog.projectId ||
+      (requestedProjectId && requestedProjectId !== workItem.projectId)
     ) {
       throw new AppError(
-        "Audit log does not belong to specified project.",
+        "Audit entry does not match the target work item's project.",
         403,
         "FORBIDDEN",
       );
@@ -207,6 +299,8 @@ export async function undoAuditLog(req: Request, res: Response) {
 
     if (
       !targetLog.previousState ||
+      typeof targetLog.previousState !== "object" ||
+      Array.isArray(targetLog.previousState) ||
       targetLog.action.toLowerCase() === "undone" ||
       targetLog.action.toLowerCase() === "deleted"
     ) {
@@ -217,7 +311,7 @@ export async function undoAuditLog(req: Request, res: Response) {
       );
     }
 
-    let restoredTask: any = null;
+    let restoredTask: RestoredTask | null = null;
 
     if (targetLog.entityType === "task") {
       const workItemRepo = manager.getRepository(WorkItem);
@@ -241,24 +335,33 @@ export async function undoAuditLog(req: Request, res: Response) {
         );
       }
 
-      const prev = targetLog.previousState;
-
-      if (prev.title !== undefined && prev.title !== null) {
-        workItem.title = String(prev.title).trim();
+      const parentWorkItemId = snapshotString(
+        prev.parentWorkItemId,
+        "parent work item ID",
+        true,
+      );
+      if (parentWorkItemId === workItem.id) {
+        throw new AppError(
+          "The stored parent work item is invalid.",
+          400,
+          "ACTION_NOT_REVERSIBLE",
+        );
       }
-      if (prev.description !== undefined) {
-        workItem.description = prev.description
-          ? String(prev.description).trim()
-          : null;
-      }
-      if (prev.status !== undefined && prev.status !== null) {
-        const normStatus = String(prev.status)
-          .toUpperCase()
-          .replace(/[-\s]/g, "_");
-        if (
-          Object.values(WorkItemStatus).includes(normStatus as WorkItemStatus)
-        ) {
-          workItem.status = normStatus as WorkItemStatus;
+      if (parentWorkItemId) {
+        const parent = await manager.getRepository(WorkItem).findOne({
+          where: {
+            id: parentWorkItemId,
+            projectId: workItem.projectId,
+            organizationId,
+          },
+          select: { id: true },
+        });
+        if (!parent) {
+          throw new AppError(
+            "The stored parent work item is unavailable.",
+            400,
+            "ACTION_NOT_REVERSIBLE",
+          );
         }
       }
 
@@ -272,50 +375,60 @@ export async function undoAuditLog(req: Request, res: Response) {
           workItem.priority = normPriority as WorkItemPriority;
         }
       }
-      if (prev.type !== undefined && prev.type !== null) {
-        const normType = String(prev.type).toUpperCase();
-        if (Object.values(WorkItemType).includes(normType as WorkItemType)) {
-          workItem.type = normType as WorkItemType;
+      workItem.sprintId = sprintId;
+
+      const labelId = snapshotString(prev.labelId, "label ID", true);
+      if (labelId) {
+        const label = await manager.getRepository(ProjectLabel).findOne({
+          where: { id: labelId, projectId: workItem.projectId },
+          select: { id: true },
+        });
+        if (!label) {
+          throw new AppError(
+            "The stored label is unavailable.",
+            400,
+            "ACTION_NOT_REVERSIBLE",
+          );
         }
       }
-      if (prev.dueDate !== undefined) {
-        workItem.dueDate = prev.dueDate ? new Date(prev.dueDate) : null;
-      }
-      if (prev.parentWorkItemId !== undefined || prev.parentId !== undefined) {
-        workItem.parentWorkItemId =
-          prev.parentWorkItemId || prev.parentId || null;
-      }
+      workItem.labelId = labelId;
 
       await workItemRepo.save(workItem);
 
       if (
-        prev.assigneeId !== undefined ||
-        prev.assignees !== undefined ||
-        prev.assigneeIds !== undefined
+        !Array.isArray(prev.assigneeIds) ||
+        !prev.assigneeIds.every(
+          (assigneeId): assigneeId is string =>
+            typeof assigneeId === "string" &&
+            UUID_PATTERN.test(assigneeId),
+        )
       ) {
-        const assigneeRepo = manager.getRepository(WorkItemAssignee);
-        await assigneeRepo.delete({ workItemId: workItem.id });
-        let userIds: string[] = [];
-        if (Array.isArray(prev.assignees)) {
-          userIds = prev.assignees
-            .map((a: any) => (typeof a === "string" ? a : a.userId || a.id))
-            .filter(Boolean);
-        } else if (Array.isArray(prev.assigneeIds)) {
-          userIds = prev.assigneeIds.filter(Boolean);
-        } else if (prev.assigneeId) {
-          userIds = [prev.assigneeId];
-        }
+        throw new AppError(
+          "The stored assignee list is invalid.",
+          400,
+          "ACTION_NOT_REVERSIBLE",
+        );
+      }
 
-        if (userIds.length > 0) {
-          const assigneeEntities = userIds.map((uId) =>
-            assigneeRepo.create({
-              workItemId: workItem.id,
-              userId: uId,
-              assignedById: userId,
-            }),
-          );
-          await assigneeRepo.save(assigneeEntities);
-        }
+      const userIds = prev.assigneeIds;
+      await validateAssignees(
+        userIds.map((assigneeId) => ({ userId: assigneeId })),
+        workItem.projectId,
+        organizationId,
+        manager,
+      );
+      const assigneeRepo = manager.getRepository(WorkItemAssignee);
+      await assigneeRepo.delete({ workItemId: workItem.id });
+
+      if (userIds.length > 0) {
+        const assigneeEntities = userIds.map((assigneeId) =>
+          assigneeRepo.create({
+            workItemId: workItem.id,
+            userId: assigneeId,
+            assignedById: userId,
+          }),
+        );
+        await assigneeRepo.save(assigneeEntities);
       }
 
       const assignments = await manager.getRepository(WorkItemAssignee).find({
@@ -481,6 +594,7 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
         l.user?.fullName?.trim() || l.user?.email || "Unknown user";
 
       const canUndo =
+        Boolean(l.trustedForUndo) &&
         !l.isUndone &&
         Boolean(l.previousState) &&
         l.action !== "undone" &&

@@ -114,9 +114,13 @@ export async function listMembers(actor: ChatActor) {
   return users.filter((user) => user.id !== actor.id);
 }
 
-export async function listConversations(actor: ChatActor) {
+export async function listConversations(
+  actor: ChatActor,
+  page = 1,
+  limit = 50,
+) {
   if (!actor.organizationId) return [];
-  const result = await conversations().createQueryBuilder("conversation")
+  const query = conversations().createQueryBuilder("conversation")
     .innerJoinAndSelect("conversation.members", "member")
     .leftJoinAndSelect("member.user", "user")
     .where("conversation.organization_id = :organizationId", { organizationId: actor.organizationId })
@@ -129,8 +133,70 @@ export async function listConversations(actor: ChatActor) {
       )
     `, { userId: actor.id })
     .orderBy("COALESCE(conversation.last_message_at, conversation.created_at)", "DESC")
+    .addOrderBy("conversation.id", "DESC")
+    .skip((page - 1) * limit)
+    .take(limit);
+
+  if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.MANAGER) {
+    query.andWhere(`(
+      conversation.project_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM project_members project_member
+        WHERE project_member.project_id = conversation.project_id
+          AND project_member.user_id = :userId
+      )
+    )`);
+  }
+
+  const result = await query.getMany();
+
+  if (result.length === 0) return [];
+
+  const convIds = result.map((c) => c.id);
+
+  const latestMessages = await messages()
+    .createQueryBuilder("message")
+    .distinctOn(["message.conversationId"])
+    .where("message.conversation_id IN (:...convIds)", { convIds })
+    .andWhere("message.deleted_at IS NULL")
+    .orderBy("message.conversation_id", "ASC")
+    .addOrderBy("message.created_at", "DESC")
+    .addOrderBy("message.id", "DESC")
     .getMany();
 
+  const lastMessageMap = new Map<string, { id: string; content: string; createdAt: Date; senderId: string }>();
+  for (const msg of latestMessages) {
+    lastMessageMap.set(msg.conversationId, {
+      id: msg.id,
+      content: msg.content,
+      createdAt: msg.createdAt,
+      senderId: msg.senderId,
+    });
+  }
+
+  const unreadCountMap = new Map<string, number>();
+  const unreadCounts = await messages()
+    .createQueryBuilder("message")
+    .select("message.conversationId", "conversationId")
+    .addSelect("COUNT(*)", "unreadCount")
+    .innerJoin(
+      ChatConversationMember,
+      "member",
+      "member.conversationId = message.conversationId AND member.userId = :userId",
+      { userId: actor.id },
+    )
+    .where("message.conversation_id IN (:...convIds)", { convIds })
+    .andWhere("message.deleted_at IS NULL")
+    .andWhere("message.sender_id != :userId", { userId: actor.id })
+    .andWhere(
+      "(member.last_read_at IS NULL OR message.created_at > member.last_read_at)",
+    )
+    .groupBy("message.conversation_id")
+    .getRawMany<{ conversationId: string; unreadCount: string }>();
+
+  for (const count of unreadCounts) {
+    unreadCountMap.set(count.conversationId, Number(count.unreadCount));
   if (result.length === 0) return [];
 
   const convIds = result.map((c) => c.id);

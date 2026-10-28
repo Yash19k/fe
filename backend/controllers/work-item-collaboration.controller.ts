@@ -7,6 +7,14 @@ import { WorkItem } from "../entities/work.item.entity";
 import { ProjectMember } from "../entities/project.member.entity";
 import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
+import {
+  addWorkItemDependency as addWorkItemDependencyService,
+  removeWorkItemDependency as removeWorkItemDependencyService,
+} from "../services/work-item-dependency.service";
+import {
+  assertAccessibleProject,
+  getActiveActor,
+} from "../services/work-item.service";
 
 /**
  * Validates that the work item exists, belongs to the user's organization,
@@ -136,6 +144,13 @@ export async function addWorkItemTimeEntry(req: Request, res: Response) {
   const userId = req.user?.id;
 
   const duration = Number(durationMinutes);
+  if (
+    !Number.isSafeInteger(duration) ||
+    duration <= 0 ||
+    duration > 2_147_483_647
+  ) {
+    throw new AppError(
+      "Duration must be a positive whole number of minutes within the supported range.",
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new AppError(
       "durationMinutes or hours must be a positive number.",
@@ -217,6 +232,44 @@ export async function addWorkItemDependency(req: Request, res: Response) {
     );
   }
 
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  }
+  const actor = await getActiveActor(userId);
+  const result = await addWorkItemDependencyService(
+    actor,
+    workItemId,
+    dependsOnWorkItemId,
+  );
+
+  return res.status(201).json({
+    success: true,
+    data: result.dependency,
+    dependencies: result.dependencies,
+    rescheduledTasks: result.rescheduledTasks,
+  });
+}
+
+export async function getWorkItemDependencies(req: Request, res: Response) {
+  const workItemId = String(req.params.workItemId);
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  }
+  const actor = await getActiveActor(userId);
+  const workItem = await AppDataSource.getRepository(WorkItem).findOne({
+    where: { id: workItemId, organizationId: actor.organizationId },
+    select: { id: true, projectId: true },
+  });
+  if (!workItem) {
+    throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+  }
+  await assertAccessibleProject(workItem.projectId, actor);
+
+  const deps = await AppDataSource.getRepository(WorkItemDependency).find({
+    where: { workItemId },
+    order: { id: "ASC" },
   if (workItemId === dependsOnWorkItemId) {
     throw new AppError(
       "A work item cannot depend on itself.",
@@ -276,12 +329,25 @@ export async function getWorkItemDependencies(req: Request, res: Response) {
   return res.json({
     success: true,
     data: deps.map((d) => d.dependsOnWorkItemId),
+    dependencies: deps,
   });
 }
 
 export async function deleteWorkItemDependency(req: Request, res: Response) {
   const workItemId = String(req.params.workItemId);
   const depId = String(req.params.depId);
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  }
+  const actor = await getActiveActor(userId);
+  const result = await removeWorkItemDependencyService(actor, workItemId, depId);
+  return res.json({
+    success: true,
+    data: result.dependency,
+    dependencies: result.dependencies,
+    rescheduledTasks: result.rescheduledTasks,
+  });
 
   await assertWorkItemAccess(workItemId, req);
 

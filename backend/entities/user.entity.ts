@@ -53,7 +53,7 @@ export class User {
     length: 255,
     nullable: true,
   })
-  passwordHash: string;
+  passwordHash: string | null;
   @Column({
     name: "invite_token_hash",
     type: "varchar",

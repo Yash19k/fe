@@ -8,6 +8,7 @@ import {
   OneToMany,
   JoinColumn,
   Index,
+  Check,
 } from "typeorm";
 
 import { Project } from "./project.entity";
@@ -60,6 +61,10 @@ export enum SlaStatus {
 @Index("IDX_work_items_project_status", ["projectId", "status"])
 @Index("IDX_work_items_project_type", ["projectId", "type"])
 @Index("IDX_work_items_sla_deadline_status", ["slaDeadline", "slaStatus"])
+@Check(
+  "CHK_work_items_planned_duration_positive",
+  `"planned_duration_working_days" IS NULL OR "planned_duration_working_days" > 0`,
+)
 export class WorkItem {
   @PrimaryGeneratedColumn("uuid")
   id: string;
@@ -115,6 +120,19 @@ priority: WorkItemPriority | null;
     nullable: true,
   })
   dueDate: Date | null;
+
+  @Column({ name: "planned_start_date", type: "date", nullable: true })
+  plannedStartDate: string | null;
+
+  @Column({
+    name: "planned_duration_working_days",
+    type: "integer",
+    nullable: true,
+  })
+  plannedDurationWorkingDays: number | null;
+
+  @Column({ name: "is_schedule_pinned", type: "boolean", default: false })
+  isSchedulePinned: boolean;
 
   @Column({
     name: "sla_deadline",

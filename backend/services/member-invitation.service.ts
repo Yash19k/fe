@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import bcrypt from "bcrypt";
 import { AppDataSource } from "../config/data.source";
 import { User } from "../entities/user.entity";
@@ -10,10 +10,6 @@ const INVITATION_EXPIRY_HOURS = 48;
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-function generateTemporaryPassword(): string {
-  return randomInt(10_000_000, 100_000_000).toString();
 }
 
 export async function inviteOrganizationMembers(
@@ -50,13 +46,15 @@ export async function inviteOrganizationMembers(
     .where("LOWER(user.email) IN (:...emails)", { emails })
     .getMany();
 
-  const activeExistingUsers = existingUsers.filter(
-    (u) => u.status === UserStatus.ACTIVE,
+  const conflictingUsers = existingUsers.filter(
+    (user) =>
+      user.status !== UserStatus.PENDING ||
+      user.organizationId !== organizationId,
   );
 
-  if (activeExistingUsers.length > 0) {
+  if (conflictingUsers.length > 0) {
     throw new Error(
-      `These email addresses already exist: ${activeExistingUsers
+      `These email addresses already exist or belong to another organization: ${conflictingUsers
         .map((user) => user.email)
         .join(", ")}`,
     );
@@ -70,8 +68,6 @@ export async function inviteOrganizationMembers(
 
   const invitations = await Promise.all(
     normalizedMembers.map(async (member) => {
-      const temporaryPassword = generateTemporaryPassword();
-      const passwordHash = await bcrypt.hash(temporaryPassword, 12);
       const inviteToken = randomBytes(32).toString("hex");
       const inviteTokenHash = hashToken(inviteToken);
       const inviteExpiresAt = new Date(
@@ -80,8 +76,6 @@ export async function inviteOrganizationMembers(
 
       return {
         ...member,
-        temporaryPassword,
-        passwordHash,
         inviteToken,
         inviteTokenHash,
         inviteExpiresAt,
@@ -94,11 +88,24 @@ export async function inviteOrganizationMembers(
     const repository = manager.getRepository(User);
 
     for (const invitation of invitations) {
-      const existingPending = pendingUserMap.get(invitation.email);
+      const existingPending = await repository
+        .createQueryBuilder("user")
+        .setLock("pessimistic_write")
+        .where("LOWER(user.email) = :email", { email: invitation.email })
+        .getOne();
+
       if (existingPending) {
+        if (
+          existingPending.status !== UserStatus.PENDING ||
+          existingPending.organizationId !== organizationId
+        ) {
+          throw new Error(
+            `These email addresses already exist or belong to another organization: ${invitation.email}`,
+          );
+        }
         existingPending.organizationId = organizationId;
         existingPending.role = invitation.role;
-        existingPending.passwordHash = invitation.passwordHash;
+        existingPending.passwordHash = null;
         existingPending.inviteTokenHash = invitation.inviteTokenHash;
         existingPending.inviteExpiresAt = invitation.inviteExpiresAt;
         existingPending.status = UserStatus.PENDING;
@@ -109,7 +116,7 @@ export async function inviteOrganizationMembers(
           fullName: null,
           organizationId,
           role: invitation.role,
-          passwordHash: invitation.passwordHash,
+          passwordHash: null,
           status: UserStatus.PENDING,
           inviteTokenHash: invitation.inviteTokenHash,
           inviteExpiresAt: invitation.inviteExpiresAt,
@@ -127,7 +134,7 @@ export async function inviteOrganizationMembers(
           email: invitation.email,
           organizationName: organization.name,
           role: invitation.role,
-          temporaryPassword: invitation.temporaryPassword,
+          invitationToken: invitation.inviteToken,
         });
 
         return {
@@ -161,42 +168,45 @@ export async function acceptOrganizationInvitation(
   password: string,
 ) {
   const tokenHash = hashToken(token);
-  const userRepo = AppDataSource.getRepository(User);
-
-  const user = await userRepo.findOne({
-    where: { inviteTokenHash: tokenHash },
-  });
-
-  if (!user || !user.inviteExpiresAt) {
-    throw new Error("Invalid invitation token");
-  }
-
-  if (user.inviteExpiresAt.getTime() <= Date.now()) {
-    throw new Error("Invitation has expired");
-  }
-
-  if (user.status !== UserStatus.PENDING) {
-    throw new Error("Invitation has already been accepted or is invalid");
-  }
-
   const passwordHash = await bcrypt.hash(password, 12);
 
-  user.fullName = fullName.trim();
-  user.passwordHash = passwordHash;
-  user.status = UserStatus.ACTIVE;
-  user.inviteTokenHash = null;
-  user.inviteExpiresAt = null;
+  return AppDataSource.transaction(async (manager) => {
+    const userRepo = manager.getRepository(User);
+    const user = await userRepo
+      .createQueryBuilder("user")
+      .setLock("pessimistic_write")
+      .where("user.invite_token_hash = :tokenHash", { tokenHash })
+      .getOne();
 
-  await userRepo.save(user);
+    if (!user || !user.inviteExpiresAt) {
+      throw new Error("Invalid invitation token");
+    }
 
-  return {
-    message: "Invitation accepted successfully. You can now log in.",
-    user: {
-      id: user.id,
-      email: user.email,
-      fullName: user.fullName,
-      role: user.role,
-      organizationId: user.organizationId,
-    },
-  };
+    if (user.inviteExpiresAt.getTime() <= Date.now()) {
+      throw new Error("Invitation has expired");
+    }
+
+    if (user.status !== UserStatus.PENDING) {
+      throw new Error("Invitation has already been accepted or is invalid");
+    }
+
+    user.fullName = fullName.trim();
+    user.passwordHash = passwordHash;
+    user.status = UserStatus.ACTIVE;
+    user.inviteTokenHash = null;
+    user.inviteExpiresAt = null;
+
+    await userRepo.save(user);
+
+    return {
+      message: "Invitation accepted successfully. You can now log in.",
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        organizationId: user.organizationId,
+      },
+    };
+  });
 }

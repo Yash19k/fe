@@ -629,10 +629,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       previousValue,
       newValue,
       timestamp: new Date().toISOString(),
-      canUndo,
+      canUndo: entityType === 'task' ? false : canUndo,
     };
     setAuditLog((prev) => [entry, ...prev]);
 
+    if (entityType !== 'task' && isPersistedWorkItemId(resolvedProjectId)) {
+      createAuditLogApi({
+        projectId: resolvedProjectId,
     const isPersistedTask = isPersistedWorkItemId(entityId);
     if (isPersistedWorkItemId(resolvedProjectId) && (entityType !== 'task' || isPersistedTask)) {
       createAuditLogApi({
@@ -996,6 +999,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
       if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
+      if (updates.plannedStartDate !== undefined) backendUpdates.plannedStartDate = updates.plannedStartDate || null;
+      if (updates.plannedDurationWorkingDays !== undefined) backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
+      if (updates.isSchedulePinned !== undefined) backendUpdates.isSchedulePinned = updates.isSchedulePinned;
+      if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
+
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
       
       if (updates.assignees !== undefined) {
@@ -1044,6 +1052,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       try {
         let authoritativeTask: Task = updated;
+        let authoritativeRescheduledTasks: Task[] = [];
+        if (Object.keys(backendUpdates).length > 0) {
+          const res = await updateWorkItemApi(taskId, backendUpdates);
+          if (res?.data) {
+            const serverTask = backendWorkItemToTask(
+              res.data,
+              res.data.projectId || res.data.workItem?.projectId || currentProjectId,
+            );
+            authoritativeTask = {
+              ...target,
+              ...serverTask,
+              dependencyIds: target.dependencyIds || [],
+              subtasks: target.subtasks,
+              comments: target.comments,
+              timeEntries: target.timeEntries,
+              attachments: target.attachments,
+              tags: target.tags,
+              estimateHours: target.estimateHours,
+              actualHours: target.actualHours,
+              sla: res.data.sla || target.sla,
+            };
+            authoritativeRescheduledTasks = Array.isArray(res.data.rescheduledTasks)
+              ? res.data.rescheduledTasks.map((task: any) => {
+                  const mapped = backendWorkItemToTask(
+                    task,
+                    task.projectId || currentProjectId,
+                  );
+                  const existing = tasks.find((current) => current.id === task.id);
+                  if (!existing) return mapped;
+                  return {
+                    ...existing,
+                    startDate: mapped.startDate,
+                    plannedStartDate: mapped.plannedStartDate,
+                    dueDate: mapped.dueDate,
+                    plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
+                    isSchedulePinned: mapped.isSchedulePinned,
+                    updatedAt: task.updatedAt || existing.updatedAt,
+                  };
+                })
+              : [];
         if (Object.keys(backendUpdates).length > 0) {
           const res = await updateWorkItemApi(taskId, backendUpdates);
           if (res?.data) {
@@ -1055,6 +1103,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
 
         setTasks((prev) => {
+          const serverUpdates = new Map(
+            [...authoritativeRescheduledTasks, authoritativeTask].map((task) => [
+              task.id,
+              task,
+            ]),
+          );
+          let nextList = prev.map((task) =>
+            serverUpdates.has(task.id)
+              ? { ...task, ...serverUpdates.get(task.id) }
+              : task,
+          );
           let nextList = prev.map((t) => (t.id === taskId ? { ...t, ...authoritativeTask } : t));
 
           if (authoritativeTask.type === WORK_ITEM_TYPES.SUBTASK && authoritativeTask.parentId) {
@@ -1076,6 +1135,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         recordAudit('updated', 'task', taskId, `Updated ${authoritativeTask.type || 'task'} "${authoritativeTask.title}"`, target, authoritativeTask, true, authoritativeTask.projectId);
         broadcastEvent('TASK_UPDATED', authoritativeTask);
+        authoritativeRescheduledTasks.forEach((task) => broadcastEvent('TASK_UPDATED', task));
         showToast(`${authoritativeTask.type || 'Task'} "${authoritativeTask.title}" updated`, 'success');
         return { success: true, task: authoritativeTask };
       } catch (err: any) {
@@ -1229,6 +1289,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setImpactModalData(impact);
       return;
     }
+    if (!isPersistedWorkItemId(taskId)) {
+      setTasks(applyScheduleChanges(impact, tasks));
+      showToast(`Rescheduled to ${newDueDate}`, 'success');
+      return;
+    }
+    await updateTask(taskId, { dueDate: newDueDate });
+  }, [tasks, updateTask, showToast]);
+
+  const confirmRescheduleImpact = useCallback(async () => {
+    if (!impactModalData) return;
+    if (!isPersistedWorkItemId(impactModalData.taskId)) {
+      setTasks(applyScheduleChanges(impactModalData, tasks));
+      setImpactModalData(null);
+      showToast(
+        `Reschedule applied to ${impactModalData.affectedTasks.length + 1} local tasks`,
+        'success',
+      );
+      return;
+    }
+    const result = await updateTask(impactModalData.taskId, {
+      dueDate: impactModalData.newDueDate,
+    });
+    if (result.success) setImpactModalData(null);
+  }, [impactModalData, tasks, updateTask, showToast]);
     const updatedTasks = applyScheduleChanges(impact, tasks);
     setTasks(updatedTasks);
     recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, null, { dueDate: newDueDate }, true);
@@ -1290,7 +1374,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [impactModalData, tasks, recordAudit, showToast]);
 
-  const addDependency = useCallback((predecessorId: string, successorId: string) => {
+  const addDependency = useCallback(async (predecessorId: string, successorId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
       showToast('Permission denied: Role cannot modify dependencies', 'error');
       return { success: false, reason: 'Permission denied' };
@@ -1302,23 +1386,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, ...validation };
     }
 
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === successorId) {
-          const currentDeps = t.dependencyIds || [];
-          return {
-            ...t,
-            dependencyIds: [...currentDeps, predecessorId],
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      })
-    );
-
     const pred = tasks.find((t) => t.id === predecessorId);
     const succ = tasks.find((t) => t.id === successorId);
+    if (!pred?.dueDate || !succ?.dueDate) {
+      const reason = !pred?.dueDate
+        ? `Predecessor "${pred?.title || 'Task'}" must have a due date before it can be linked.`
+        : `Successor "${succ?.title || 'Task'}" must have a due date before it can be linked.`;
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    const successorIsPersisted = isPersistedWorkItemId(successorId);
+    const predecessorIsPersisted = isPersistedWorkItemId(predecessorId);
+    if (successorIsPersisted !== predecessorIsPersisted) {
+      const reason = 'Dependencies can only link tasks persisted in the same project.';
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    let response: any = null;
+    if (successorIsPersisted && predecessorIsPersisted) {
+      try {
+        response = await addWorkItemDependencyApi(successorId, predecessorId);
+      } catch (error: any) {
+        const reason = toUserFriendlyErrorMessage(error, 'Unable to save dependency.');
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
+    }
+
+    const canonicalDependencyIds = Array.isArray(response?.dependencies)
+      ? response.dependencies.map((edge: any) => edge.dependsOnWorkItemId)
+      : [...(succ.dependencyIds || []), predecessorId];
+    const rescheduledTasks: Task[] = Array.isArray(response?.rescheduledTasks)
+      ? response.rescheduledTasks.map((task: any) => {
+          const mapped = backendWorkItemToTask(
+            task,
+            task.projectId || succ.projectId,
+          );
+          const existing = tasks.find((current) => current.id === task.id);
+          if (!existing) return mapped;
+          return {
+            ...existing,
+            startDate: mapped.startDate,
+            plannedStartDate: mapped.plannedStartDate,
+            dueDate: mapped.dueDate,
+            plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
+            isSchedulePinned: mapped.isSchedulePinned,
+            updatedAt: task.updatedAt || existing.updatedAt,
+          };
+        })
+      : [];
+    setTasks((previous) => {
+      const changedById = new Map(rescheduledTasks.map((task) => [task.id, task]));
+      changedById.set(successorId, {
+        ...succ,
+        ...changedById.get(successorId),
+        dependencyIds: canonicalDependencyIds,
+      });
+      return previous.map((task) =>
+        changedById.has(task.id)
+          ? { ...task, ...changedById.get(task.id) }
+          : task,
+      );
+    });
+
     recordAudit(
       'dependency_added',
       'task',
@@ -1330,39 +1462,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     showToast(`Dependency linked: ${pred?.title} → ${succ?.title}`, 'success');
-
-    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
-      addWorkItemDependencyApi(successorId, predecessorId).catch((err) => {
-        console.warn('TaskFlow: Backend dependency link notice:', err.message);
-      });
-    }
-
     return { success: true };
   }, [currentUser.role, tasks, recordAudit, showToast]);
 
-  const removeDependency = useCallback((predecessorId: string, successorId: string) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === successorId) {
-          return {
-            ...t,
-            dependencyIds: (t.dependencyIds || []).filter((id: string) => id !== predecessorId),
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
+  const removeDependency = useCallback(async (predecessorId: string, successorId: string) => {
+    if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
+      showToast('Permission denied: Role cannot modify dependencies', 'error');
+      return { success: false, reason: 'Permission denied' };
+    }
+
+    const successor = tasks.find((task) => task.id === successorId);
+    if (!successor) return { success: false, reason: 'Successor task not found' };
+
+    let remainingDependencyIds: string[] | null = null;
+    if (isPersistedWorkItemId(successorId)) {
+      try {
+        const response = await deleteWorkItemDependencyApi(
+          successorId,
+          predecessorId,
+        );
+        if (Array.isArray(response?.dependencies)) {
+          remainingDependencyIds = response.dependencies.map(
+            (edge: any) => edge.dependsOnWorkItemId,
+          );
         }
-        return t;
-      })
+      } catch (error: any) {
+        const reason = toUserFriendlyErrorMessage(error, 'Unable to remove dependency.');
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
+    }
+
+    setTasks((previous) =>
+      previous.map((task) =>
+        task.id === successorId
+          ? {
+              ...task,
+              dependencyIds:
+                remainingDependencyIds ??
+                (task.dependencyIds || []).filter(
+                  (id: string) => id !== predecessorId,
+                ),
+            }
+          : task,
+      ),
     );
     recordAudit('dependency_removed', 'task', successorId, `Removed dependency link from ${predecessorId}`, null, null, true);
     showToast('Dependency removed', 'info');
-
-    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
-      deleteWorkItemDependencyApi(successorId, predecessorId).catch((err) => {
-        console.warn('TaskFlow: Backend dependency remove notice:', err.message);
-      });
-    }
-  }, [recordAudit, showToast]);
+    return { success: true };
+  }, [currentUser.role, tasks, recordAudit, showToast]);
 
   const addSubtask = useCallback(async (taskId: string, title: string, assigneeId: string | null = null) => {
     const parentTask = tasks.find((t) => t.id === taskId);

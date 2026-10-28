@@ -24,10 +24,18 @@ const invitedMembersSchema = Joi.alternatives().try(
   }),
 );
 
-const acceptInvitationSchema = Joi.object({
-  token: Joi.string().required(),
+export const acceptInvitationSchema = Joi.object({
+  token: Joi.string().hex().length(64).required(),
   fullName: Joi.string().trim().min(1).max(100).required(),
-  password: Joi.string().min(6).max(100).required(),
+  password: Joi.string()
+    .min(8)
+    .max(72)
+    .custom((value, helpers) =>
+      Buffer.byteLength(value, "utf8") > 72
+        ? helpers.error("string.max")
+        : value,
+    )
+    .required(),
 });
 
 export async function inviteMembersController(
@@ -96,7 +104,7 @@ export async function inviteMembersController(
         });
       }
 
-      if (error.message.startsWith("These email addresses already exist:")) {
+      if (error.message.startsWith("These email addresses already exist")) {
         return res.status(409).json({
           success: false,
           message: error.message,

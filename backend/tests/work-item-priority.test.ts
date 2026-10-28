@@ -1,6 +1,9 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { createWorkItemSchema } from "../validations/work.item.validations";
+import {
+  createWorkItemSchema,
+  updateWorkItemSchema,
+} from "../validations/work.item.validations";
 import { WorkItemType } from "../entities/work.item.entity";
 
 const validWorkItem = {
@@ -25,5 +28,31 @@ describe("work item priority validation", () => {
 
     assert.equal(result.error, undefined);
     assert.equal(result.value.priority, null);
+  });
+
+  test("accepts only one label for the single-label persistence contract", () => {
+    const oneLabel = "1b65ef76-4f4a-4daf-a1e9-ae8a51a58fd6";
+    const twoLabels = [
+      oneLabel,
+      "2875dc65-2d50-41b1-bb88-6c8c42b457bb",
+    ];
+
+    assert.equal(
+      createWorkItemSchema.validate({ ...validWorkItem, labels: [oneLabel] })
+        .error,
+      undefined,
+    );
+    assert.ok(
+      createWorkItemSchema.validate({ ...validWorkItem, labels: twoLabels })
+        .error,
+    );
+    assert.ok(updateWorkItemSchema.validate({ labels: twoLabels }).error);
+    assert.ok(
+      createWorkItemSchema.validate({
+        ...validWorkItem,
+        labelId: oneLabel,
+        labels: ["2875dc65-2d50-41b1-bb88-6c8c42b457bb"],
+      }).error,
+    );
   });
 });

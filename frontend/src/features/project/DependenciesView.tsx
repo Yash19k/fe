@@ -26,12 +26,29 @@ export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) 
   const [toTaskId, setToTaskId] = useState('');
   const [cycleAlert, setCycleAlert] = useState<{ reason?: string; cyclePathIds?: string[] } | null>(null);
 
+  const dateValidationMessage = useMemo(() => {
+    const predecessor = projectTasks.find((task) => task.id === fromTaskId);
+    const successor = projectTasks.find((task) => task.id === toTaskId);
+    if (predecessor && !predecessor.dueDate) {
+      return `Predecessor "${predecessor.title}" needs a due date before it can be linked.`;
+    }
+    if (successor && !successor.dueDate) {
+      return `Successor "${successor.title}" needs a due date before it can be linked.`;
+    }
+    return '';
+  }, [projectTasks, fromTaskId, toTaskId]);
+
   // Compute CPM
   const cpm = useMemo(() => calculateCriticalPath(projectTasks), [projectTasks]);
 
-  function handleAddDependencyLink() {
+  async function handleAddDependencyLink() {
     if (!fromTaskId || !toTaskId) return;
     setCycleAlert(null);
+
+    if (dateValidationMessage) {
+      showToast(dateValidationMessage, 'error');
+      return;
+    }
 
     const validation = validateNewDependency(fromTaskId, toTaskId, projectTasks);
     if (!validation.isValid) {
@@ -45,9 +62,11 @@ export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) 
       return;
     }
 
-    addDependency(fromTaskId, toTaskId);
-    setFromTaskId('');
-    setToTaskId('');
+    const result = await addDependency(fromTaskId, toTaskId);
+    if (result?.success) {
+      setFromTaskId('');
+      setToTaskId('');
+    }
   }
 
   // Flatten all dependency links for table view
@@ -145,6 +164,11 @@ export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) 
           <p className="text-xs text-text-muted">
             Select a predecessor (Task A) and successor (Task B). The engine runs a graph search to prevent circular loops.
           </p>
+          {dateValidationMessage && (
+            <p role="alert" className="text-xs text-status-danger-text">
+              {dateValidationMessage}
+            </p>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end pt-1">
             <div className="sm:col-span-2">
@@ -184,8 +208,8 @@ export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) 
                 variant="primary"
                 size="md"
                 className="w-full"
-                disabled={!fromTaskId || !toTaskId}
-                onClick={handleAddDependencyLink}
+                disabled={!fromTaskId || !toTaskId || Boolean(dateValidationMessage)}
+                onClick={() => void handleAddDependencyLink()}
               >
                 Add Link
               </Button>

@@ -48,6 +48,9 @@ export class AuditLog {
   @Column({ name: "is_undone", type: "boolean", default: false })
   isUndone: boolean;
 
+  @Column({ name: "trusted_for_undo", type: "boolean", default: false })
+  trustedForUndo: boolean;
+
   @Column({ name: "undone_at", type: "timestamptz", nullable: true })
   undoneAt: Date | null;
 

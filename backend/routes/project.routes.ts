@@ -159,6 +159,7 @@ router.put(
 router.post(
   "/audit-logs",
   isLoggedIn,
+  requireProjectPermission("task:update"),
   asyncHandler(createAuditLog),
 );
 router.get(

@@ -146,7 +146,7 @@ export async function sendInvitationEmail(params: {
   email: string;
   organizationName: string;
   role: string;
-  temporaryPassword: string;
+  invitationToken: string;
 }) {
   const transporter = getTransporter();
 
@@ -154,23 +154,23 @@ export async function sendInvitationEmail(params: {
     const info = await transporter.sendMail({
       from: config.email.smtpFrom,
       to: params.email,
-      subject: `Your TaskFlow login details - ${params.organizationName}`,
+      subject: `Your TaskFlow invitation - ${params.organizationName}`,
       text: [
         "Hello,",
         "",
         `You have been invited to join ${params.organizationName} on TaskFlow.`,
         `Your assigned role is ${params.role}.`,
         "",
-        `Your temporary login password is: ${params.temporaryPassword}`,
+        `Your one-time invitation token is: ${params.invitationToken}`,
         "",
-        "Use your email address and this temporary password to log in to TaskFlow.",
-        "Please change your password after logging in.",
+        "Use this token to accept the invitation and set your permanent password.",
+        "The token expires after 48 hours and can only be used once.",
         "",
         "If you were not expecting this email, please contact your organization administrator.",
       ].join("\n"),
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-          <h2>Welcome to TaskFlow!</h2>
+          <h2>You have been invited to TaskFlow</h2>
           <p>
             You have been invited to join
             <strong>${escapeHtml(params.organizationName)}</strong>
@@ -180,16 +180,13 @@ export async function sendInvitationEmail(params: {
             Your assigned role:
             <strong>${escapeHtml(params.role)}</strong>
           </p>
-          <p>Your temporary login password is:</p>
-          <p style="font-size: 22px; font-weight: bold; letter-spacing: 2px;">
-            ${escapeHtml(params.temporaryPassword)}
+          <p>Your one-time invitation token is:</p>
+          <p style="font-size: 16px; font-weight: bold; word-break: break-all;">
+            ${escapeHtml(params.invitationToken)}
           </p>
           <p>
-            Use your email address and this temporary password to log in.
-          </p>
-          <p>
-            <strong>Security reminder:</strong>
-            Change your password after logging in. Do not share it with anyone.
+            Use this token to accept the invitation and set your permanent
+            password. It expires after 48 hours and can only be used once.
           </p>
           <p>
             If you were not expecting this email, please contact your
