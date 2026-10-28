@@ -159,3 +159,60 @@ The frontend now resolves contact names across all available profile sources (`d
 1. Add an optional or required `fullName` field to the invitation endpoint (`POST /api/users/invite`).
 2. Add a profile update endpoint (`PATCH /api/users/me`) allowing users to set `fullName`.
 3. Ensure `getConversationForActor` populates `otherParticipant` or eager-loads member user profiles.
+
+---
+
+## Issue 5: Dedicated Cross-Project "My Tasks" Query Endpoint
+
+### Feature Affected
+"My Tasks" View, Global Task Counts, Workspace Sidebar Badge.
+
+### Current API Behavior
+- Current work items endpoint: `GET /api/work-items/project/:projectId`
+- There is currently no cross-project endpoint to fetch all tasks assigned to the requesting user across all projects they belong to.
+- The frontend currently iterates over all accessible projects in parallel (`loadCrossProjectTasks`), deduplicating tasks by ID.
+
+### Missing Capability
+`GET /api/work-items/assigned-to-me` (or `GET /api/work-items/assigned?status=...&page=...&limit=...`).
+
+### Expected Backend Behavior
+A single query joining `work_items` with `work_item_assignees` (and matching `workItem.assigneeId = :currentUserId OR assignee.userId = :currentUserId`) across all projects where the user is an active member or organization admin.
+
+### Recommended Implementation
+1. Add route `GET /api/work-items/assigned-to-me` to `work.item.routes.ts`.
+2. Add controller and service method `getAssignedWorkItems(userId, paginationParams)`.
+3. Filter by `(wi.assigneeId = :userId OR wia.userId = :userId)` with project authorization check.
+
+---
+
+## Issue 6: Top-Level `startDate` on `WorkItem` Entity and Validation Schema
+
+### Feature Affected
+Gantt Charts, Timeline View, Project Cascade Rescheduling.
+
+### Current API Behavior
+- `createWorkItemSchema` and `updateWorkItemSchema` in `backend/validations/work.item.validations.ts` strictly enforce `.unknown(false)`.
+- While assignees can receive `startDate` and `endDate` inside the `assignees` array, the top-level `WorkItem` entity only persists `dueDate`.
+- Sending top-level `startDate` to `PATCH /api/work-items/:workItemId` fails with Joi validation error: `"startDate" is not allowed`.
+
+### Frontend Handling
+The frontend normalizes `startDate` in client state and sends `dueDate` to the server for cascade rescheduling shifts, avoiding schema rejection.
+
+### Recommended Implementation
+1. Add `startDate: Joi.date().iso().allow(null).optional()` to `createWorkItemSchema` and `updateWorkItemSchema`.
+2. Add `@Column({ name: 'start_date', type: 'timestamptz', nullable: true }) startDate: Date | null;` to `WorkItem` entity.
+3. Update service mapping to persist `startDate`.
+
+---
+
+## Issue 7: Whiteboards Architecture vs Wiki/Yjs Documentation Clarification
+
+### Feature Affected
+Whiteboards, Visual Documentation, and Collaborative Editing.
+
+### Clarification
+- The codebase uses **Excalidraw** alongside Socket.IO websocket rooms for collaborative whiteboard canvas rendering and revision snapshots.
+- There is **no Yjs CRDT or Wiki document module** in the codebase.
+- Any legacy documentation or comments referring to "Yjs Wiki integration" are historical artifacts and do not reflect the current system architecture.
+- For collaborative rich-text documentation in the future, the backend team should consider integrating a block editor (such as Tiptap or BlockNote) backed by PostgreSQL or Yjs WebSocket provider.
+

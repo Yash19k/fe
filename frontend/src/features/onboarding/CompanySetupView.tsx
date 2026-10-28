@@ -74,28 +74,7 @@ export function CompanySetupView() {
     setApiError(null);
 
     const trimmed = companyName.trim();
-    // Attempt registration against real backend API if configured
-    try {
-      const pendingPassword = pendingSignupPassword || 'Password123!';
-
-      await registerOrganizationApi({
-        user: {
-          fullName: currentUser.name || 'Workspace Admin',
-          email: currentUser.email,
-          password: pendingPassword,
-        },
-        organization: {
-          name: trimmed,
-        },
-      }).catch((err) => {
-        // If server is unreachable or 409 already exists, log actionable message
-        console.warn('TaskFlow: registerOrganizationApi response/notice:', err.message);
-      });
-    } catch (err: any) {
-      console.warn('TaskFlow: Backend API communication notice:', err?.message);
-    }
-
-    // Persist company in local application state without marking onboarding complete yet
+    // Company name is configured; advance to invitations
     const saved = completeCompanyOnboarding(trimmed, false);
     setIsSubmittingCompany(false);
 

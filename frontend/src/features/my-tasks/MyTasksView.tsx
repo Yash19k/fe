@@ -10,7 +10,11 @@ import {
 import { Task } from '../../types';
 
 export function MyTasksView() {
-  const { currentUser, myTasks, projects } = useApp();
+  const { currentUser, myTasks, projects, loadCrossProjectTasks } = useApp();
+
+  React.useEffect(() => {
+    loadCrossProjectTasks?.();
+  }, [loadCrossProjectTasks]);
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');

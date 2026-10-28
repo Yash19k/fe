@@ -4,7 +4,7 @@ import { loadInitialState, saveStateToStorage, DEFAULT_STANDARD_WORKFLOW, STORAG
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
-import { canTransitionStatus, hasPermission, PERMISSIONS } from '../domain/permissions';
+import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject } from '../domain/permissions';
 import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
@@ -47,6 +47,7 @@ import {
   deleteWorkItemApi,
   getProjectSprintsApi,
   currentUserApi,
+  registerOrganizationApi,
   loginApi,
   logoutApi,
   getOrganizationUsersApi,
@@ -83,6 +84,7 @@ import {
   isPersistedWorkItemId,
   isUuid,
   toUserFriendlyErrorMessage,
+  CreateWorkItemApiInput,
 } from '../services/api';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -699,10 +701,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return tasks.filter((t) => t.projectId === currentProject.id);
   }, [tasks, currentProject]);
 
+  const isTaskAssignedToUser = useCallback((task: Task, userId?: string | null): boolean => {
+    if (!userId) return false;
+    if (task.assigneeId === userId) return true;
+    if (Array.isArray(task.assigneeIds) && task.assigneeIds.includes(userId)) return true;
+    if (Array.isArray(task.assignees) && task.assignees.some((a: any) => (a.userId === userId || a.id === userId))) return true;
+    return false;
+  }, []);
+
   const myTasks = useMemo(() => {
     if (!currentUser?.id) return [];
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
-  }, [tasks, currentUser?.id]);
+    const seen = new Set<string>();
+    return tasks.filter((t) => {
+      if (seen.has(t.id)) return false;
+      if (isTaskAssignedToUser(t, currentUser.id)) {
+        seen.add(t.id);
+        return true;
+      }
+      return false;
+    });
+  }, [tasks, currentUser?.id, isTaskAssignedToUser]);
+
+  const loadCrossProjectTasks = useCallback(async () => {
+    if (!currentUser?.id) return;
+    const accessibleProjects = projects.filter((p) =>
+      canUserAccessProject(p, currentUser.id, currentUser.role) && isPersistedWorkItemId(p.id)
+    );
+
+    const promises = accessibleProjects.map(async (project) => {
+      try {
+        const res = await getProjectWorkItemsApi(project.id, 1, 100);
+        if (res?.data?.workItems && Array.isArray(res.data.workItems)) {
+          return res.data.workItems.map((item: any) => backendWorkItemToTask(item, project.id));
+        }
+      } catch (err) {
+        console.warn(`Could not fetch tasks for project ${project.id}:`, err);
+      }
+      return [];
+    });
+
+    const results = await Promise.all(promises);
+    const newTasks = results.flat();
+    if (newTasks.length > 0) {
+      setTasks((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const toAdd = newTasks.filter((t) => !existingIds.has(t.id));
+        return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      });
+    }
+  }, [currentUser?.id, currentUser?.role, projects]);
 
   const projectSprints = useMemo(() => {
     if (!currentProject) return [];
@@ -837,19 +884,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         `${authoritativeTask.type} "${authoritativeTask.title}" created`,
         'success'
       );
-
-      if (isPersistedWorkItemId(authoritativeTask.projectId)) {
-        await createAuditLogApi({
-          projectId: authoritativeTask.projectId,
-          workItemId: serverItem.id,
-          action: 'created',
-          entityType: 'task',
-          entityId: serverItem.id,
-          description: `Created ${authoritativeTask.type || 'Task'} "${authoritativeTask.title}"`,
-          previousState: null,
-          newState: authoritativeTask,
-        }).catch(() => null);
-      }
 
       return { success: true, task: authoritativeTask };
     } catch (err: any) {
@@ -1189,7 +1223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [tasks, currentUser.role, currentWorkflow, recordAudit, showToast]);
 
-  const requestReschedule = useCallback((taskId: string, newDueDate: string) => {
+  const requestReschedule = useCallback(async (taskId: string, newDueDate: string) => {
     const impact = calculateScheduleImpact(taskId, newDueDate, tasks);
     if (impact.affectedTasks && impact.affectedTasks.length > 0) {
       setImpactModalData(impact);
@@ -1199,25 +1233,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTasks(updatedTasks);
     recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, null, { dueDate: newDueDate }, true);
     broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
+
+    if (isPersistedWorkItemId(taskId)) {
+      try {
+        await updateWorkItemApi(taskId, { dueDate: impact.newDueDate || newDueDate });
+      } catch (err: any) {
+        console.warn('Failed to persist task reschedule to backend:', err?.message);
+        showToast('Rescheduled locally, but sync with backend failed', 'warning');
+        return;
+      }
+    }
     showToast(`Rescheduled to ${newDueDate}`, 'success');
   }, [tasks, recordAudit, showToast]);
 
-  const confirmRescheduleImpact = useCallback(() => {
+  const confirmRescheduleImpact = useCallback(async () => {
     if (!impactModalData) return;
-    const updatedTasks = applyScheduleChanges(impactModalData, tasks);
+    const impact = impactModalData;
+    const updatedTasks = applyScheduleChanges(impact, tasks);
     setTasks(updatedTasks);
     recordAudit(
       'rescheduled',
       'task',
-      impactModalData.taskId,
-      `Rescheduled "${impactModalData.taskTitle}" and cascade-shifted ${impactModalData.affectedTasks.length} dependent tasks`,
+      impact.taskId,
+      `Rescheduled "${impact.taskTitle}" and cascade-shifted ${impact.affectedTasks.length} dependent tasks`,
       null,
-      impactModalData,
+      impact,
       true
     );
     broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
     setImpactModalData(null);
-    showToast(`Reschedule applied to ${impactModalData.affectedTasks.length + 1} tasks`, 'success');
+
+    const updatePromises: Promise<any>[] = [];
+    if (impact.taskId && isPersistedWorkItemId(impact.taskId)) {
+      updatePromises.push(
+        updateWorkItemApi(impact.taskId, { dueDate: impact.newDueDate || null })
+      );
+    }
+    for (const aff of impact.affectedTasks) {
+      if (isPersistedWorkItemId(aff.taskId)) {
+        updatePromises.push(
+          updateWorkItemApi(aff.taskId, { dueDate: aff.newDueDate || null })
+        );
+      }
+    }
+
+    if (updatePromises.length > 0) {
+      const results = await Promise.allSettled(updatePromises);
+      const failedCount = results.filter((r) => r.status === 'rejected').length;
+      if (failedCount > 0) {
+        showToast(`Reschedule applied with ${failedCount} server sync errors`, 'warning');
+      } else {
+        showToast(`Reschedule applied and synced for ${impact.affectedTasks.length + 1} tasks`, 'success');
+      }
+    } else {
+      showToast(`Reschedule applied to ${impact.affectedTasks.length + 1} tasks`, 'success');
+    }
   }, [impactModalData, tasks, recordAudit, showToast]);
 
   const addDependency = useCallback((predecessorId: string, successorId: string) => {
@@ -1294,13 +1364,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [recordAudit, showToast]);
 
-  const addSubtask = useCallback((taskId: string, title: string, assigneeId: string | null = null) => {
+  const addSubtask = useCallback(async (taskId: string, title: string, assigneeId: string | null = null) => {
     const parentTask = tasks.find((t) => t.id === taskId);
     if (!parentTask) return;
 
-    const newSubId = `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+    if (!title.trim()) {
+      showToast('Subtask title cannot be empty', 'error');
+      return;
+    }
+
+    let subId = `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+
+    if (isPersistedWorkItemId(taskId) && isPersistedWorkItemId(parentTask.projectId)) {
+      try {
+        const payload: CreateWorkItemApiInput = {
+          projectId: parentTask.projectId,
+          parentWorkItemId: taskId,
+          type: 'SUBTASK',
+          title: title.trim(),
+          priority: parentTask.priority ? (parentTask.priority.toUpperCase() as any) : 'MEDIUM',
+          status: 'BACKLOG',
+          dueDate: parentTask.dueDate || null,
+          assignees: (assigneeId || parentTask.assigneeId)
+            ? [{ userId: (assigneeId || parentTask.assigneeId)! }]
+            : [],
+        };
+        const res = await createWorkItemApi(payload);
+        if (res?.data?.id) {
+          subId = res.data.id;
+        }
+      } catch (err: any) {
+        const reason = toUserFriendlyErrorMessage(err, 'Failed to save subtask to server');
+        showToast(reason, 'error');
+        return;
+      }
+    }
+
     const newSubtaskRecord = {
-      id: newSubId,
+      id: subId,
       type: WORK_ITEM_TYPES.SUBTASK,
       parentId: taskId,
       projectId: parentTask.projectId,
@@ -1328,7 +1429,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     const newSubEntry = {
-      id: newSubId,
+      id: subId,
       title: title.trim(),
       completed: false,
       assigneeId: assigneeId || parentTask.assigneeId,
@@ -1348,19 +1449,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return t;
       }),
     ]);
-  }, [tasks, currentUser.id]);
+    showToast('Subtask created', 'success');
+  }, [tasks, currentUser?.id, showToast]);
 
-  const toggleSubtask = useCallback((taskId: string, subtaskId: string) => {
-    setTasks((prev) => {
-      const subtaskItem = prev.find((t) => t.id === subtaskId);
-      const parentTask = prev.find((t) => t.id === taskId);
-      const isCurrentlyDone = subtaskItem
-        ? subtaskItem.status === 'Done'
-        : Boolean(parentTask?.subtasks?.find((s) => s.id === subtaskId)?.completed);
+  const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const subtaskItem = tasks.find((t) => t.id === subtaskId);
+    const parentTask = tasks.find((t) => t.id === taskId);
+    const isCurrentlyDone = subtaskItem
+      ? subtaskItem.status === 'Done'
+      : Boolean(parentTask?.subtasks?.find((s) => s.id === subtaskId)?.completed);
 
-      const nextStatus = isCurrentlyDone ? 'Backlog' : 'Done';
+    const nextStatus = isCurrentlyDone ? 'Backlog' : 'Done';
+    const nextCompleted = !isCurrentlyDone;
 
-      return prev.map((t) => {
+    // Optimistic update
+    setTasks((prev) =>
+      prev.map((t) => {
         if (t.id === subtaskId) {
           return {
             ...t,
@@ -1371,7 +1475,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         if (t.id === taskId) {
           const subtasks = (t.subtasks || []).map((s) =>
-            s.id === subtaskId ? { ...s, completed: !isCurrentlyDone } : s
+            s.id === subtaskId ? { ...s, completed: nextCompleted } : s
           );
           return {
             ...t,
@@ -1381,11 +1485,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           };
         }
         return t;
-      });
-    });
-  }, []);
+      })
+    );
 
-  const deleteSubtask = useCallback((taskId: string, subtaskId: string) => {
+    if (isPersistedWorkItemId(subtaskId)) {
+      try {
+        await updateWorkItemApi(subtaskId, {
+          status: nextCompleted ? 'DONE' : 'BACKLOG',
+        });
+      } catch (err: any) {
+        // Rollback on failure
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.id === subtaskId) {
+              return {
+                ...t,
+                status: isCurrentlyDone ? 'Done' : 'Backlog',
+                version: (t.version || 1) + 1,
+                updatedAt: new Date().toISOString(),
+              };
+            }
+            if (t.id === taskId) {
+              const subtasks = (t.subtasks || []).map((s) =>
+                s.id === subtaskId ? { ...s, completed: isCurrentlyDone } : s
+              );
+              return {
+                ...t,
+                subtasks,
+                version: (t.version || 1) + 1,
+                updatedAt: new Date().toISOString(),
+              };
+            }
+            return t;
+          })
+        );
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to update subtask status'), 'error');
+      }
+    }
+  }, [tasks, showToast]);
+
+  const deleteSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const prevTasksSnapshot = tasks;
+
+    // Optimistic remove
     setTasks((prev) =>
       prev
         .filter((t) => t.id !== subtaskId)
@@ -1401,7 +1543,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return t;
         })
     );
-  }, []);
+
+    if (isPersistedWorkItemId(subtaskId)) {
+      try {
+        await deleteWorkItemApi(subtaskId);
+        showToast('Subtask deleted', 'info');
+      } catch (err: any) {
+        // Rollback on failure
+        setTasks(prevTasksSnapshot);
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to delete subtask'), 'error');
+      }
+    }
+  }, [tasks, showToast]);
 
   const addComment = useCallback(async (taskId: string, body: string) => {
     if (!body.trim()) {
@@ -2134,6 +2287,60 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     navigate('/login');
   }, [navigate, showToast]);
 
+  const register = useCallback(async (params: {
+    name: string;
+    email: string;
+    password: string;
+    companyName?: string;
+  }): Promise<boolean> => {
+    const orgName = (params.companyName || `${params.name.trim()}'s Workspace`).trim();
+    const res = await registerOrganizationApi({
+      user: {
+        fullName: params.name.trim(),
+        email: params.email.trim(),
+        password: params.password,
+      },
+      organization: {
+        name: orgName,
+      },
+    });
+
+    if (res?.user) {
+      const u = res.user;
+      const org = res.organization || { id: res.organizationId, name: orgName };
+      const mappedUser: User = {
+        id: u.id,
+        name: u.name || u.fullName || params.name.trim(),
+        email: u.email,
+        role: normalizeRole(u.role),
+        companyId: org?.id,
+        companyName: org?.name,
+        onboardingCompleted: false,
+      };
+      const mappedCompany: Company = {
+        id: org?.id || res.organizationId || `comp-${u.id}`,
+        name: org?.name || orgName,
+        createdByUserId: u.id,
+        createdAt: new Date().toISOString(),
+      };
+      setCurrentUser(mappedUser);
+      setCurrentCompany(mappedCompany);
+      saveStateToStorage('CURRENT_USER', mappedUser);
+      saveStateToStorage('COMPANY', mappedCompany);
+
+      getProjectsApi()
+        .then((pRes) => {
+          if (pRes?.data && Array.isArray(pRes.data)) {
+            setProjects(pRes.data.map(backendProjectToFrontend));
+          }
+        })
+        .catch(() => null);
+
+      return true;
+    }
+    return false;
+  }, []);
+
   const registerUser = useCallback((userData: { name: string; email: string }): User => {
     const initials = userData.name
       .trim()
@@ -2164,11 +2371,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!trimmed) return false;
 
     try {
+      const existingCompany = currentCompany;
       const newCompany: Company = {
-        id: `comp-${Date.now()}`,
+        id: existingCompany?.id || `comp-${Date.now()}`,
         name: trimmed,
         createdByUserId: currentUser?.id || '',
-        createdAt: new Date().toISOString(),
+        createdAt: existingCompany?.createdAt || new Date().toISOString(),
       };
 
       const updatedUser: User = {
@@ -2188,7 +2396,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.error('TaskFlow: Failed to complete company setup:', err);
       return false;
     }
-  }, [currentUser, recordAudit]);
+  }, [currentUser, currentCompany, recordAudit]);
 
   const finishOnboarding = useCallback(() => {
     setCurrentUser((prev) => {
@@ -2324,9 +2532,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast('Label removed', 'info');
   }, [labels, currentProjectId, recordAudit, showToast]);
 
-  const value: AppContextValue = {
+  const value: AppContextValue = useMemo(() => ({
     currentUser,
     currentCompany,
+    register,
     registerUser,
     completeCompanyOnboarding,
     finishOnboarding,
@@ -2351,6 +2560,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     tasks,
     projectTasks,
     myTasks,
+    loadCrossProjectTasks,
     createTask,
     uploadTaskAttachments,
     updateTask,
@@ -2404,7 +2614,80 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isLoadingProjectData,
     projectDataError,
     reloadProjectData,
-  };
+  }), [
+    currentUser,
+    currentCompany,
+    register,
+    registerUser,
+    completeCompanyOnboarding,
+    finishOnboarding,
+    projects,
+    createProject,
+    updateProject,
+    renameProject,
+    updateProjectVisibility,
+    updateProjectKey,
+    deleteProject,
+    addProjectMember,
+    removeProjectMember,
+    updateProjectMemberRole,
+    currentProjectId,
+    currentProject,
+    projectTab,
+    workflows,
+    currentWorkflow,
+    tasks,
+    projectTasks,
+    myTasks,
+    loadCrossProjectTasks,
+    createTask,
+    uploadTaskAttachments,
+    updateTask,
+    deleteTask,
+    changeTaskStatus,
+    requestReschedule,
+    confirmRescheduleImpact,
+    addDependency,
+    removeDependency,
+    addSubtask,
+    toggleSubtask,
+    deleteSubtask,
+    addComment,
+    pendingSignupPassword,
+    setPendingSignupPassword,
+    logTimeEntry,
+    escalateTask,
+    simulateExternalTaskEdit,
+    auditLog,
+    undoAuditEntry,
+    notifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+    activeRoute,
+    navigate,
+    activeDrawerTaskId,
+    searchQuery,
+    impactModalData,
+    conflictModalData,
+    toasts,
+    showToast,
+    crossTabIndicator,
+    allUsers,
+    login,
+    logout,
+    isLoadingBackend,
+    isInitializingAuth,
+    sprints,
+    projectSprints,
+    createSprint,
+    labels,
+    projectLabels,
+    createLabel,
+    deleteLabel,
+    isLoadingProjectData,
+    projectDataError,
+    reloadProjectData,
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

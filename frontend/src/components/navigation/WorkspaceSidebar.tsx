@@ -50,7 +50,7 @@ export function WorkspaceSidebar({
     navigate,
   } = useApp();
 
-  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
+  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser?.id, currentUser?.role));
 
   const navItems: NavItem[] = [
     { id: 'home', label: 'Workspace Home', icon: LayoutDashboard, route: '/' },

@@ -20,19 +20,34 @@ export const API_BASE_URL =
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
 
+let memoryToken: string | null = null;
+
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  if (memoryToken) return memoryToken;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
+  return null;
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  memoryToken = token;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+    }
+  } catch {}
 }
 
 export function clearAuthToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  memoryToken = null;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
 }
 
 export class ApiError extends Error {
@@ -79,7 +94,7 @@ async function executeTokenRefresh(): Promise<string | null> {
         setAuthToken(data.token);
         return data.token;
       }
-      return getAuthToken() || 'active_session';
+      return getAuthToken();
     } catch {
       clearAuthToken();
       return null;
@@ -100,12 +115,16 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+    ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
 
   try {
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers,
+    });
 
     if (response.status === 401 && !options._retry) {
       options._retry = true;
@@ -170,6 +189,8 @@ export interface RegisterOrganizationResponse {
   user: any;
   organization: any;
   token?: string;
+  organizationId?: string;
+  userId?: string;
 }
 
 export async function registerOrganizationApi(
@@ -263,9 +284,10 @@ export async function updateOrganizationMemberRoleApi(
   memberId: string,
   role: string
 ): Promise<any> {
+  const canonicalRole = toBackendRole(role as Role) || role.toUpperCase();
   return request<any>(`/api/organization/members/${encodeURIComponent(memberId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role: canonicalRole }),
   });
 }
 
@@ -496,8 +518,9 @@ export async function uploadWorkItemAttachmentsApi(
     `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
     {
       method: 'POST',
+      credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+        ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData,
     }
@@ -525,7 +548,7 @@ export async function updateWorkItemApi(workItemId: string, updates: any): Promi
 
 export async function escalateWorkItemApi(workItemId: string, reason?: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/escalate`, {
-    method: 'POST',
+    method: 'PATCH',
     body: JSON.stringify({ reason }),
   });
 }
@@ -921,10 +944,19 @@ export function frontendStatusToBackend(status: string): string {
   switch (status) {
     case 'In Progress': return 'IN_PROGRESS';
     case 'In Review': return 'IN_REVIEW';
+    case 'Testing / QA': return 'TESTING_QA';
+    case 'Blocked': return 'BLOCKED';
     case 'Done': return 'DONE';
-    case 'Backlog':
-    default:
+    case 'On Hold': return 'ON_HOLD';
+    case 'Backlog': return 'BACKLOG';
+    default: {
+      const upper = String(status || '').toUpperCase().replace(/[\s\/-]+/g, '_');
+      if (['BACKLOG', 'IN_PROGRESS', 'IN_REVIEW', 'TESTING_QA', 'BLOCKED', 'DONE', 'ON_HOLD'].includes(upper)) {
+        return upper;
+      }
+      console.warn(`[TaskFlow API] Unknown task status "${status}", falling back to BACKLOG`);
       return 'BACKLOG';
+    }
   }
 }
 
@@ -932,10 +964,17 @@ export function backendStatusToFrontend(status?: string | null): TaskStatus {
   switch (status?.toUpperCase()) {
     case 'IN_PROGRESS': return 'In Progress';
     case 'IN_REVIEW': return 'In Review';
+    case 'TESTING_QA': return 'Testing / QA';
+    case 'BLOCKED': return 'Blocked';
     case 'DONE': return 'Done';
-    case 'BACKLOG':
-    default:
+    case 'ON_HOLD': return 'On Hold';
+    case 'BACKLOG': return 'Backlog';
+    default: {
+      if (status) {
+        console.warn(`[TaskFlow API] Unrecognized backend status "${status}", falling back to Backlog`);
+      }
       return 'Backlog';
+    }
   }
 }
 
