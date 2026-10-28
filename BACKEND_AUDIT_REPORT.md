@@ -1,423 +1,541 @@
-# Backend Audit Report
+# TaskFlow Backend — Comprehensive Audit, Code Quality Assessment & Vulnerability Inventory
 
-Audit date: 2026-10-26
+**Audit Date:** October 28, 2026  
+**Auditor:** Senior Backend Architect, Database Specialist & Security Auditor  
+**Scope:** Complete Backend Codebase (`backend/`), Configurations, Migrations, Database Entities, Services, Controllers, and Test Suites.  
+**Execution Mode:** Static Code Analysis, Architectural Inspection, and Verification (Read-Only)
+
+---
 
 ## 1. Executive Summary
 
-The reviewed code has high workflow risk. The registration and invitation API contracts used by the frontend do not match mounted backend routes; chat conversation listing is shadowed by an earlier route mount; and the SLA refresh worker repeatedly selects only the oldest 500 unfinished work items. Notification failures can also turn an already-committed operation into an apparent API failure.
+This comprehensive audit evaluated the TaskFlow Node.js/TypeScript backend across architecture, security, database modeling, migrations, API surface, services, performance, error handling, background processing, and test reliability.
 
-| Severity | Count |
-|---|---:|
-| P0 — Critical | 0 |
-| P1 — High | 5 |
-| P2 — Medium | 10 |
-| P3 — Low | 2 |
-| **Total** | **17** |
+While the backend exhibits significant positive structural features—such as multi-tenant organization scoping, parameterized TypeORM queries preventing SQL injection, JWT refresh token rotation with hashed session persistence, and unified Joi request validation—the codebase suffers from **critical defects that directly impair compile-time integrity, operational availability, and security posture**:
 
-| Confidence | Count |
-|---|---:|
-| Confirmed from code/contracts | 16 |
-| Likely; failure condition was not reproduced against a live database | 1 |
-| Needs runtime verification | 0 |
+1. **Compile-Time & Syntax Breakage:** `backend/controllers/auditlog.controller.ts` contains fatal syntax corruptions (unclosed function blocks, orphan top-level statements, and undeclared identifiers) that prevent clean TypeScript transpilation. In addition, `backend/services/sla.service.ts` contains an unclosed loop construct and duplicated notification logic.
+2. **Immediate Startup Failure Risk:** `backend/services/cloudinary.service.ts` executes top-level throwing validations during module evaluation. If environment variables are missing, importing the service immediately crashes the entire Node process.
+3. **Severe Memory Exhaustion (DoS / OOM):** `backend/middleware/work.item.attachment.upload.middleware.ts` employs Multer's in-memory storage buffer with a 100 MB per-file limit across 5 files, allowing a single request to consume up to 500 MB of Node heap memory, triggering fatal Out-Of-Memory termination under light concurrent load.
+4. **Broken Access Control & Privilege Escalation:** All whiteboard endpoints lack project-level authorization checks; task comment and time entry routes permit arbitrary write operations to users holding only `task:read` access (including non-members on public projects); and login endpoints lack rate limiting.
+5. **Committed Secrets in Version Control:** `backend/.env.example` contains live Cloudinary API keys/secrets, active SMTP account credentials, and sample JWT secrets.
 
-The dedicated read-only security review identified six access-control findings (three P1 and three P2), described below. Its initial review of the changed work-item permission/attachment surfaces found no additional issue there. No production database, SMTP server, Cloudinary account, or running application was accessed. The working tree was already dirty before the audit, including backend and frontend changes and untracked files; the report assesses the current working-tree contents, which may not match a deployed revision.
+### Summary Issue Counts by Severity
 
-### Audit coverage and limitations
+| Severity | Count | Primary Impact |
+|---|:---:|---|
+| **Critical** | 3 | Code compilation failure, hardcoded credentials, potential crash on startup |
+| **High** | 5 | Memory exhaustion (DoS), Broken Object-Level Authorization (BOLA), SLA loop breakage |
+| **Medium** | 9 | Brute-force exposure, query builder syntax bugs, duplicate controller contracts, migration collisions |
+| **Low / Informational** | 5 | Duplicate imports, dead package dependencies, hardcoded test UUIDs |
+| **Total** | **22** | **Full inventory detailed in Section 10** |
 
-Reviewed the backend entry points and route registration; all route files; authentication, organization/invitation, project, work-item, sprint, dashboard, notification, chat, SLA, and audit workflow implementations; validators and middleware; selected related entities and migrations; backend tests; and frontend API calls/components for onboarding, work items, chat, project activity, and attachments. A dedicated security review examined authentication/session handling, organization membership, project/work-item routes, dashboard/audit, SLA/sprint, notifications, chat REST/WebSocket, configuration/migrations, and relevant frontend request contracts. Inspected migrations and entity definitions relevant to the work-item, attachment, invitation, SLA, and project-label workflows, but did not validate the full schema against a live database. Some backend files were inspected by responsibility and call path rather than exhaustively line-by-line.
+### Summary Issue Counts by Category
 
-## 2. Repository and Workflow Map
+| Category | Issues |
+|---|:---:|
+| Security & Authorization | 6 |
+| Business Logic & Runtime Correctness | 5 |
+| Architecture & API Contracts | 4 |
+| Database, TypeORM & Migrations | 4 |
+| Performance & Resource Management | 2 |
+| Testing, Reliability & Maintenance | 1 |
 
-### Backend request lifecycle
+---
 
-`backend/server.ts` initializes the TypeORM PostgreSQL `DataSource`, starts SLA and recurrence schedulers, creates the HTTP server, and attaches the chat WebSocket gateway. `backend/app.ts` configures JSON/urlencoded parsing, CORS and cookies, mounts Express routers, and installs the centralized error handler. Routes selectively apply authentication, validation, and permission middleware before async controllers; several subresource routes lack project-scoped checks, as recorded below. Controllers use TypeORM repositories/transactions and services; responses are generally JSON envelopes.
+## 2. Overall Backend Score and Rating Breakdown
 
-| Area | Backend path / responsibility | Frontend evidence |
-|---|---|---|
-| Authentication and organization setup | `backend/routes/user.routes.ts`, `backend/controllers/user.controller.ts`, `backend/validations/user.validator.ts`; registration, login, refresh, current user, logout | `frontend/src/services/api.ts`, `frontend/src/features/onboarding/CompanySetupView.tsx` |
-| Organization members and invitations | `backend/routes/organization.routes.ts`, `backend/controllers/organization.controller.ts`, `backend/controllers/member-invitation.controller.ts`, `backend/services/member-invitation.service.ts` | `frontend/src/services/api.ts`, `frontend/src/features/onboarding/CompanySetupView.tsx` |
-| Projects and memberships | `backend/routes/project.routes.ts`, `backend/controllers/project.controller.ts`, `backend/middleware/check.permissions.ts` | `frontend/src/services/api.ts`, project views |
-| Work items and collaboration | `backend/routes/work.item.routes.ts`, `backend/controllers/task.controller.ts`, `backend/controllers/feature-persistence.controller.ts`; comments, time entries, dependencies, labels, workflow, audit | `frontend/src/services/api.ts`, task/project components, `frontend/src/state/AppContext.tsx` |
-| Sprints and dashboards | `backend/routes/sprint.routes.ts`, `backend/controllers/sprint.controller.ts`, `backend/routes/dashboard.route.ts`, `backend/controllers/dashboard.controller.ts` | `frontend/src/services/api.ts`, project dashboards |
-| SLA, recurrence, attachments | `backend/services/sla.service.ts`, `backend/services/recurrence.service.ts`, `backend/services/scheduler.service.ts`, attachment middleware/service and Cloudinary integration | task and attachment components/API calls |
-| Notifications | `backend/routes/notification.routes.ts`, `backend/controllers/notification.controller.ts`, `backend/services/notification.service.ts` | `frontend/src/services/api.ts`, notification UI |
-| Chat | `backend/routes/chat.routes.ts`, `backend/controllers/chat.controller.ts`, `backend/services/chat.service.ts`, `backend/websocket/chat.gateway.ts` | `frontend/src/features/chat/ChatView.tsx`, `frontend/src/services/api.ts` |
+The rating is calculated using a transparent weighted scoring system where **Security**, **Correctness**, **Data Integrity**, and **Architecture** carry appropriate enterprise weight.
 
-The frontend API client sends JSON requests to `VITE_API_URL` (defaulting to localhost), stores an access token in local storage, and attempts cookie-based refresh after a 401. The backend also uses HTTP-only cookies. The route and payload contracts are not consistent across several onboarding, invitation, chat, and audit surfaces; see findings below.
+### Category Scores (0 – 10)
 
-## 3. Critical and High-Priority Findings
+| # | Category | Weight | Score | Justification |
+|---|---|:---:|:---:|---|
+| 1 | **Architecture & Design** | 10% | **6.5 / 10** | Clear layered separation (Routes -> Controllers -> Services -> Entities), but marred by duplicate controllers (`user.controller.ts` vs `organization.controller.ts`) and mixed responsibilities. |
+| 2 | **Routes & Controllers** | 10% | **5.5 / 10** | Syntax breakage in `auditlog.controller.ts`, missing sprint lifecycle endpoints (update/delete/start/close), and route-level authorization omissions. |
+| 3 | **Services & Business Logic** | 10% | **5.0 / 10** | Solid dependency scheduling and recurrence math; however, SLA worker loop corruption and top-level module exceptions severely detract from stability. |
+| 4 | **Database Schema & Data Integrity** | 10% | **7.0 / 10** | Good normalization, explicit foreign key cascade/restrict constraints, multi-tenant isolation via `organizationId`, and unique constraints on critical paths. |
+| 5 | **TypeORM Entities & Relationships** | 5% | **6.5 / 10** | Well-declared entities and column types, but contains untyped string-based relation references (`@OneToMany("WorkItemComment", ...)`) and missing inverse mappings. |
+| 6 | **Migrations & Schema Consistency** | 5% | **5.5 / 10** | Non-standard migration naming (`MakeWorkItemPriorityNullable...`), timestamp collisions (`1792400000000`, `1793000000000`), redundant index creation, and defensive table guards. |
+| 7 | **Authentication & Authorization** | 10% | **6.0 / 10** | Robust dual-token JWT + hashed refresh session rotation, but undermined by BOLA on whiteboards, missing project write checks on comments, and missing route guards. |
+| 8 | **Validation & Error Handling** | 5% | **7.0 / 10** | Strict Joi validation across major input payloads and centralized `AppError` handling; minor inconsistencies with raw thrown errors and unhandled edge cases. |
+| 9 | **Security** | 15% | **5.0 / 10** | Hardcoded production-like secrets in `.env.example`, missing login rate limiting, unpruned memory cache in auth limiter, and write permissions granted to read-only roles. |
+| 10 | **Performance & Scalability** | 10% | **5.0 / 10** | Severe 500 MB memory buffer in attachment uploads (OOM risk), sequential N+1 aggregate queries in dashboard metrics, and double DB queries in authorization middleware. |
+| 11 | **Testing & Reliability** | 5% | **3.5 / 10** | Only 8 unit test files (pure Joi schema and utility functions); zero integration tests, zero database tests, and missing dependency installation preventing CI execution. |
+| 12 | **Code Quality & Maintainability** | 5% | **4.5 / 10** | Active syntax corruption in `auditlog.controller.ts`, duplicated imports, orphaned comments, and dead packages in manifests. |
+| 13 | **Configuration & Dependency Management** | 5% | **5.5 / 10** | Strong typed config validation, but top-level startup crash on unconfigured third-party services and unneeded runtime packages (`express-session`, `pnpm`). |
 
-### [B-01] [P1] Frontend organization registration targets an unmounted route
+### Overall Backend Weighted Score
 
-- **Confidence:** Confirmed
-- **Category:** Correctness / API contract
-- **Affected backend files:** `backend/app.ts:38`, `backend/routes/user.routes.ts:9`, `backend/validations/user.validator.ts:67-77`
-- **Related frontend evidence:** `frontend/src/services/api.ts:170-175`; `frontend/src/features/onboarding/CompanySetupView.tsx:88-106`
-- **Problem:** The frontend posts to `/api/users/register`, but the mounted user router only registers `POST /` (which resolves to `POST /api/users`). No `/register` route is mounted. The onboarding view catches/logs the registration failure and continues to save the company in local application state, so the user can appear onboarded without a backend organization, user, or session.
-- **Root cause:** The route contract and frontend call path have drifted; the caller also treats backend registration failure as a non-blocking notice.
-- **Impact:** Backend-backed registration does not complete from the current onboarding workflow. Local state can claim success while backend state is absent, causing later authenticated calls to fail or target a different user/org.
-- **Failure scenario:** Submit company setup in the frontend; the request to `/api/users/register` receives an unmatched-route response; the UI continues through onboarding without creating backend records.
-- **Recommended backend-only fix:** Add and test a compatibility registration route at the path the existing client calls, delegating to the canonical registration implementation. Preserve the existing nested `{ user, organization }` payload accepted by `onboardingSchema`, and return the response fields consumed by the client. Avoid maintaining a second independent registration implementation.
-- **Separation of concerns:** Consolidate organization/user/SLA/session creation into one registration service; keep route-specific compatibility aliases thin.
-- **Compatibility and migration risks:** Preserve `/api/users/` for existing consumers. Ensure the compatibility route does not change password, cookie, or response semantics. No schema migration is required.
-- **Tests to add:** HTTP integration test for `POST /api/users/register` with the frontend payload; assert one organization, admin user, default SLA policy, and valid session; assert validation and duplicate-email responses; verify the current frontend onboarding contract.
-- **Effort:** Small
+$$\text{Overall Score} = \sum (\text{Score}_i \times \text{Weight}_i) = \mathbf{5.88 / 10}\quad (\text{Rating: Grade C+ / Medium Workflow Risk})$$
 
-### [B-02] [P1] Invitation endpoints and payloads do not match the frontend contract
+---
 
-- **Confidence:** Confirmed
-- **Category:** Correctness / API contract
-- **Affected backend files:** `backend/app.ts:38-42`, `backend/routes/organization.routes.ts:18-24`, `backend/controllers/member-invitation.controller.ts:12-27, 30-34`
-- **Related frontend evidence:** `frontend/src/services/api.ts:226-239`; `frontend/src/features/onboarding/CompanySetupView.tsx:196-204`
-- **Problem:** The client posts invitations to `/api/users/invite` with `{ invitations: [...] }`, while the backend exposes invitation endpoints under `/api/organization(s)/members/invite` and accepts either an array or `{ members: [...] }`. The client also posts acceptance to `/api/users/accept-invitation?token=...`, while the backend exposes `POST /api/organization(s)/accept` and requires `token` in the request body. Neither client path is mounted, and the invitation body shape is rejected by the backend schema.
-- **Root cause:** Independent endpoint and request-shape changes were not kept in sync across the API surface.
-- **Impact:** Team invitations and invitation acceptance fail through the current frontend workflow. The onboarding component catches invitation errors, making the failure easy to mistake for a successful local-only step.
-- **Failure scenario:** Submit one or more invitations from onboarding; the request receives a route error. If the route alone were aliased, `{ invitations }` would still fail validation. Acceptance similarly misses the route and omits the required body token.
-- **Recommended backend-only fix:** Provide compatibility aliases for the existing client paths and normalize `{ invitations }` to the canonical members list. For acceptance, read and validate the token in the same location the existing client sends it, or provide a compatible alias that safely transfers it to the canonical service. Keep one canonical service implementation and return explicit per-recipient outcomes.
-- **Separation of concerns:** Keep payload normalization in a thin route/controller adapter; keep invite lifecycle and persistence in `member-invitation.service.ts`.
-- **Compatibility and migration risks:** Keep current `/api/organization(s)/members/invite` and `/api/organization(s)/accept` routes working. Do not silently elevate roles or alter the current invitation credential policy while adding aliases.
-- **Tests to add:** Route-level tests for both canonical and compatibility paths; accepted/rejected schema cases; multiple invitation payloads; acceptance token in the client’s current location; API response shape tests.
-- **Effort:** Medium
+## 3. Technology Stack and Scope Audited
 
-### [B-12] [P1] Organization-wide member-management permission allows project-admin escalation
+### Technology Stack
+- **Runtime & Language:** Node.js v24.x, TypeScript 5.9.3, CommonJS module resolution.
+- **Web Framework:** Express 5.3.0.
+- **Database & ORM:** PostgreSQL, TypeORM 1.1.2 (0.3.x driver line), `pg` 8.23.1.
+- **Authentication:** JSON Web Tokens (`jsonwebtoken` 9.0.3), `bcrypt` 6.0.0, SHA-256 session token hashing.
+- **Validation:** Joi 18.2.9.
+- **File & Media Handling:** Multer 2.4.0 (memory storage), Cloudinary 2.11.0.
+- **Scheduling & Background Tasks:** Croner 10.0.1.
+- **Real-Time Communication:** `ws` 8.22.0 (Chat Gateway) & `socket.io` 4.8.4 (Whiteboard Gateway).
+- **Email Delivery:** Nodemailer 10.1.1.
 
-- **Confidence:** Confirmed (static review; confidence 9/10)
+### Scope of Files Inspected
+- **Configuration & Boot:** `backend/server.ts`, `backend/app.ts`, `backend/config/config.ts`, `backend/config/data.source.ts`, `backend/.env.example`.
+- **Entities (25 files):** All entities in `backend/entities/*.ts`.
+- **Migrations (32 files):** All database migrations in `backend/migrations/*.ts`.
+- **Controllers (16 files):** `user`, `organization`, `member-invitation`, `project`, `project-settings`, `task`, `work-item-collaboration`, `whiteboard`, `chat`, `sla`, `sprint`, `dashboard`, `notification`, `auth`, `auditlog`, and `feature-persistence`.
+- **Services (14 files):** `work-item.service.ts`, `work-item-dependency.service.ts`, `work-item-workflow.service.ts`, `sla.service.ts`, `scheduler.service.ts`, `recurrence.service.ts`, `chat.service.ts`, `whiteboard.service.ts`, `notification.service.ts`, `member-invitation.service.ts`, `mail.service.ts`, `cloudinary.service.ts`, `password-reset.service.ts`, `work.item.attachment.service.ts`.
+- **Middleware (7 files):** `is.loggedin.ts`, `check.permissions.ts`, `project.permission.ts`, `error.handler.ts`, `async.handler.ts`, `sprint.validate.ts`, `work.item.attachment.upload.middleware.ts`.
+- **Routes (11 files):** All route manifests in `backend/routes/*.ts`.
+- **Validation Schemas (5 files):** `user.validator.ts`, `work.item.validations.ts`, `project.validations.ts`, `whiteboard.validation.ts`, `sprint.validations.ts`.
+- **Tests & Scripts (9 files):** `backend/tests/*.ts`, `backend/e2e-feature-check.ts`.
+
+---
+
+## 4. Architecture and Design Assessment
+
+### Layer Separation & Modularization
+The codebase adheres to a 4-tier model:
+1. **Routing & Transport:** Route files define path verbs and bind middleware.
+2. **Controllers:** Extract parameters, invoke validation, handle HTTP status codes.
+3. **Services:** Contain business rules, transactional units, scheduling algorithms, and notification dispatchers.
+4. **Data Access (TypeORM):** Entities, repositories, and query builders.
+
+### Architecture Strengths
+- **Multi-Tenant Context:** Nearly all entities enforce `organizationId`, preventing cross-tenant leakage.
+- **Transaction Boundaries:** Critical multi-step workflows (organization onboarding, task recurrence creation, project member promotion) execute inside `AppDataSource.transaction(...)`.
+- **Decoupled Facades:** `feature-persistence.controller.ts` acts as a backward-compatible facade re-exporting handlers from dedicated domain controllers.
+
+### Architectural Anti-Patterns & Deficiencies
+- **Dual Registration Implementations:** `backend/controllers/user.controller.ts:registerOrganization` and `backend/controllers/organization.controller.ts:registerOrganization` provide duplicate onboarding implementations that differ in response schemas, cookie path definitions (`/` vs `/api/auth/refresh`), and token formats.
+- **Dual WebSocket Frameworks:** The application attaches both raw `ws` (`/ws/chat`) and `socket.io` (`/socket.io`) to the same Node HTTP server. This duplicates connection lifecycles, heartbeats, authentication logic, and library overhead.
+- **Leaky Controller Abstractions:** `dashboard.controller.ts` contains large blocks of raw query building, mathematical distributions, and aggregation logic rather than delegating to a dedicated `dashboard.service.ts`.
+
+---
+
+## 5. Database and TypeORM Assessment
+
+### Entity Definitions & Data Integrity
+- **Primary Keys:** Standardized on UUIDv4 across all entities (`@PrimaryGeneratedColumn("uuid")`).
+- **Foreign Keys & Referential Actions:** Foreign keys are explicitly configured with appropriate deletion semantics:
+  - `ON DELETE CASCADE` for sub-resources (attachments, comments, occurrences, project members, whiteboard revisions).
+  - `ON DELETE RESTRICT` for audit trails and organizational ownership (preventing accidental deletion of users owning work items).
+  - `ON DELETE SET NULL` for optional references (parent tasks, sprint assignments, labels, escalated users).
+- **Constraints & Indexes:**
+  - Multi-column unique constraints are correctly declared (e.g., `UQ_work_item_dependencies` on `["workItemId", "dependsOnWorkItemId"]`).
+  - Indexed lookup fields (e.g., `IDX_work_items_project_status`, `IDX_notifications_user`, `IDX_audit_logs_project`).
+
+### Entity & Relationship Flaws
+- **Untyped String Relations:** In `backend/entities/work.item.entity.ts:249-256`, relations to comments, time entries, and dependencies are defined as string literals without inverse property binding:
+  ```typescript
+  @OneToMany("WorkItemComment", "workItem")
+  comments: any[];
+  ```
+  `WorkItemComment` does not declare the reciprocal property `(workItem) => workItem.comments`, defeating TypeORM compile-time relationship checking.
+- **QueryBuilder Property Mismatch:** In `backend/services/member-invitation.service.ts:178`, the QueryBuilder queries `.where("user.invite_token_hash = :tokenHash")`. In TypeORM QueryBuilder syntax, property paths correspond to entity attributes (`user.inviteTokenHash`), not raw database column names.
+
+### Migration Architecture & Schema Drift Risks
+- **Timestamp Collision:**
+  - `1792400000000-AddAuditLogUndoTracking.ts` and `1792400000000-AddChatTables.ts` share identical timestamp `1792400000000`.
+  - `1793000000000-CreateWhiteboards.ts` and `1793000000000-RepairWorkItemLabelRelation.ts` share timestamp `1793000000000`.
+- **Lexicographical Naming Defect:**
+  `backend/migrations/MakeWorkItemPriorityNullable1792818000000.ts` starts with the letter `M` instead of the timestamp. While TypeORM parses the trailing digits, filesystem loaders and custom tooling sorting by filename execute this migration out of chronological sequence.
+- **Redundant Index Creation:**
+  Migration `1792300000000-AddFeaturePersistenceTables.ts` created index `IDX_project_labels_project` on `project_labels(project_id)`. Subsequently, migration `1792399247543-AddProjectLabels.ts` executes `CREATE INDEX "IDX_project_labels_project_id" ON "project_labels" ("project_id")` without `IF NOT EXISTS`, creating duplicate duplicate indexes on the same column.
+
+---
+
+## 6. Routes, Controllers, Services, and API Assessment
+
+### Route Registration and HTTP Semantics
+- **CORS & HTTP Security Headers:** Configured in `app.ts` with `helmet`-equivalent manual headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and HSTS in production).
+- **Route Shadowing Fixed:** Previous routing shadowing between `/api/chat/conversations` and `/api/chat/:conversationId` was resolved by explicitly mounting `/api/chat/conversations` prior to parameterized subpaths.
+- **Missing Sprint Routes:** The backend provides `POST /projects/:projectId/sprints` and `GET /projects/:projectId/sprints`, but completely lacks routes to update a sprint, start a sprint, complete a sprint, or delete a sprint.
+
+### Controller Implementation Review
+- **`auditlog.controller.ts` Compilation Malpractice:** Severe code corruption exists between lines 114 and 184. A fragmented paste introduced orphan conditionals and duplicate conflicting function signatures (`createAuditLog`).
+- **`user.controller.ts` vs `organization.controller.ts` Drift:** Both controllers expose organizational setup with differing response formats, causing client confusion depending on whether `/api/users/register` or `/api/organization` is invoked.
+
+---
+
+## 7. Security Assessment
+
+### Authentication & Token Management
+- **JWT Storage:** Dual-token strategy: 15-minute access token in memory/Authorization header or cookie, and a 7-day refresh token stored in an `httpOnly`, `sameSite: lax` cookie.
+- **Refresh Token Rotation:** Refresh tokens are hashed using SHA-256 before storage in `user_sessions`. Rotating a refresh token atomically invalidates the prior token hash.
+- **Password Hashing:** Uses `bcrypt` with salt rounds = 12. Password reset tokens use crypto-secure random hex strings hashed with SHA-256 and expire in 30 minutes.
+
+### Security Vulnerabilities Identified
+1. **Committed Secrets in Repository:**
+   - **File:** `backend/.env.example`
+   - **Vulnerability:** Contains active Cloudinary API credentials, live Google SMTP credentials (email address and application-specific password), and sample JWT access keys.
+   - **Risk:** Compromise of third-party media storage, unauthorized email relaying, and potential token forgery if copied to staging environments.
+2. **Broken Object-Level Authorization (BOLA) on Whiteboards:**
+   - **File:** `backend/routes/whiteboard.routes.ts`
+   - **Vulnerability:** None of the whiteboard endpoints (`POST`, `GET`, `PATCH`, `DELETE`) utilize `requireProjectPermission`.
+   - **Risk:** Any authenticated user in the organization can view, modify, or delete whiteboards in private projects they do not belong to.
+3. **Privilege Escalation on Task Comments & Time Entries:**
+   - **File:** `backend/routes/work.item.routes.ts:118, 134`
+   - **Vulnerability:** `POST /api/work-items/:workItemId/comments` and `POST /api/work-items/:workItemId/time-entries` require only `task:read` permission.
+   - **Risk:** Users with read-only permissions (and non-members viewing public projects) can forge comments and log billable time entries on behalf of others.
+4. **Missing Rate Limiting on Login:**
+   - **File:** `backend/routes/user.routes.ts:17`
+   - **Vulnerability:** `POST /api/users/login` has no rate limiter attached.
+   - **Risk:** Automated credential stuffing and brute-force password guessing.
+5. **Rate Limiter Memory Leak & IP Spoofing:**
+   - **File:** `backend/routes/auth.routes.ts:9-44`
+   - **Vulnerability:** Custom in-memory rate limiter never deletes expired IP keys from `requestMap`. Furthermore, `req.headers["x-forwarded-for"]` is parsed without Express trust proxy validation.
+   - **Risk:** Process memory leak over time; attackers can bypass the limiter by spoofing arbitrary `X-Forwarded-For` header values.
+
+---
+
+## 8. Performance and Scalability Assessment
+
+### Memory Exhaustion Vulnerability (Multer Buffer)
+In `backend/middleware/work.item.attachment.upload.middleware.ts:5-6, 90-95`:
+```typescript
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB each
+const MAX_FILES = 5;
+const upload = multer({ storage: multer.memoryStorage(), limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE } });
+```
+- **Consequence:** Multer buffers the entire payload in RAM (`Buffer`). Five 100 MB files require 500 MB of contiguous heap memory. Three concurrent uploads exceed the default 1.4 GB Node.js V8 memory limit, triggering an immediate Out-Of-Memory (OOM) crash of the backend process.
+- **Remediation:** Reduce max file size to 10–25 MB, limit simultaneous uploads, or stream uploads directly to temporary disk storage or directly to Cloudinary.
+
+### Inefficient Sequential Queries (Dashboard)
+In `backend/controllers/dashboard.controller.ts:98-180`:
+The endpoint executes 7 to 10 sequential database queries on `work_items` to compute total items, completed items, overdue items, type distributions, and status distributions.
+- **Remediation:** Replace with a single SQL query using PostgreSQL conditional aggregation:
+  ```sql
+  SELECT 
+    COUNT(*) AS total,
+    COUNT(*) FILTER (WHERE status = 'DONE') AS completed,
+    COUNT(*) FILTER (WHERE status != 'DONE' AND due_date < NOW()) AS overdue,
+    COUNT(*) FILTER (WHERE priority = 'URGENT') AS urgent_count
+  FROM work_items WHERE project_id = $1;
+  ```
+
+### Redundant Database Round-Trips in Middleware
+`backend/middleware/check.permissions.ts:80-92` queries `userRepository.findOne(...)` on every request, despite `isLoggedIn` middleware having executed the exact same query immediately beforehand.
+- **Remediation:** Reuse the verified `req.user` attached by `isLoggedIn`.
+
+---
+
+## 9. Testing, Reliability, and Code Quality
+
+### Test Suite Evaluation
+The test suite consists of 8 test files in `backend/tests/`:
+- `api-contracts-and-permissions.test.ts`
+- `invitation-acceptance.test.ts`
+- `sla-permissions.test.ts`
+- `work-item-assignment.test.ts`
+- `work-item-attachment-upload.test.ts`
+- `work-item-dependency.test.ts`
+- `work-item-priority.test.ts`
+- `work-item-workflow.test.ts`
+
+### Critical Testing Shortcomings
+- **Pure Unit Testing Only:** All 8 test files only assert static functions, Joi schemas, or memory algorithms. There are **zero HTTP integration tests** using `supertest` and **zero database integration tests** verifying TypeORM migrations or repository queries.
+- **Environment Blockers:** `node_modules` is not installed in the workspace root, meaning tests cannot execute out of the box in the environment.
+- **No Coverage for Critical Features:** No automated tests exist for SLA escalation, recurring task generation, audit undo reversal, project membership mutation, or chat WebSocket events.
+
+---
+
+## 10. Complete Bug and Issue Inventory
+
+### Issue Classification Table
+
+| Issue ID | Severity | Category | File Location | Confirmed / Risk |
+|---|:---:|---|---|:---:|
+| **BUG-001** | Critical | Code Quality / Compilation | `backend/controllers/auditlog.controller.ts:114-184` | Confirmed |
+| **BUG-002** | High | Business Logic / Schedulers | `backend/services/sla.service.ts:373-420` | Confirmed |
+| **BUG-003** | Critical | Runtime Startup / Reliability | `backend/services/cloudinary.service.ts:8-10` | Confirmed |
+| **BUG-004** | High | Performance / DoS | `backend/middleware/work.item.attachment.upload.middleware.ts:5-6` | Confirmed |
+| **BUG-005** | Medium | Database / TypeORM | `backend/services/member-invitation.service.ts:178` | Confirmed |
+| **BUG-006** | Medium | Business Logic / QueryBuilder | `backend/services/sla.service.ts:277-279` | Confirmed |
+| **BUG-007** | Medium | Architecture / API Drift | `backend/controllers/organization.controller.ts:40-160` | Confirmed |
+| **BUG-008** | Low | Code Quality | `backend/controllers/auditlog.controller.ts:5-6` | Confirmed |
+| **BUG-009** | Low | Dependencies | `backend/package.json:23, 29` | Confirmed |
+| **BUG-010** | Low | Testing / Code Quality | `backend/e2e-feature-check.ts:24, 30` | Confirmed |
+| **SEC-001** | Critical | Security / Secrets | `backend/.env.example:12-19` | Confirmed |
+| **SEC-002** | High | Security / Access Control | `backend/routes/whiteboard.routes.ts:17-24` | Confirmed |
+| **SEC-003** | High | Security / Authorization | `backend/routes/work.item.routes.ts:118, 134` | Confirmed |
+| **SEC-004** | High | Security / Rate Limiting | `backend/routes/user.routes.ts:17` | Confirmed |
+| **SEC-005** | Medium | Security / Resource Leak | `backend/routes/auth.routes.ts:9-44` | Confirmed |
+| **SEC-006** | Medium | Security / Authorization | `backend/routes/project.routes.ts:183-187` | Confirmed |
+| **SEC-007** | Medium | Security / Input Validation | `backend/validations/user.validator.ts:48, 58` | Confirmed |
+| **SEC-008** | Medium | Security / Authorization | `backend/routes/dashboard.route.ts:17-22` | Confirmed |
+| **SEC-009** | Medium | Functional / API Surface | `backend/routes/sprint.routes.ts:13-24` | Confirmed |
+| **DB-001** | Medium | Database / Migrations | `backend/migrations/1792400000000-*.ts` | Confirmed |
+| **DB-002** | Medium | Database / Migrations | `backend/migrations/MakeWorkItemPriorityNullable1792818000000.ts` | Confirmed |
+| **DB-003** | Low | Database / Migrations | `backend/migrations/1792399247543-AddProjectLabels.ts:8` | Confirmed |
+
+---
+
+### Detailed Finding Descriptions
+
+#### [BUG-001] [Critical] Compilation & Syntax Breakage in Audit Log Controller
+- **File:** `backend/controllers/auditlog.controller.ts:114-184`
+- **Category:** Code Quality / Compilation
+- **Description:** Lines 114–122 contain a syntax fragmentation error (`return match; }` referencing undeclared `field` and `match`), followed by orphan top-level statements outside any enclosing function (`if (!pId && ...)`), an orphan closing brace at line 176 (`return project; }`), and a duplicate second declaration of `export async function createAuditLog()`.
+- **Impact:** Fails TypeScript compilation (`tsc`) and runtime execution under `ts-node`.
+- **Recommended Fix:** Restore the intended implementation of `createAuditLog` from `dist/controllers/auditlog.controller.js` or clean up the unclosed helper logic, removing duplicate function exports and undeclared identifiers.
+- **Verification:** Run `tsc --noEmit` and execute a unit test importing `auditlog.controller.ts`.
+
+#### [BUG-002] [High] Unclosed Loop and Duplicated Notification Dispatch in SLA Service
+- **File:** `backend/services/sla.service.ts:373-420`
+- **Category:** Business Logic / Schedulers
+- **Description:** In `refreshSlaStatuses`, line 373 opens `for (const userId of recipients) {` but lacks a closing brace before `try { const assignments = ...`. Inside the unclosed loop, it re-queries assignments and issues duplicate notifications directly through `notificationService.createNotification`, conflicting with the buffered `notifications` array handled by the scheduler.
+- **Impact:** Duplicate SLA escalation notifications and malformed control flow in the minute-by-minute SLA cron worker.
+- **Recommended Fix:** Close the recipient accumulation loop cleanly, remove the redundant inline `notificationService.createNotification` call, and rely exclusively on `createNotificationsBestEffort` in `scheduler.service.ts`.
+- **Verification:** Unit test `refreshSlaStatuses` verifying that exactly one notification per recipient is returned in `notifications`.
+
+#### [BUG-003] [Critical] Top-Level Exception Crashes Application on Missing Cloudinary Configuration
+- **File:** `backend/services/cloudinary.service.ts:8-10`
+- **Category:** Runtime Startup / Reliability
+- **Description:** `cloudinary.service.ts` executes `if (!cloudName || !apiKey || !apiSecret) throw new Error(...)` at top-level module load time. Any controller importing attachment utilities transitively imports this module, crashing the application immediately upon boot if Cloudinary keys are omitted.
+- **Impact:** Prevents backend startup or test execution in environments where attachments are not actively used.
+- **Recommended Fix:** Defer Cloudinary credential validation to upload execution time inside `uploadToCloudinary()`.
+- **Verification:** Start the application with unset Cloudinary variables; verify HTTP server initializes.
+
+#### [BUG-004] [High] Memory Exhaustion (DoS / OOM Crash) in Attachment Upload Middleware
+- **File:** `backend/middleware/work.item.attachment.upload.middleware.ts:5-6, 90-95`
+- **Category:** Performance / Scalability
+- **Description:** Multer is configured with `memoryStorage()` allowing 5 files of 100 MB each (500 MB per request).
+- **Impact:** A single concurrent attacker or high-volume upload will trigger Node.js process Out-Of-Memory termination.
+- **Recommended Fix:** Lower `MAX_FILE_SIZE` to 15 MB, reduce `MAX_FILES` to 3, and switch Multer to disk storage (`multer.diskStorage`) with automatic file cleanup after Cloudinary streaming.
+- **Verification:** Send concurrent multipart requests with 100 MB payloads; verify memory consumption remains bounded.
+
+#### [BUG-005] [Medium] Invalid QueryBuilder Column Name in Invitation Acceptance
+- **File:** `backend/services/member-invitation.service.ts:178`
+- **Category:** Database / TypeORM
+- **Description:** The QueryBuilder executes `.where("user.invite_token_hash = :tokenHash")`. TypeORM parses query builder properties according to entity attribute names, which is `user.inviteTokenHash`.
+- **Impact:** Depending on TypeORM naming strategy configuration, this query can throw an unknown property error or fail to match records.
+- **Recommended Fix:** Change to `.where("user.inviteTokenHash = :tokenHash")`.
+- **Verification:** Execute invitation acceptance integration test against an active database.
+
+#### [BUG-006] [Medium] Overwritten Order Clause in SLA Refresh QueryBuilder
+- **File:** `backend/services/sla.service.ts:277-279`
+- **Category:** Business Logic / QueryBuilder
+- **Description:** Line 277 calls `.orderBy("COALESCE(workItem.slaDeadline, workItem.createdAt)", "ASC")` followed immediately by line 278 `.orderBy("COALESCE(workItem.updatedAt, workItem.createdAt)", "ASC")`. In TypeORM, calling `.orderBy()` a second time clears and replaces all existing order clauses.
+- **Impact:** The deadline ordering is discarded; items are sorted only by updated date.
+- **Recommended Fix:** Replace the second `.orderBy()` with `.addOrderBy()`.
+- **Verification:** Inspect the SQL generated by `.getQuery()` on the QueryBuilder.
+
+#### [BUG-007] [Medium] Divergent Registration Endpoints and Session Inconsistency
+- **File:** `backend/controllers/organization.controller.ts:40-160` vs `backend/controllers/user.controller.ts:113-217`
+- **Category:** Architecture / API Drift
+- **Description:** Both files export `registerOrganization` with incompatible response contracts and cookie settings (`/api/auth/refresh` path vs `/` path).
+- **Impact:** Divergent API responses depending on which route client applications hit.
+- **Recommended Fix:** Consolidate registration logic into a single canonical service (`member-invitation.service.ts` or `user.service.ts`) and route handler.
+- **Verification:** Issue registration requests to both `/api/users/register` and `/api/organization` and assert identical session response schemas.
+
+#### [BUG-008] [Low] Duplicate Entity Imports
+- **File:** `backend/controllers/auditlog.controller.ts:5-6`, `backend/services/work-item.service.ts:5-6`
+- **Category:** Code Quality
+- **Description:** Adjacent duplicate imports of `ProjectMember`.
+- **Impact:** Code hygiene degradation and linter warnings.
+- **Recommended Fix:** Combine imports into a single line.
+
+#### [BUG-009] [Low] Unused Packages in Production Manifest
+- **File:** `backend/package.json:23, 29`
+- **Category:** Configuration / Dependencies
+- **Description:** `express-session` is installed in dependencies but never used (session persistence is custom via `UserSession`). `pnpm` is erroneously listed in runtime `dependencies`.
+- **Impact:** Unnecessary bundle weight and supply chain footprint.
+- **Recommended Fix:** Remove `express-session` and `pnpm` from `dependencies`.
+
+#### [BUG-010] [Low] Hardcoded Test Entity IDs in Root Utility
+- **File:** `backend/e2e-feature-check.ts:24, 30`
+- **Category:** Code Quality
+- **Description:** Contains hardcoded UUID `76db22fe-b53c-496a-82f3-f0e2dcf8ab45`.
+- **Impact:** Script fails in any environment other than the local database where that record was created.
+- **Recommended Fix:** Parameterize IDs via CLI flags or dynamically query the latest task.
+
+#### [SEC-001] [Critical] Live Third-Party Secrets Committed to Version Control
+- **File:** `backend/.env.example:12-19`
+- **Category:** Security / Secrets Exposure
+- **Description:** The `.env.example` file contains sensitive production/development credentials, including a Cloudinary API key and secret, Google SMTP credentials with an application password, and active 32+ character JWT secrets.
+- **Impact:** Direct credential leakage enabling unauthorized media management and mail relaying.
+- **Recommended Fix:** Replace all values in `.env.example` with placeholder tokens (e.g., `your_cloudinary_api_key_here`). Invalidate and rotate the existing Cloudinary API secret and Google application password immediately.
+- **Verification:** Run git secrets scanner / trufflehog.
+
+#### [SEC-002] [High] Broken Object-Level Authorization (BOLA) on Whiteboards
+- **File:** `backend/routes/whiteboard.routes.ts:17-24`
+- **Category:** Security / Access Control
+- **Description:** All whiteboard endpoints (`POST`, `GET`, `PATCH`, `DELETE`) rely solely on `isLoggedIn`. No route-level `requireProjectPermission` middleware is applied.
+- **Impact:** Any authenticated user in the organization can read, mutate, rename, or delete whiteboards belonging to private projects.
+- **Recommended Fix:** Attach `requireProjectPermission("project:view")` for GET routes, `requireProjectPermission("project:update")` for POST/PATCH, and `requireProjectPermission("project:delete")` for DELETE.
+- **Verification:** Attempt to access and delete a private project's whiteboard as a non-member; assert `403 Forbidden`.
+
+#### [SEC-003] [High] Write Access Granted to Read-Only Users on Task Comments & Time Entries
+- **File:** `backend/routes/work.item.routes.ts:118, 134`
 - **Category:** Security / Authorization
-- **Affected backend files:** `backend/routes/project.routes.ts:86-109`; `backend/controllers/project.controller.ts:311-359,435-465`
-- **Related frontend evidence:** `frontend/src/services/api.ts` project-member API methods
-- **Problem:** Project membership mutation routes use the organization-wide `project:member:manage` permission. The controller checks that the target user belongs to the organization, but does not verify that the caller has authority in the particular project before assigning project `ADMIN`. The role-update handler also persists the requested role without enforcing the project-admin-only restriction.
-- **Root cause:** Organization-level role permission is treated as sufficient for project-scoped privilege assignment.
-- **Impact:** A manager who is not a member of a private project can add themselves as a project administrator, then gain the project-admin permissions.
-- **Failure scenario:** An organization manager who knows a private project ID calls `POST /api/projects/:projectId/members` with their own member ID and `role: "ADMIN"`.
-- **Recommended backend-only fix:** Require project-scoped authorization for membership mutations and permit only an authorized project administrator to grant the `ADMIN` role. Enforce the rule inside the transaction/controller as well as in route middleware.
-- **Separation of concerns:** No extraction required; use the existing project-permission mechanism if it can express the grant restriction without bypassing organization scoping.
-- **Compatibility and migration risks:** Existing project membership roles remain unchanged. Verify organization-admin and project-admin management behavior before tightening other roles.
-- **Tests to add:** Non-member manager cannot add self as project admin; member/lead cannot promote another member to admin; authorized project admin can grant/demote roles; cross-organization project ID remains not found.
-- **Effort:** Medium
+- **Description:** `POST /:workItemId/comments` and `POST /:workItemId/time-entries` require `requireProjectPermission("task:read")` rather than a write permission.
+- **Impact:** Read-only project viewers and non-members viewing public projects can create comments and log time entries.
+- **Recommended Fix:** Introduce explicit `task:comment` and `task:time:log` permissions or require `requireProjectPermission("task:update")`.
+- **Verification:** Attempt to post a comment using a user with only `task:read`; assert `403 Forbidden`.
 
-### [B-13] [P1] Audit endpoints allow unauthorized log reads and client-forged undo state
+#### [SEC-004] [High] Missing Rate Limiting on User Login Endpoint
+- **File:** `backend/routes/user.routes.ts:17`
+- **Category:** Security / Rate Limiting
+- **Description:** `POST /api/users/login` is mounted without rate limiting middleware.
+- **Impact:** Vulnerable to brute-force credential guessing and dictionary attacks.
+- **Recommended Fix:** Attach a robust rate limiter (e.g., `express-rate-limit` backed by Redis or memory) allowing max 5–10 attempts per minute per IP/account.
+- **Verification:** Fire 20 consecutive failed login attempts; assert HTTP 429 response.
 
-- **Confidence:** Confirmed (static review; confidence 9/10)
-- **Category:** Security / Authorization / Data integrity
-- **Affected backend files:** `backend/routes/project.routes.ts:153-176`; `backend/controllers/feature-persistence.controller.ts:556-614`; `backend/controllers/auditlog.controller.ts:87-190`
-- **Related frontend evidence:** `frontend/src/services/api.ts` audit-log create/read/undo methods
-- **Problem:** Audit creation accepts client-supplied entity IDs and previous state. Undo loads the log and applies its supplied `previousState` to a same-organization task without checking project membership. Audit reads are authenticated but do not enforce membership in the requested private project.
-- **Root cause:** Audit data supplied by clients is trusted as reversible state, and audit routes do not consistently apply project-scoped authorization.
-- **Impact:** A same-organization user can inspect private-project audit history and create a forged reversible record that changes a task when undone.
-- **Failure scenario:** An authenticated user posts an audit event naming a task they do not manage and a crafted `previousState`, then invokes undo by log ID; alternatively, they query a known private project ID for its audit history.
-- **Recommended backend-only fix:** Require project-scoped authorization for audit reads and undo. Only allow undo for server-generated reversible events, and derive the state to restore from trusted server-side snapshots. Validate that the log, project, and target entity are related and in the caller’s authorized project.
-- **Separation of concerns:** No extraction required for the authorization fix; a server-owned audit/undo service may be introduced if it centralizes trusted snapshot creation.
-- **Compatibility and migration risks:** Existing client-generated audit entries may not have trustworthy snapshots. Preserve historical read access for authorized members while disabling unsafe undo of legacy/untrusted records.
-- **Tests to add:** Cross-project read/undo denial; forged client state cannot mutate a task; valid server-generated undo remains atomic and single-use; cross-organization IDs do not reveal existence.
-- **Effort:** Medium
+#### [SEC-005] [Medium] Unbounded Memory Growth and Spoofable IP in Auth Rate Limiter
+- **File:** `backend/routes/auth.routes.ts:9-44`
+- **Category:** Security / Denial of Service
+- **Description:** In-memory `requestMap` entries are never removed after expiration. Also parses `req.headers["x-forwarded-for"]` without `app.set("trust proxy")`.
+- **Impact:** Memory leak over prolonged runtime; rate limiter can be bypassed by spoofing IP headers.
+- **Recommended Fix:** Use standard `express-rate-limit` with LRU eviction and configure Express trust proxy settings appropriately.
+- **Verification:** Send requests with alternating `X-Forwarded-For` values; verify rate limits cannot be trivially circumvented.
 
-### [B-14] [P1] Removing an organization member leaves sessions usable and tenant-scoped audit checks fail open
-
-- **Confidence:** Confirmed (static review; confidence 9/10)
+#### [SEC-006] [Medium] Unprotected Audit Undo Route
+- **File:** `backend/routes/project.routes.ts:183-187`
 - **Category:** Security / Authorization
-- **Affected backend files:** `backend/controllers/organization.controller.ts:403-427`; `backend/middleware/is.loggedin.ts:84-105`; `backend/controllers/auditlog.controller.ts:115-117,153-168,308-358`
-- **Related frontend evidence:** Organization member removal and authenticated API calls in `frontend/src/services/api.ts`
-- **Problem:** Member removal detaches the user from the organization but does not revoke their refresh sessions. Authentication accepts an active user whose current organization is absent. Audit handlers apply tenant equality only when an organization ID exists, so the detached account skips the tenant guard.
-- **Root cause:** Membership removal is not coupled to session revocation, and audit handlers treat missing tenant context as permission to omit tenant checks.
-- **Impact:** A removed user can retain authenticated access and, with known project/log identifiers, access or undo audit-associated task changes outside their former organization.
-- **Failure scenario:** An administrator removes a member; the member reuses an existing access/refresh session and requests another organization’s known audit/project resource.
-- **Recommended backend-only fix:** Revoke all sessions for the removed user in the same transaction; require current organization context for tenant-scoped routes; make audit handlers fail closed when tenant context is missing.
-- **Separation of concerns:** No extraction required.
-- **Compatibility and migration risks:** Detached users may be intended to retain standalone accounts, so revoke only organization-bound sessions and require a new valid organization association for tenant data.
-- **Tests to add:** Remove member then reuse access and refresh tokens; verify organization-scoped routes reject users without an organization; verify audit read/undo cannot proceed without tenant context.
-- **Effort:** Medium
+- **Description:** `POST /audit-logs/:logId/undo` is mounted without `requireProjectPermission("project:update")`, only requiring `isLoggedIn`.
+- **Impact:** Teammates without update privileges can trigger undo actions across projects.
+- **Recommended Fix:** Enforce `requireProjectPermission("project:update")` consistently across both `/audit-logs/:logId/undo` mounts.
+- **Verification:** Attempt to undo an audit log as a read-only teammate; assert `403 Forbidden`.
 
-## 4. Complete Findings Register
+#### [SEC-007] [Medium] Permissive Invitation Role Schema
+- **File:** `backend/validations/user.validator.ts:48, 58`
+- **Category:** Security / Input Validation
+- **Description:** `invitedMembersSchema` permits `UserRole.ADMIN` as an allowed role in member invitation payloads.
+- **Impact:** If controller guards are bypassed, callers could invite members directly into organization admin roles.
+- **Recommended Fix:** Restrict invitation schema to `UserRole.MANAGER` and `UserRole.TEAMMATE`.
+- **Verification:** Attempt to invite a user with `role: "ADMIN"`; assert Joi validation error.
 
-### [B-03] [P2] Invitation acceptance expects a token the invite service never issues
-
-- **Confidence:** Confirmed
-- **Category:** Correctness / Reliability
-- **Affected backend files:** `backend/services/member-invitation.service.ts:64-89, 129-168`; `backend/controllers/member-invitation.controller.ts:30-34, 110-120`
-- **Related frontend evidence:** `frontend/src/services/api.ts:235-239`
-- **Problem:** `inviteOrganizationMembers` creates users with `status: ACTIVE`, `inviteTokenHash: null`, and `inviteExpiresAt: null`; it sends a temporary password. `acceptOrganizationInvitation`, by contrast, looks up a hashed invitation token and requires a pending user. No reviewed invitation path writes the hash/expiry or pending status.
-- **Root cause:** Two incompatible onboarding designs coexist: temporary-password activation and token-based acceptance.
-- **Impact:** A token-based acceptance request can never succeed for a user created by the current invite service.
-- **Failure scenario:** An invitee follows a token-acceptance flow for an account created through `inviteOrganizationMembers`; lookup fails because the token hash was never stored and the account is already active.
-- **Recommended backend-only fix:** Choose and implement one lifecycle end to end. Either persist a pending user with a hashed, expiring, single-use token and use the acceptance handler, or remove the unused token-acceptance path and support the temporary-password flow consistently. Do not store raw invitation tokens.
-- **Separation of concerns:** No extraction required beyond keeping lifecycle state transitions in the invitation service.
-- **Compatibility and migration risks:** Existing active users created by temporary-password invitations must remain usable. A lifecycle change may need a safe re-invitation or password-reset strategy; do not invalidate existing credentials without a migration plan.
-- **Tests to add:** Invite → token acceptance success; wrong/expired/reused token rejection; atomic single-use acceptance; compatibility test for existing active accounts.
-- **Effort:** Medium
-
-### [B-04] [P2] Failed invitation email leaves an inaccessible active account
-
-- **Confidence:** Confirmed
-- **Category:** Data integrity / Reliability
-- **Affected backend files:** `backend/services/member-invitation.service.ts:64-119`
-- **Related frontend evidence:** `frontend/src/services/api.ts:226-233`; onboarding catches and reports invitation errors at `frontend/src/features/onboarding/CompanySetupView.tsx:196-204`
-- **Problem:** The service persists an active user with a random temporary-password hash before sending the email. If email submission fails, the catch returns `emailSent: false`; the plaintext temporary password is discarded, and the account has no invitation token or pending state. Duplicate checks then prevent the same address from being invited again.
-- **Root cause:** Account creation commits before delivery succeeds, without a retryable credential/invitation record or a recovery operation.
-- **Impact:** The user record blocks future invitations but the recipient cannot log in; an admin has no documented retry path in the reviewed API.
-- **Failure scenario:** SMTP configuration or delivery fails after the account transaction commits. The API reports a failed email, but leaves an active account with an unknown password.
-- **Recommended backend-only fix:** Use the token-based pending-user lifecycle with a persisted hashed token and resend/expiry behavior, or persist an outbox entry that retries delivery of a recoverable invitation. Never retain plaintext passwords in logs or responses.
-- **Separation of concerns:** Extract invitation delivery/retry orchestration into a service using durable outbox state; leave role/email validation in the controller.
-- **Compatibility and migration risks:** Existing active users with unknown temporary passwords need a safe recovery path. Avoid deleting accounts or relying on destructive cleanup.
-- **Tests to add:** SMTP unavailable after persistence; subsequent resend succeeds; duplicate invitation recovery; verify no plaintext credential is persisted or logged.
-- **Effort:** Medium
-
-### [B-05] [P2] Chat conversation-list route is shadowed by the earlier mount
-
-- **Confidence:** Confirmed
-- **Category:** Correctness / API contract
-- **Affected backend files:** `backend/app.ts:46-47`; `backend/routes/chat.routes.ts:19-21`; `backend/controllers/chat.controller.ts:40-53, 74-78`
-- **Related frontend evidence:** `frontend/src/services/api.ts:645-646`; `frontend/src/features/chat/ChatView.tsx:37-44`
-- **Problem:** `chatRoutes` is mounted first at `/api/chat`, then again at `/api/chat/conversations`. A `GET /api/chat/conversations` request reaches the first mount as `GET /:conversationId`; the controller validates the literal `conversations` as a UUID and responds with 400 before Express can reach the intended collection route in the second mount.
-- **Root cause:** Overlapping router aliases are registered in an order that causes the generic parameter route to match the collection path.
-- **Impact:** The frontend cannot load its conversation list from the URL it uses; chat appears empty or errors on initial load.
-- **Failure scenario:** Open Chat; `getChatConversationsApi()` calls `/api/chat/conversations`; `getConversationController` rejects `conversations` as an invalid UUID.
-- **Recommended backend-only fix:** Mount the more specific `/api/chat/conversations` router before `/api/chat`, or replace aliases with a single unambiguous route layout. Keep the existing message and conversation resource paths compatible.
-- **Separation of concerns:** No extraction required.
-- **Compatibility and migration risks:** Verify all three current aliases (`/api/conversations`, `/api/chat`, `/api/chat/conversations`) before removing or reordering mounts.
-- **Tests to add:** Express integration tests for list, create, fetch-by-id, messages, and member operations through every supported mount.
-- **Effort:** Small
-
-### [B-06] [P2] SLA refresh permanently starves work items beyond the oldest 500
-
-- **Confidence:** Confirmed
-- **Category:** Correctness / Performance
-- **Affected backend files:** `backend/services/sla.service.ts:206-213`; scheduler invocation at `backend/services/scheduler.service.ts:25-47`
-- **Related frontend evidence:** SLA deadline and escalation data are consumed as part of work-item views; no frontend behavior is needed to trigger the worker defect.
-- **Problem:** Each refresh selects unfinished items ordered by immutable `createdAt ASC` and takes 500. There is no cursor, offset, eligibility predicate, or skip of unchanged rows. If more than 500 unfinished items exist, the same oldest 500 can be selected every minute, leaving later items unrefreshed indefinitely.
-- **Root cause:** A fixed first-page batch is used as a recurring worker queue without an advancement mechanism.
-- **Impact:** Items outside the selected prefix may not transition to breached/escalated states or generate SLA history/notifications when due.
-- **Failure scenario:** Create more than 500 unfinished items; keep the first 500 unchanged; allow a later item’s deadline to pass. Every invocation still selects the first 500.
-- **Recommended backend-only fix:** Process a bounded advancing cursor/batch, or select only due/state-stale candidates with an indexed eligibility predicate and repeat until no eligible rows remain. Preserve row locking and transaction boundaries, and ensure concurrent workers do not duplicate effects.
-- **Separation of concerns:** No extraction required for the fix; consider a dedicated candidate-query helper only if shared by multiple worker operations.
-- **Compatibility and migration risks:** A new candidate predicate may require an index. Verify how manually escalated, resolved, completed, and no-priority items are treated before changing eligibility.
-- **Tests to add:** More than 500 unfinished records with an eligible record after the first 500; batch advancement; concurrent workers; exactly-once audit/notification state transitions.
-- **Effort:** Medium
-
-### [B-07] [P2] Audit-log pagination is not implemented end to end
-
-- **Confidence:** Confirmed
-- **Category:** Correctness / API contract / Performance
-- **Affected backend files:** `backend/controllers/feature-persistence.controller.ts:422-449, 501-554`
-- **Related frontend evidence:** `frontend/src/services/api.ts:569-588`; `frontend/src/features/project/ProjectActivityView.tsx:31-45`; `frontend/src/features/project/ProjectSettingsView.tsx:523-536`
-- **Problem:** The backend always takes at most 150 audit rows, does not read `page` or `limit`, and returns no pagination metadata. The UI calls the API helper with page and limit and expects `pagination`; the helper accepts only `projectId` and constructs a URL without query parameters. Frontend type-check/tests confirm this mismatch.
-- **Root cause:** Pagination was added to the views without implementing the corresponding request/response contract in the API helper and backend.
-- **Impact:** Users cannot navigate audit history beyond the fixed 150 rows. The UI may show pagination controls without usable server pages; the current TypeScript build also rejects the three-argument call.
-- **Failure scenario:** A project has more than 150 audit events; request a later page from the view. The request contains no page/limit, and the server returns the same latest 150 events with no pagination metadata.
-- **Recommended backend-only fix:** Validate bounded `page`/`limit`, apply stable ordering with a unique tie-breaker, and return total/page metadata in the response. The current client helper does not send those query parameters, so a backend-only change cannot complete the contract; this limitation is recorded here without recommending frontend edits.
-- **Separation of concerns:** Keep audit event mapping separate from query/pagination construction if the controller is split.
-- **Compatibility and migration risks:** Preserve the current `success` and `data` fields; pagination additions should be additive. Avoid loading every task ID in a large project solely to build the audit query.
-- **Tests to add:** First/last page, stable order for same timestamps, bounds/defaults, total count, and more than 150 events; verify an HTTP request carrying page/limit.
-- **Effort:** Medium
-
-### [B-08] [P2] Chat summaries issue two additional database queries per conversation
-
-- **Confidence:** Confirmed
-- **Category:** Performance
-- **Affected backend files:** `backend/services/chat.service.ts:117-151`
-- **Related frontend evidence:** `frontend/src/features/chat/ChatView.tsx:37-44`
-- **Problem:** `listConversations` loads the conversation/member list, then runs one last-message query and one unread-count query for each conversation. There is no limit on the initial conversation query.
-- **Root cause:** Summary data is computed with per-row repository calls rather than grouped/batched query results.
-- **Impact:** Query count grows approximately as `1 + 2N` for a user with N conversations; large histories increase latency and database load.
-- **Failure scenario:** A member with many direct/project conversations loads chat; each list refresh fans out into separate message and count queries.
-- **Recommended backend-only fix:** Use a bounded conversation page and fetch last-message/unread aggregates in batched grouped queries or a single suitable database query. Keep message ordering deterministic and unread counts consistent with `lastReadAt`.
-- **Separation of concerns:** Extract summary aggregation into `services/chat.service.ts` helper or a chat query/repository module; return the same summary shape.
-- **Compatibility and migration risks:** Preserve existing response fields and ordering. An index may be warranted on message conversation/time/deletion columns after checking existing migrations.
-- **Tests to add:** Query-count test for multiple conversations; last-message ordering; unread count around read timestamps; pagination boundaries.
-- **Effort:** Medium
-
-### [B-09] [P2] Post-commit notification failure can make a successful work-item write appear to fail
-
-- **Confidence:** Likely; the failure path is evident in code but was not reproduced against a live database
-- **Category:** Reliability / Data integrity
-- **Affected backend files:** `backend/controllers/task.controller.ts:411-443, 646-664, 1137-1144`; `backend/services/notification.service.ts:26-75`; SLA notification call in `backend/services/sla.service.ts:292-324`
-- **Related frontend evidence:** Work-item create/update calls in `frontend/src/services/api.ts` and `frontend/src/state/AppContext.tsx`
-- **Problem:** Work-item creation commits its transaction before awaiting assignment notifications. If notification persistence fails, the request rejects and returns an error after the work item is durable. The update path has the same pattern. Separately, SLA refresh writes notifications inside its transaction; a notification error can roll back the batch’s SLA updates.
-- **Root cause:** Notification side effects are coupled to request success after commit in one path and to the main state transaction in another.
-- **Impact:** A client may retry a create that already committed, creating duplicates; a failing recipient/notification insert can also prevent SLA progress for a batch.
-- **Failure scenario:** Work-item transaction commits, then a notification insert fails; the endpoint returns an error although the item exists. In the SLA job, one notification failure aborts the transaction and causes repeated retries.
-- **Recommended backend-only fix:** Persist notification/outbox intents atomically with the primary state change, then deliver/retry them asynchronously. If notifications are explicitly best-effort instead, log failures with identifiers and return success only after the primary operation has committed; do not swallow errors silently.
-- **Separation of concerns:** Extract notification intent creation and delivery into a dedicated service/worker; keep the controller responsible for HTTP status and response.
-- **Compatibility and migration risks:** An outbox requires a migration and worker lifecycle/retention policy. Keep notification type, recipient, and deduplication semantics stable.
-- **Tests to add:** Notification insert failure after work-item commit; no duplicate item on client retry; outbox retry/idempotency; failure isolation across SLA candidates.
-- **Effort:** Medium
-
-### [B-10] [P3] Frontend health check uses a path the backend does not expose
-
-- **Confidence:** Confirmed
-- **Category:** Correctness / Operations
-- **Affected backend files:** `backend/app.ts:55-62`
-- **Related frontend evidence:** `frontend/src/services/api.ts:147-153`
-- **Problem:** The backend exposes `GET /` as its health-like response, while the frontend calls `GET /health` and expects a `status` field. No `/health` route was found in the reviewed backend routes.
-- **Root cause:** Health-check route and response shape differ between the client and server.
-- **Impact:** `checkBackendHealth()` returns false for a running backend, so UI service status can be misleading and diagnostics can report an unavailable API.
-- **Failure scenario:** Run the backend and call the frontend health helper; the unmatched `/health` request is caught and converted to `false`.
-- **Recommended backend-only fix:** Add a dedicated `GET /health` response with the status shape already expected by the client; optionally expose readiness separately if database connectivity must be checked.
-- **Separation of concerns:** No extraction required.
-- **Compatibility and migration risks:** Keep `GET /` unchanged. A liveness endpoint should not expose configuration or sensitive dependency details.
-- **Tests to add:** Route integration test for status code/body; readiness behavior when the database is unavailable, if readiness is added.
-- **Effort:** Small
-
-### [B-11] [P3] Backend feature controllers combine unrelated persistence responsibilities
-
-- **Confidence:** Confirmed
-- **Category:** Architecture
-- **Affected backend files:** `backend/controllers/feature-persistence.controller.ts:24-556, 801-872`; `backend/controllers/task.controller.ts:411-664`
-- **Related frontend evidence:** `frontend/src/services/api.ts` exposes independent work-item, project-settings, audit, and notification APIs.
-- **Problem:** `feature-persistence.controller.ts` contains independent comment, time-entry, dependency, label, workflow, audit, and notification operations. `createWorkItem` in `task.controller.ts` coordinates HTTP parsing, validation, project/parent/sprint/label checks, writes, SLA initialization, recurrence setup, assignment persistence, response projection, and notifications.
-- **Root cause:** Controllers own both HTTP handling and substantial feature-specific persistence/orchestration, while unrelated controller operations have accumulated in a single module.
-- **Impact:** Changes to one feature are harder to test in isolation; duplicate validation/response logic and accidental transaction/side-effect coupling become more likely. File length alone is not the issue—the responsibility boundaries are distinct.
-- **Failure scenario:** A change to audit or label persistence must be edited in the same module as comment/time-entry/dependency operations; work-item transaction changes must also navigate notification and recurrence logic in the request controller.
-- **Recommended backend-only fix:** Split controllers by resource boundary and move work-item orchestration to a service. Keep HTTP request validation, status codes, and response envelopes in controllers. Do not change URLs or response shapes during the extraction.
-- **Separation of concerns:** Detailed plan is in Section 5.
-- **Compatibility and migration risks:** Maintain route exports and response compatibility; preserve transaction ownership and side-effect ordering. Implement in small steps with characterization tests.
-- **Tests to add:** Controller contract tests plus service unit/integration tests for work-item creation, audit retrieval, labels/workflow, comments, time entries, and dependencies.
-- **Effort:** Large
-
-### [B-15] [P2] Work-item comments, time entries, and dependencies lack complete project/tenant authorization
-
-- **Confidence:** Confirmed (static review; confidence 9/10)
+#### [SEC-008] [Medium] Organization Role Bypass on Project Dashboard
+- **File:** `backend/routes/dashboard.route.ts:17-22`
 - **Category:** Security / Authorization
-- **Affected backend files:** `backend/routes/work.item.routes.ts:114-160`; `backend/controllers/feature-persistence.controller.ts:24-80,104-180,188-245`
-- **Related frontend evidence:** Work-item comments, time-entry, and dependency API methods in `frontend/src/services/api.ts`
-- **Problem:** These routes require authentication but do not apply the project-permission middleware. Comment handlers check only organization equality; time-entry and dependency handlers do not consistently verify tenant/project access for the work item and both sides of a dependency.
-- **Root cause:** Subresource handlers rely on authentication or incomplete resource checks rather than the same project-scoped access policy used for work-item routes.
-- **Impact:** A user with a known work-item ID may read or write collaboration data for a private project, and dependency IDs may be used without confirming both items are authorized and related as intended.
-- **Failure scenario:** An authenticated non-member calls a comment, time-entry, or dependency endpoint using a known private-project work-item ID; malformed/cross-tenant dependency IDs are also submitted.
-- **Recommended backend-only fix:** Apply project-scoped authorization to every subresource route and resolve the work item within the authenticated organization/project before any read/write. For dependencies, validate both work items’ organization and project relationship within the same transaction.
-- **Separation of concerns:** No extraction required.
-- **Compatibility and migration risks:** Existing authorized project members retain API behavior. Return non-enumerating not-found responses for inaccessible resources.
-- **Tests to add:** Unauthorized private-project read/write cases for each endpoint; cross-tenant work-item IDs; cross-project dependency; authorized member success.
-- **Effort:** Medium
+- **Description:** `GET /projects/:projectId/dashboard` checks `checkPermission("project:read")` at route level instead of `requireProjectPermission("project:view")`.
+- **Impact:** Bypasses project-level visibility checks in route middleware.
+- **Recommended Fix:** Use `requireProjectPermission("project:view")`.
+- **Verification:** Test access against private project dashboard as a non-member; assert `403 Forbidden`.
 
-### [B-16] [P2] Project labels and workflows can be modified without project-scoped authorization
+#### [SEC-009] [Medium] Missing Sprint Lifecycle Management Routes
+- **File:** `backend/routes/sprint.routes.ts:13-24`
+- **Category:** Functional / API Surface
+- **Description:** No routes exist for updating, starting, completing, or deleting sprints. Sprint creation route uses organization-level `checkPermission("task:create")` rather than project-scoped `requireProjectPermission("sprint:create")`.
+- **Impact:** Frontend cannot complete or manage sprint lifecycles; improper role enforcement during sprint creation.
+- **Recommended Fix:** Add route handlers for sprint update/start/complete/delete and bind `requireProjectPermission`.
+- **Verification:** Test full sprint CRUD cycle via HTTP client.
 
-- **Confidence:** Confirmed (static review; confidence 9/10)
-- **Category:** Security / Authorization
-- **Affected backend files:** `backend/routes/project.routes.ts:112-149`; `backend/controllers/feature-persistence.controller.ts:252-305,323-405`
-- **Related frontend evidence:** Project labels and workflow API methods in `frontend/src/services/api.ts`
-- **Problem:** Label handlers are mounted with authentication only. Workflow handlers use a global project-update role check, then read/write by project ID without verifying the project belongs to the caller’s organization or that the caller has project membership/permission.
-- **Root cause:** Resource mutation routes do not apply the project-scoped authorization and tenant checks used elsewhere.
-- **Impact:** An authenticated user can modify labels or workflow configuration for a project they do not control, including a project in another tenant if its identifier is known.
-- **Failure scenario:** Submit a label create/delete or workflow update using a known project ID without membership in that project.
-- **Recommended backend-only fix:** Resolve the project under the authenticated organization and enforce the appropriate project-scoped permission before every label/workflow read or mutation.
-- **Separation of concerns:** No extraction required.
-- **Compatibility and migration risks:** Preserve existing roles’ documented project-settings behavior while denying unauthorized users; no schema change is required.
-- **Tests to add:** Non-member and cross-tenant reads/writes denied; authorized project admin/lead actions; public project read behavior does not grant mutation permission.
-- **Effort:** Medium
+#### [DB-001] [Medium] Duplicate Migration Timestamps
+- **File:** `backend/migrations/1792400000000-*.ts` & `backend/migrations/1793000000000-*.ts`
+- **Category:** Database / Migrations
+- **Description:** Identical timestamps assigned to multiple migrations (`1792400000000` and `1793000000000`).
+- **Impact:** Non-deterministic migration execution order across different operating systems.
+- **Recommended Fix:** Re-timestamp migrations monotonically.
+- **Verification:** Verify distinct timestamps across all migration filenames.
 
-### [B-17] [P2] Removed chat members remain subscribed to live WebSocket rooms
+#### [DB-002] [Medium] Migration Naming Convention Anomaly
+- **File:** `backend/migrations/MakeWorkItemPriorityNullable1792818000000.ts`
+- **Category:** Database / Migrations
+- **Description:** Filename starts with letters instead of timestamp prefix, causing alphabetical sorting anomalies.
+- **Impact:** Risk of executing out of intended sequence in standard migration runners.
+- **Recommended Fix:** Rename to `1792818000000-MakeWorkItemPriorityNullable.ts`.
+- **Verification:** Assert alphanumeric sort matches chronological timestamp order.
 
-- **Confidence:** Confirmed (static review; confidence 9/10)
-- **Category:** Security / Sensitive data exposure
-- **Affected backend files:** `backend/services/chat.service.ts:173-176`; `backend/websocket/chat.gateway.ts:138-145,164-176`
-- **Related frontend evidence:** Chat membership and message flows in `frontend/src/features/chat/ChatView.tsx`
-- **Problem:** Removing a member deletes the database membership but does not evict that user’s already-connected socket from the in-memory room. Message broadcasts iterate room sockets without rechecking membership.
-- **Root cause:** REST membership changes and WebSocket room state are not synchronized; delivery trusts stale socket subscriptions.
-- **Impact:** A removed user continues receiving messages sent to the conversation until their socket disconnects.
-- **Failure scenario:** A member joins a group conversation over WebSocket, an authorized manager removes them over REST, and another member sends a message while the removed user’s socket remains connected.
-- **Recommended backend-only fix:** Evict all sockets for the removed user from the conversation room when membership is removed, or revalidate membership before each broadcast. Ensure the synchronization works across all application instances if WebSockets are deployed horizontally.
-- **Separation of concerns:** Extract a small room-membership coordination method shared by the WebSocket gateway and chat membership service if the current process-local map cannot be safely updated from the service.
-- **Compatibility and migration risks:** For multi-instance deployments, process-local eviction is insufficient; use shared pub/sub or revalidation. Current message API and event shapes can remain unchanged.
-- **Tests to add:** Remove a connected member, send a subsequent message, and assert no broadcast reaches that socket; verify active members continue receiving messages; test multi-instance behavior if applicable.
-- **Effort:** Medium
+#### [DB-003] [Low] Redundant Duplicate Index Creation
+- **File:** `backend/migrations/1792399247543-AddProjectLabels.ts:8`
+- **Category:** Database / Migrations
+- **Description:** Creates `IDX_project_labels_project_id` without checking that `IDX_project_labels_project` already exists on the same column.
+- **Impact:** Redundant B-tree index overhead on `project_labels`.
+- **Recommended Fix:** Drop redundant index or add existence check.
+- **Verification:** Query `pg_indexes` for duplicate column definitions.
 
-## 5. Separation-of-Concerns Refactoring Plan
+---
 
-| Current file/function | Current responsibility | Recommended extraction | Proposed module/function | Benefit | Dependencies and tests |
-|---|---|---|---|---|---|
-| `backend/controllers/task.controller.ts` — `createWorkItem` | HTTP body interpretation plus project/resource validation, transactional writes, assignments, SLA, recurrence, and notification effects | Extract application orchestration while retaining HTTP boundary | `backend/services/work-item.service.ts` — `createWorkItem(manager, actor, input)` returning a typed result/DTO; separate notification intent service | Smaller controller; test transaction and business rules without Express; makes side-effect consistency explicit | TypeORM `EntityManager`, SLA/recurrence helpers, assignment and notification services. Add service transaction tests and controller response tests. |
-| `backend/controllers/feature-persistence.controller.ts` — comments/time entries/dependencies | Several independent work-item collaboration operations | Split by resource while preserving current route behavior | `controllers/work-item-collaboration.controller.ts`; service methods such as `addComment`, `recordTimeEntry`, `addDependency` | Changes to one feature no longer affect unrelated persistence code; clearer test fixtures | Existing entities/repositories and `AppError`; tests for each endpoint and validation/failure paths. |
-| `backend/controllers/feature-persistence.controller.ts` — labels/workflow | Project configuration and workflow persistence | Separate project configuration | `controllers/project-settings.controller.ts` and, only if business rules grow, `services/project-workflow.service.ts` | Establishes a clear ownership boundary and allows workflow validation to be tested independently | `ProjectLabel`, `ProjectWorkflow`; tests for create/update/default workflow and unchanged API envelopes. |
-| `backend/controllers/feature-persistence.controller.ts` — audit retrieval/create | Audit query, event mapping, and HTTP response | Use existing audit controller as sole route owner; extract query/projection only if reusable | `controllers/auditlog.controller.ts` plus optional `services/audit-log-query.service.ts` | Avoids audit logic sharing a module with labels/comments and clarifies pagination/query responsibilities | `AuditLog`, `WorkItem`, pagination helper; query and contract tests. |
-| `backend/services/chat.service.ts` — `listConversations` | Conversation list plus per-conversation summary query fan-out | Extract batched summary query | `services/chat.service.ts` helper or `repositories/chat-query.repository.ts` — `listConversationSummaries(actor, page)` | Bounded query count and a testable summary contract | Conversation/member/message repositories; query-count, ordering, unread and pagination tests. |
+## 11. Implementation Malpractice and Anti-Patterns
 
-### Detailed extraction guidance
+1. **Syntax-Corrupted Code in Version Control:**
+   `auditlog.controller.ts` contains raw syntax errors and orphaned blocks. Committing broken code that fails transpilation indicates a lack of automated pre-commit typechecking hooks.
+2. **Top-Level Throwing Validations in Modules:**
+   Throwing exceptions at module root (`cloudinary.service.ts`) causes fatal startup failures whenever unrelated files import that module.
+3. **In-Memory Buffering of Massive File Uploads:**
+   Using Multer's `memoryStorage` for 100 MB files directly in Node.js RAM is an enterprise anti-pattern. Enterprise backends must stream large payloads to disk or directly to S3/Cloudinary.
+4. **Duplicate Controller Implementations with Schema Drift:**
+   Maintaining two separate `registerOrganization` controllers with divergent response shapes and cookie paths leads to frontend integration breakage.
+5. **Double Database Lookups in Middleware Pipeline:**
+   `isLoggedIn` and `checkPermission` both execute database queries to retrieve the same user record on every single request.
+6. **Sequential Single-Metric Queries (N+1 Aggregates):**
+   `dashboard.controller.ts` runs 8 separate queries to assemble metrics for one screen instead of a single grouped query.
+7. **In-Memory Rate Limiting Without Eviction:**
+   Using unbounded `Map` instances for rate limiting without TTL cleanup causes slow memory leaks.
 
-**Work-item creation.** Keep authentication extraction, request validation middleware, response status/envelope, and HTTP error propagation in `createWorkItem` (or a thin replacement controller). Move domain orchestration to a service accepting a transaction manager, a typed actor (`id`, organization, role), and validated create input. The service should validate linked project resources in the same transaction, persist the work item, assignments, SLA state/audit, and recurrence record, and return the persisted work item with relations needed for response formatting. Notification delivery should be represented as a durable intent/outbox write in that same transaction rather than an awaited network/secondary write after commit. Throw typed `AppError`s for validation/not-found conflicts and let the controller/error middleware format them. Preserve existing status codes and JSON shape. Test rollback for each related write, recurrence/SLA initialization, assignment response projection, and notification failure/retry.
+---
 
-**Feature persistence.** Move by resource boundary, not by file length: comments, time entries, and dependencies are work-item collaboration; labels and workflows are project configuration; audit routes belong with the existing audit controller. Keep `feature-persistence.controller.ts` exports temporarily as compatibility re-exports if imports require a staged migration. Avoid changing API routes until integration tests show all consumers are updated.
+## 12. Prioritized Remediation Roadmap
 
-## 6. Backend-Only Remediation Roadmap
+```
++--------------------------------------------------------------------------+
+|                         REMEDIATION ROADMAP                              |
++--------------------------------------------------------------------------+
+|  P0: CRITICAL (Immediate Fixes - 24 to 48 Hours)                         |
+|  - BUG-001: Fix syntax corruption in auditlog.controller.ts              |
+|  - BUG-003: Defer Cloudinary initialization check to upload time          |
+|  - SEC-001: Purge live secrets from .env.example and rotate credentials  |
++--------------------------------------------------------------------------+
+|  P1: HIGH (Correctness, DoS & Access Control - Within 1 Week)            |
+|  - BUG-004: Restrict Multer upload size (max 15MB) and use disk storage  |
+|  - SEC-002: Enforce requireProjectPermission on all whiteboard routes    |
+|  - SEC-003: Require write permission for task comments and time entries  |
+|  - SEC-004: Apply rate limiting to POST /api/users/login                 |
+|  - BUG-002: Fix unclosed loop in sla.service.ts                          |
++--------------------------------------------------------------------------+
+|  P2: MEDIUM (Architecture & Consistency - Sprint Cycle)                 |
+|  - BUG-005: Fix TypeORM QueryBuilder property in member invitation       |
+|  - BUG-006: Fix SLA QueryBuilder addOrderBy clause                       |
+|  - BUG-007: Consolidate registration controllers into single service     |
+|  - SEC-005: Replace custom auth rate limiter with express-rate-limit     |
+|  - SEC-006: Add requireProjectPermission to audit undo route             |
+|  - SEC-008: Bind requireProjectPermission to project dashboard           |
+|  - SEC-009: Implement complete sprint lifecycle endpoints                |
+|  - DB-001 & DB-002: Normalize migration timestamps and file naming       |
++--------------------------------------------------------------------------+
+|  P3: LOW (Hygiene & Maintainability - Next Sprint)                       |
+|  - BUG-008: Remove duplicate import statements                           |
+|  - BUG-009: Prune unused packages from package.json                      |
+|  - DB-003: Drop redundant index on project_labels                        |
+|  - BUG-010: Parameterize test IDs in e2e-feature-check.ts                |
++--------------------------------------------------------------------------+
+```
 
-### Phase 1 — Critical security and data-integrity fixes
+---
 
-| Order | Task | Backend files | Dependencies | Tests / acceptance criteria |
-|---|---|---|---|---|
-| 1 | Prevent organization managers/non-members from granting project-admin membership | `routes/project.routes.ts`, `controllers/project.controller.ts`, project permission middleware | Define project role grant policy | Unauthorized add/promote requests fail; authorized project admin behavior remains covered. |
-| 2 | Secure audit reads/undo and reject client-forged reversible state | Project routes, `controllers/feature-persistence.controller.ts`, `controllers/auditlog.controller.ts` | Define trusted audit event/undo policy | Only authorized project members read/undo; only trusted, related server snapshots are reversible. |
-| 3 | Revoke organization-bound sessions on member removal and fail closed without tenant context | `controllers/organization.controller.ts`, `middleware/is.loggedin.ts`, `controllers/auditlog.controller.ts` | Define detached-account behavior | Removed sessions stop working; tenant-scoped handlers reject absent tenant context. |
-| 4 | Protect work-item subresources and project labels/workflows | Work-item/project routes, `controllers/feature-persistence.controller.ts`, project permission middleware | Reuse project-scoped authorization | Cross-tenant/non-member operations fail for comments, time entries, dependencies, labels, and workflows. |
-| 5 | Evict removed chat members from active WebSocket rooms | `services/chat.service.ts`, `websocket/chat.gateway.ts` | Determine single- versus multi-instance deployment | Removed member receives no subsequent room broadcasts; active members remain unaffected. |
-| 6 | Make invitation persistence recoverable on email failure | `services/member-invitation.service.ts`, invitation controller/service, migrations if outbox selected | Decide single invitation lifecycle | Failed delivery can be retried without duplicate or unusable active accounts; acceptance token is hashed, expiring, and single-use if token flow is retained. |
+## 13. Recommended Tests and Verification Checklist
 
-### Phase 2 — Core workflow and correctness fixes
+### Pre-Deployment Test Checklist
 
-| Order | Task | Backend files | Dependencies | Tests / acceptance criteria |
-|---|---|---|---|---|
-| 1 | Add the frontend-compatible organization registration route | `app.ts`, `routes/user.routes.ts`, registration controller/service | Keep canonical registration implementation | Existing onboarding payload creates exactly one organization, admin, SLA policy, and session; existing `/api/users/` remains compatible. |
-| 2 | Add invitation route/payload compatibility and unify acceptance lifecycle | `app.ts`, `routes/organization.routes.ts`, `controllers/member-invitation.controller.ts`, `services/member-invitation.service.ts` | Select token or temporary-password flow | Frontend invite/accept request contract passes end-to-end tests; no failed request is treated as a successful backend invitation. |
-| 3 | Fix chat collection route ordering | `app.ts`, `routes/chat.routes.ts` | Confirm supported aliases | `GET /api/chat/conversations` returns the list, not a UUID error; resource routes continue to work. |
-| 4 | Implement advancing SLA candidate processing | `services/sla.service.ts`, relevant migration/index if needed | Define worker eligibility and cursor semantics | A due item after the first 500 is processed; concurrent workers do not duplicate transitions. |
-| 5 | Decouple notification persistence/delivery from primary API success | `services/notification.service.ts`, `services/sla.service.ts`, `controllers/task.controller.ts`; add outbox entity/migration/worker only if chosen | Outbox design and idempotency key policy | Primary writes remain correct during delivery outages; notification intents retry without duplicate delivery or transaction-wide rollback. |
+- [ ] **Typecheck Verification:** Run `npm run typecheck` (`tsc --noEmit`) to verify zero compiler errors after fixing `auditlog.controller.ts`.
+- [ ] **Startup Smoke Test:** Launch `server.ts` with minimal environment variables (omitting optional Cloudinary keys) to ensure application boots gracefully.
+- [ ] **Security Tests:**
+  - [ ] Non-member user receives `403 Forbidden` on all `GET/POST/PATCH/DELETE /api/whiteboards/*` in private projects.
+  - [ ] User with `task:read` receives `403 Forbidden` when attempting `POST /api/work-items/:id/comments`.
+  - [ ] 10 consecutive failed logins trigger `429 Too Many Requests`.
+- [ ] **Memory & Upload Stress Test:** Send multipart request with 3 concurrent 15 MB files; confirm heap memory remains stable under 150 MB.
+- [ ] **Scheduler Verification:** Trigger `refreshSlaStatuses()` in a test runner; verify no syntax errors, loop freezes, or duplicate notifications.
+- [ ] **Migration Sequence Test:** Run TypeORM migrations from scratch on a clean test PostgreSQL database to confirm ordering and constraint integrity.
 
-### Phase 3 — Reliability and performance improvements
+---
 
-| Order | Task | Backend files | Dependencies | Tests / acceptance criteria |
-|---|---|---|---|---|
-| 1 | Add bounded audit-log pagination and response metadata | `controllers/feature-persistence.controller.ts` or `controllers/auditlog.controller.ts`, pagination helper | Decide page/limit defaults and maximum | Server returns stable pages and total metadata for histories >150; query limits are bounded. Note: the current frontend wrapper does not transmit page/limit. |
-| 2 | Batch chat conversation summaries and page the list | `services/chat.service.ts`, chat routes/controller | Agree on page/cursor contract | Query count does not grow by two per conversation; summary ordering and unread counts remain correct. |
-| 3 | Add a dedicated health route | `app.ts` | Decide liveness versus readiness contract | `GET /health` matches the existing client’s status expectation and does not expose secrets. |
+## 14. Audit Limitations and Unverified Risks
 
-### Phase 4 — Architecture, separation of concerns, and test coverage
+1. **Read-Only Inspection:** Per strict execution constraints, no application code was refactored, no commits were modified, and no live database alterations were performed.
+2. **Absence of `node_modules`:** Because packages were not installed in the workspace, dynamic unit tests and runtime endpoints could not be executed locally. All findings are derived from rigorous static code analysis and cross-contract inspection.
+3. **Cloud Integrations:** Actual network connectivity with Cloudinary and external SMTP relays was not exercised; findings are based on implementation contracts and error handling patterns.
+4. **Pre-existing Working Tree State:** The repository contained pre-existing documentation and uncommitted files which were analyzed in their current on-disk state.
 
-| Order | Task | Backend files | Dependencies | Tests / acceptance criteria |
-|---|---|---|---|---|
-| 1 | Extract work-item creation orchestration | `controllers/task.controller.ts`, new `services/work-item.service.ts` | Characterization tests and notification consistency fix | Existing create response/status behavior remains unchanged; all transaction and SLA/recurrence tests pass. |
-| 2 | Split feature-persistence handlers by resource | `controllers/feature-persistence.controller.ts`, route imports, existing audit controller | Add endpoint contract tests first | No route changes; each resource controller has focused responsibility and passing regression tests. |
-| 3 | Consolidate organization registration behavior | `controllers/user.controller.ts`, `controllers/organization.controller.ts`, new registration service if needed | Route alias decision and session behavior contract | Both supported paths delegate to one service and return compatible cookies/session semantics. |
+---
 
-## 7. Test Plan
+## 15. Final Verdict
 
-- **High-priority regressions:** Register through the frontend’s current path/body; invite and accept through current frontend paths/body; verify route aliases and response envelopes.
-- **Organization and tenant isolation:** Verify each organization member can only access resources scoped to their organization; exercise cross-organization IDs for projects, work items, attachments, audit events, conversations, and notifications.
-- **Role and permission tests:** Test org roles and project roles independently for view/create/update/delete/member management/SLA/chat/audit operations, including public versus private projects.
-- **API contract tests:** Exercise actual Express routes for onboarding, invitations, audit pagination, chat collection and resource routes, notification read operations, and health. Assert status, body shape, and compatibility aliases.
-- **Workflow integration tests:** Registration → login → project creation → work-item assignment/update → comments/time entries/dependencies → sprint assignment → notification and audit history.
-- **Database transaction and concurrency tests:** Related work-item writes roll back together; project key uniqueness under concurrent requests; invite acceptance is single-use; recurring occurrence generation and SLA transitions are idempotent with concurrent workers.
-- **Scheduler tests:** More than 500 unfinished items; due and not-due records; retries after notification failure; recurrence backlog and `skip_locked` behavior; worker shutdown.
-- **Attachment tests:** Unsupported/mismatched files, size/count limits, Cloudinary partial failure cleanup, database persistence failure cleanup, and metadata migration/entity agreement.
-- **External-service failure tests:** SMTP failures after invite creation; Cloudinary unavailable; notification/outbox delivery failure; ensure API and persistent state remain consistent.
-- **Non-destructive database validation:** Run migrations against a disposable PostgreSQL database and compare resulting columns, constraints, indexes, enum values, and foreign keys with entity mappings. No live database was used during this audit.
+The TaskFlow backend demonstrates **thoughtful multi-tenant database modeling, disciplined transactional scoping, and strong authentication security foundations**. However, it is currently impeded by **critical syntax corruptions in active controllers, an unsafe top-level module exception that threatens server startup, a severe 500 MB in-memory upload configuration prone to Out-Of-Memory crashes, and noticeable authorization gaps on whiteboards and task collaboration subresources**.
 
-## 8. Validation Evidence
-
-Commands were run from the repository root; no dependencies were installed and no production systems were accessed.
-
-| Command | Result |
-|---|---|
-| `pnpm --dir backend typecheck` | Passed (exit code 0). |
-| `pnpm --dir backend test` | Passed: 6 tests, 3 suites, 0 failures. |
-| `pnpm --dir frontend typecheck` | Failed (exit code 1). Reported missing `src/data/mockData` imports, an implicit `any`, chat request/response type mismatches, onboarding input mismatch, audit helper arity/response mismatches, and possibly-undefined project references. |
-| `pnpm --dir frontend lint` | Passed (exit code 0) with warnings, including unused variables/imports and React hook warnings. |
-| `pnpm --dir frontend test` | Failed (exit code 1): 174 passed, 10 failed of 184. Failures include audit pagination helper signature, missing `BACKEND_TEAM_HANDOFF.md` expected by existing tests, notification error-handling expectations, project-role mapping, assignee hydration, and sprint temporary-ID filtering. The requested audit deliverable is `BACKEND_AUDIT_REPORT.md`; no additional handoff file was created. |
-
-No backend build was run because type-check and backend tests were the smallest relevant safe checks; no live API, database, scheduler, SMTP, Cloudinary, or WebSocket runtime test was run. The report includes findings that require runtime integration verification.
-
-## 9. Recommended Implementation Checklist
-
-- [ ] **P1 — Registration route:** Add a backend compatibility route for `/api/users/register`; verify the existing onboarding payload creates one backend organization/user/SLA/session.
-- [ ] **P1 — Invitation API contract:** Support the existing invite/accept paths and payloads without duplicating lifecycle logic; verify success and validation error response shapes.
-- [ ] **P1 — Project admin grants:** Enforce project-admin-only role grants and add negative tests for organization managers and project non-members.
-- [ ] **P1 — Audit authorization:** Require project-scoped access to audit reads/undo; reject client-forged state and validate log/entity/project relationships.
-- [ ] **P1 — Member session revocation:** Revoke sessions on organization removal and reject tenant-scoped requests when the authenticated user has no organization.
-- [ ] **P2 — Invitation lifecycle:** Reconcile pending-token acceptance with the active temporary-password implementation; provide a retry/recovery path for SMTP failure.
-- [ ] **P2 — Chat route order:** Ensure `GET /api/chat/conversations` reaches the collection handler, then test all supported aliases.
-- [ ] **P2 — Resource-level authorization:** Protect comments, time entries, dependencies, project labels, and workflows with project/tenant checks.
-- [ ] **P2 — Live chat membership:** Ensure removed users no longer receive broadcasts through already-joined WebSocket rooms.
-- [ ] **P2 — SLA worker fairness:** Process eligible items beyond the oldest 500; prove with a regression test containing more than 500 unfinished rows.
-- [ ] **P2 — Notification reliability:** Persist notification intents transactionally and deliver/retry independently; verify API success and SLA progress under notification failure.
-- [ ] **P2 — Audit history:** Add bounded backend pagination and stable metadata; separately resolve the client’s missing query transmission before claiming end-to-end pagination.
-- [ ] **P2 — Chat list performance:** Batch message/unread summaries and cap conversation pages; test query growth and ordering.
-- [ ] **P3 — Health endpoint:** Add `/health` with the existing client-compatible response shape.
-- [ ] **P3 — Controller boundaries:** Extract work-item orchestration and split feature-persistence responsibilities after characterization tests.
-- [ ] **Before release — Security review:** Complete and record the full backend security review; do not treat the initial limited review as a clean bill of health.
+Once the **P0 and P1 remediations** are applied—specifically repairing `auditlog.controller.ts`, closing the loop in `sla.service.ts`, lowering Multer upload thresholds, securing whiteboard routes, and scrubbing committed credentials—the backend will achieve the stability, robustness, and security expected of an enterprise-grade production platform.

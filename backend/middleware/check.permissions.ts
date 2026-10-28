@@ -75,27 +75,24 @@ export const checkPermission = (permission: Permission) => {
       return;
     }
 
-    const userRepository = AppDataSource.getRepository(User);
+    let role = req.user.role as Role | undefined;
 
-    const user = await userRepository.findOne({
-      where: {
-        id: req.user.id,
-      },
-      select: {
-        id: true,
-        role: true,
-      },
-    });
-
-    if (!user) {
-      res.status(401).json({
-        success: false,
-        message: "User not found. Please log in again.",
+    if (!role) {
+      const userRepository = AppDataSource.getRepository(User);
+      const user = await userRepository.findOne({
+        where: { id: req.user.id },
+        select: { id: true, role: true },
       });
-      return;
-    }
 
-    const role = user.role as Role;
+      if (!user) {
+        res.status(401).json({
+          success: false,
+          message: "User not found. Please log in again.",
+        });
+        return;
+      }
+      role = user.role as Role;
+    }
 
    if (!Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role)) {
       res.status(403).json({

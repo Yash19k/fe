@@ -115,7 +115,7 @@ router.post(
   "/:workItemId/comments",
   isLoggedIn,
   validateWorkItemId,
-  requireProjectPermission("task:read"),
+  requireProjectPermission("task:update"),
   asyncHandler(addWorkItemComment),
 );
 router.get(
@@ -131,7 +131,7 @@ router.post(
   "/:workItemId/time-entries",
   isLoggedIn,
   validateWorkItemId,
-  requireProjectPermission("task:read"),
+  requireProjectPermission("task:update"),
   asyncHandler(addWorkItemTimeEntry),
 );
 router.get(

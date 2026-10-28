@@ -45,7 +45,7 @@ export const invitedMembersSchema = Joi.alternatives().try(
     Joi.object({
       email: Joi.string().email().required(),
       role: Joi.string()
-        .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
+        .valid(UserRole.MANAGER, UserRole.TEAMMATE)
         .default(UserRole.TEAMMATE),
     }),
   ),
@@ -55,7 +55,7 @@ export const invitedMembersSchema = Joi.alternatives().try(
         Joi.object({
           email: Joi.string().email().required(),
           role: Joi.string()
-            .valid(UserRole.MANAGER, UserRole.TEAMMATE, UserRole.ADMIN)
+            .valid(UserRole.MANAGER, UserRole.TEAMMATE)
             .default(UserRole.TEAMMATE),
         }),
       )

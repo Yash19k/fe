@@ -2,7 +2,6 @@ import { In } from "typeorm";
 import { Request, Response } from "express";
 import { AppDataSource } from "../config/data.source";
 import { AuditLog } from "../entities/audit.log.entity";
-import { ProjectMember } from "../entities/project.member.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { Project } from "../entities/project.entity";
 import { User, UserRole } from "../entities/user.entity";
@@ -86,96 +85,10 @@ async function assertAuditProjectAccess(
   return project;
 }
 
-export async function createAuditLog(req: Request, res: Response) {
-  const organizationId = req.user?.organizationId;
-  const userId = req.user?.id;
-  const { action, entityType, entityId, previousState, newState } = req.body;
-
-  if (!userId || !organizationId) {
-    throw new AppError(
-      "Authentication and organization context required.",
-      401,
-      "UNAUTHORIZED",
-    );
-  }
-
-  let pId =
-    req.body.projectId ||
-    (req.params.projectId && req.params.projectId !== "audit-logs"
-      ? req.params.projectId
-      : null);
-
-  const desc =
-    req.body.description ||
-    req.body.details?.description ||
-    `${action || ""} ${entityType || ""}`.trim() ||
-    "Activity";
-
-  if (!action || !entityType) {
-    throw new AppError(
-      `The stored ${field} value is invalid.`,
-      400,
-      "ACTION_NOT_REVERSIBLE",
-    );
-  }
-  return match;
-}
-
-  // If pId is missing and this is a task event, attempt to resolve from WorkItem record
-  if (!pId && entityType === "task" && entityId) {
-    try {
-      const task = await AppDataSource.getRepository(WorkItem).findOne({
-        where: { id: String(entityId), organizationId },
-        select: { id: true, projectId: true },
-      });
-      if (task?.projectId) {
-        pId = task.projectId;
-      }
-    } catch {
-      // non-uuid entityId
-    }
-  }
-
-  if (pId) {
-    await assertAuditProjectAccess(
-      String(pId),
-      userId,
-      organizationId,
-      req.user?.role,
-    );
-  }
-
-  const repo = AppDataSource.getRepository(AuditLog);
-  const log = await repo.save(
-    repo.create({
-      organizationId,
-      projectId: pId ? String(pId) : null,
-      userId,
-      action: String(action),
-      entityType: String(entityType),
-      entityId: String(entityId || ""),
-      description: String(desc),
-      previousState: previousState || req.body.details?.previousValue || null,
-      newState: newState || req.body.details?.newValue || null,
-    }),
-  );
-
-  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
-    where: { projectId, userId },
-  });
-
-  if (!membership && project.visibility !== "PUBLIC") {
-    throw new AppError(
-      "You do not have access to this project's audit logs.",
-      403,
-      "FORBIDDEN",
-    );
-  }
-
-  return project;
-}
-
-export async function createAuditLog() {
+export async function createAuditLog(
+  _req?: Request,
+  _res?: Response,
+): Promise<never> {
   throw new AppError(
     "Audit entries must be created by server-side operations.",
     403,
@@ -335,8 +248,41 @@ export async function undoAuditLog(req: Request, res: Response) {
         );
       }
 
+      const prev = targetLog.previousState as Record<string, any>;
+
+      if (prev.title !== undefined && prev.title !== null) {
+        workItem.title = String(prev.title).trim();
+      }
+      if (prev.description !== undefined) {
+        workItem.description = prev.description
+          ? String(prev.description).trim()
+          : null;
+      }
+      if (prev.status !== undefined && prev.status !== null) {
+        const normStatus = String(prev.status)
+          .toUpperCase()
+          .replace(/[-\s]/g, "_");
+        if (
+          Object.values(WorkItemStatus).includes(
+            normStatus as WorkItemStatus,
+          )
+        ) {
+          workItem.status = normStatus as WorkItemStatus;
+        }
+      }
+      if (prev.type !== undefined && prev.type !== null) {
+        const normType = String(prev.type).toUpperCase();
+        if (Object.values(WorkItemType).includes(normType as WorkItemType)) {
+          workItem.type = normType as WorkItemType;
+        }
+      }
+      if (prev.dueDate !== undefined) {
+        workItem.dueDate = prev.dueDate ? new Date(prev.dueDate) : null;
+      }
+
+      const rawParent = prev.parentWorkItemId ?? prev.parentId;
       const parentWorkItemId = snapshotString(
-        prev.parentWorkItemId,
+        rawParent,
         "parent work item ID",
         true,
       );
@@ -364,6 +310,7 @@ export async function undoAuditLog(req: Request, res: Response) {
           );
         }
       }
+      workItem.parentWorkItemId = parentWorkItemId;
 
       if (prev.priority !== undefined && prev.priority !== null) {
         const normPriority = String(prev.priority).toUpperCase();
@@ -375,7 +322,25 @@ export async function undoAuditLog(req: Request, res: Response) {
           workItem.priority = normPriority as WorkItemPriority;
         }
       }
-      workItem.sprintId = sprintId;
+
+      let sprintId: string | null = null;
+      if (prev.sprintId !== undefined) {
+        sprintId = snapshotString(prev.sprintId, "sprint ID", true);
+        if (sprintId) {
+          const sprint = await manager.getRepository(Sprint).findOne({
+            where: { id: sprintId, projectId: workItem.projectId },
+            select: { id: true },
+          });
+          if (!sprint) {
+            throw new AppError(
+              "The stored sprint is unavailable.",
+              400,
+              "ACTION_NOT_REVERSIBLE",
+            );
+          }
+        }
+        workItem.sprintId = sprintId;
+      }
 
       const labelId = snapshotString(prev.labelId, "label ID", true);
       if (labelId) {
@@ -396,39 +361,53 @@ export async function undoAuditLog(req: Request, res: Response) {
       await workItemRepo.save(workItem);
 
       if (
-        !Array.isArray(prev.assigneeIds) ||
-        !prev.assigneeIds.every(
-          (assigneeId): assigneeId is string =>
-            typeof assigneeId === "string" &&
-            UUID_PATTERN.test(assigneeId),
-        )
+        prev.assignees !== undefined ||
+        prev.assigneeIds !== undefined ||
+        prev.assigneeId !== undefined
       ) {
-        throw new AppError(
-          "The stored assignee list is invalid.",
-          400,
-          "ACTION_NOT_REVERSIBLE",
-        );
-      }
+        let userIds: string[] = [];
+        if (Array.isArray(prev.assignees)) {
+          userIds = prev.assignees
+            .map((a: any) => (typeof a === "string" ? a : a.userId || a.id))
+            .filter(
+              (id: any): id is string =>
+                typeof id === "string" && UUID_PATTERN.test(id),
+            );
+        } else if (Array.isArray(prev.assigneeIds)) {
+          userIds = prev.assigneeIds.filter(
+            (id: any): id is string =>
+              typeof id === "string" && UUID_PATTERN.test(id),
+          );
+        } else if (
+          prev.assigneeId &&
+          typeof prev.assigneeId === "string" &&
+          UUID_PATTERN.test(prev.assigneeId)
+        ) {
+          userIds = [prev.assigneeId];
+        }
 
-      const userIds = prev.assigneeIds;
-      await validateAssignees(
-        userIds.map((assigneeId) => ({ userId: assigneeId })),
-        workItem.projectId,
-        organizationId,
-        manager,
-      );
-      const assigneeRepo = manager.getRepository(WorkItemAssignee);
-      await assigneeRepo.delete({ workItemId: workItem.id });
+        if (userIds.length > 0) {
+          await validateAssignees(
+            userIds.map((assigneeId) => ({ userId: assigneeId })),
+            workItem.projectId,
+            organizationId,
+            manager,
+          );
+        }
 
-      if (userIds.length > 0) {
-        const assigneeEntities = userIds.map((assigneeId) =>
-          assigneeRepo.create({
-            workItemId: workItem.id,
-            userId: assigneeId,
-            assignedById: userId,
-          }),
-        );
-        await assigneeRepo.save(assigneeEntities);
+        const assigneeRepo = manager.getRepository(WorkItemAssignee);
+        await assigneeRepo.delete({ workItemId: workItem.id });
+
+        if (userIds.length > 0) {
+          const assigneeEntities = userIds.map((assigneeId) =>
+            assigneeRepo.create({
+              workItemId: workItem.id,
+              userId: assigneeId,
+              assignedById: userId,
+            }),
+          );
+          await assigneeRepo.save(assigneeEntities);
+        }
       }
 
       const assignments = await manager.getRepository(WorkItemAssignee).find({
@@ -523,14 +502,12 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
       req.user?.role,
     );
 
-    try {
+    if (UUID_PATTERN.test(projectId)) {
       const projectTasks = await AppDataSource.getRepository(WorkItem).find({
         where: { projectId, organizationId },
         select: { id: true, title: true },
       });
       projectTaskIds = projectTasks.map((t) => t.id);
-    } catch {
-      // Gracefully continue
     }
   }
 
@@ -563,17 +540,15 @@ export async function getProjectAuditLogs(req: Request, res: Response) {
 
   const taskMap: Record<string, string> = {};
   if (taskIds.length > 0) {
-    try {
-      const foundTasks = await AppDataSource.getRepository(WorkItem).find({
-        where: { id: In(taskIds), organizationId },
-        select: { id: true, title: true },
-      });
-      foundTasks.forEach((t) => {
-        taskMap[t.id] = t.title;
-      });
-    } catch {
-      // In case of non-uuid entityId, gracefully continue
-    }
+  const validTaskIds = taskIds.filter((id) => UUID_PATTERN.test(id));
+  if (validTaskIds.length > 0) {
+    const foundTasks = await AppDataSource.getRepository(WorkItem).find({
+      where: { id: In(validTaskIds), organizationId },
+      select: { id: true, title: true },
+    });
+    foundTasks.forEach((t) => {
+      taskMap[t.id] = t.title;
+    });
   }
 
   return res.json({

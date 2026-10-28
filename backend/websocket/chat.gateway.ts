@@ -4,7 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { AppDataSource } from "../config/data.source";
 import { config } from "../config/config";
 import { User, UserStatus } from "../entities/user.entity";
-import { canAccessConversation, saveMessage, ChatActor } from "../services/chat.service";
+import { canAccessConversation, saveMessage, ChatActor, registerRoomEvictor } from "../services/chat.service";
 
 interface AccessPayload extends JwtPayload {
   userId: string;
@@ -97,9 +97,11 @@ export function evictUserFromConversationRoom(conversationId: string, userId: st
         }
       }
     }
-  }
-  if (room.size === 0) rooms.delete(conversationId);
 }
+if (room.size === 0) rooms.delete(conversationId);
+}
+
+registerRoomEvictor(evictUserFromConversationRoom);
 
 export function attachChatWebSocket(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { getProjectDashboard, getPersonalDashboard } from "../controllers/dashboard.controller";
 import { isLoggedIn } from "../middleware/is.loggedin";
-import { checkPermission } from "../middleware/check.permissions";
+import { requireProjectPermission } from "../middleware/project.permission";
 import { asyncHandler } from "../middleware/async.handler";
 import { validateProjectId } from "../validations/project.validations";
 
@@ -16,9 +16,9 @@ router.get(
 router.get(
   "/projects/:projectId/dashboard",
   isLoggedIn,
-  checkPermission("project:read"),
   validateProjectId,
+  requireProjectPermission("project:view"),
   asyncHandler(getProjectDashboard)
 );
 
-export default router;
+export default router;
