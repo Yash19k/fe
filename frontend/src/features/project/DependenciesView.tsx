@@ -6,6 +6,7 @@ import {
 } from '../../domain/dependencyGraph';
 import { Button } from '../../components/ui/Button';
 import { StatusBadge } from '../../components/ui/Badge';
+import { findWorkflowStatus, getStatusNameForTask } from '../../domain/workflow';
 import { Trash2, AlertTriangle, GitCommit } from 'lucide-react';
 import { Task } from '../../types';
 
@@ -20,7 +21,15 @@ export interface DependenciesViewProps {
 }
 
 export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) {
-  const { projectTasks, addDependency, removeDependency, openTaskDrawer, showToast, currentUser } = useApp();
+  const {
+    projectTasks,
+    currentWorkflow,
+    addDependency,
+    removeDependency,
+    openTaskDrawer,
+    showToast,
+    currentUser,
+  } = useApp();
 
   const [fromTaskId, setFromTaskId] = useState('');
   const [toTaskId, setToTaskId] = useState('');
@@ -230,7 +239,12 @@ export function DependenciesView({ isEmbedded = false }: DependenciesViewProps) 
                 </div>
 
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <StatusBadge status={link.predecessor.status} size="sm" />
+                  <StatusBadge
+                    status={link.predecessor.status}
+                    label={getStatusNameForTask(currentWorkflow, link.predecessor)}
+                    color={findWorkflowStatus(currentWorkflow, link.predecessor.status)?.color}
+                    size="sm"
+                  />
                   {currentUser.role !== 'Teammate' && (
                     <button
                       onClick={() =>

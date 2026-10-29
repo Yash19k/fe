@@ -4,6 +4,11 @@ import { useApp } from '../../hooks/useApp';
 import { StatusBadge, PriorityBadge, WorkItemTypeBadge } from '../ui/Badge';
 import { Avatar } from '../ui/Avatar';
 import { canUserAccessProject } from '../../domain/permissions';
+import {
+  findWorkflowStatus,
+  getStatusNameForTask,
+  getWorkflowForProject,
+} from '../../domain/workflow';
 
 export interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -11,7 +16,7 @@ export interface GlobalSearchModalProps {
 }
 
 export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
-  const { tasks, projects, allUsers, currentUser, openTaskDrawer, navigate } = useApp();
+  const { tasks, projects, workflows, allUsers, currentUser, openTaskDrawer, navigate } = useApp();
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -165,7 +170,12 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
                   >
                     <div className="flex items-center gap-2 min-w-0 pr-2">
                       <WorkItemTypeBadge type={t.type} size="sm" />
-                      <StatusBadge status={t.status} size="sm" />
+                      <StatusBadge
+                        status={t.status}
+                        label={getStatusNameForTask(getWorkflowForProject(workflows, t.projectId), t)}
+                        color={findWorkflowStatus(getWorkflowForProject(workflows, t.projectId), t.status)?.color}
+                        size="sm"
+                      />
                       <span className="text-sm font-medium text-text-primary truncate">
                         {t.title}
                       </span>

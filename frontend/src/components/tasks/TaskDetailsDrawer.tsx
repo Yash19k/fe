@@ -36,6 +36,7 @@ import { TaskAttachments } from './TaskAttachments';
 import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
 import { toDateInputValue } from '../../utils/dateUtils';
 import { LabelPicker } from '../ui/LabelPicker';
+import { findWorkflowStatus, getStatusNameForTask, isWorkflowStatusComplete } from '../../domain/workflow';
 
 interface TaskDetailsContentProps {
   task: Task;
@@ -90,7 +91,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     title: task.title || '',
     description: task.description || '',
     type: (task.type || WORK_ITEM_TYPES.TASK) as WorkItemType,
-    status: task.status || 'Backlog',
+    status: task.status || '',
     priority: (task.priority || '') as Priority | '',
     assigneeId: task.assigneeId || '',
     assigneeIds: (task.assigneeIds && task.assigneeIds.length > 0)
@@ -206,7 +207,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }, [isTimerRunning]);
 
   const currentType = draft.type;
-  const slaInfo = evaluateTaskSla(task);
+  const slaInfo = evaluateTaskSla(task, undefined, currentWorkflow);
   const slaDeadline = task.sla?.deadline ? new Date(task.sla.deadline) : null;
   const handleEscalate = async () => {
     if (isEscalating || slaInfo.isEscalated) return;
@@ -219,8 +220,8 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       setIsEscalating(false);
     }
   };
-  const isBlocked = isTaskBlocked(task, tasks);
-  const blockingTasks = getBlockingTasks(task, tasks);
+  const isBlocked = isTaskBlocked(task, tasks, currentWorkflow);
+  const blockingTasks = getBlockingTasks(task, tasks, currentWorkflow);
   const predecessors = getPredecessorTasks(task, tasks);
   const successors = getSuccessorTasks(task, tasks);
 
@@ -232,7 +233,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   // Subtasks list
   const childSubtasks = tasks.filter((t) => t.parentId === task.id && t.type === WORK_ITEM_TYPES.SUBTASK);
   const subtasksList = childSubtasks.length > 0 ? childSubtasks : (task.subtasks || []);
-  const completedSubtasks = subtasksList.filter((s: any) => s.status === 'Done' || s.completed).length;
+  const completedSubtasks = subtasksList.filter(
+    (subtask: any) =>
+      (subtask.status && isWorkflowStatusComplete(currentWorkflow, subtask.status)) ||
+      (!subtask.status && subtask.completed),
+  ).length;
   const subtaskProgress =
     subtasksList.length > 0 ? Math.round((completedSubtasks / subtasksList.length) * 100) : 0;
 
@@ -521,7 +526,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <ArrowUpRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
               </button>
             </div>
-            <StatusBadge status={parentWorkItem.status} size="sm" />
+            <StatusBadge
+              status={parentWorkItem.status}
+              label={getStatusNameForTask(currentWorkflow, parentWorkItem)}
+              color={findWorkflowStatus(currentWorkflow, parentWorkItem.status)?.color}
+              size="sm"
+            />
           </div>
         )}
 
@@ -547,7 +557,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
           <div>
             <label className="text-[11px] text-text-muted block mb-1">Status</label>
             <select
-              value={draft.status}
+              value={getStatusNameForTask(currentWorkflow, draft)}
               onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
@@ -556,6 +566,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                   {st.name}
                 </option>
               )) || <option value={draft.status}>{draft.status}</option>}
+              {!findWorkflowStatus(currentWorkflow, draft.status) && (
+                <option value={draft.status}>{draft.status || 'Unknown status'} (not in workflow)</option>
+              )}
             </select>
           </div>
 
@@ -748,7 +761,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                         <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
                         <span className="truncate">{child.title}</span>
                       </div>
-                      <StatusBadge status={child.status} size="sm" />
+                      <StatusBadge
+                        status={child.status}
+                        label={getStatusNameForTask(currentWorkflow, child)}
+                        color={findWorkflowStatus(currentWorkflow, child.status)?.color}
+                        size="sm"
+                      />
                     </div>
                   ))}
                 </div>
@@ -961,7 +979,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
               <div className="space-y-1.5">
                 {subtasksList.map((sub: any) => {
-                  const isDone = sub.status === 'Done' || sub.completed;
+                  const isDone = sub.status
+                    ? isWorkflowStatusComplete(currentWorkflow, sub.status)
+                    : sub.completed;
                   return (
                     <div
                       key={sub.id}
@@ -1034,7 +1054,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <WorkItemTypeBadge type={p.type} size="sm" showLabel={false} />
-                          <StatusBadge status={p.status} size="sm" />
+                          <StatusBadge
+                            status={p.status}
+                            label={getStatusNameForTask(currentWorkflow, p)}
+                            color={findWorkflowStatus(currentWorkflow, p.status)?.color}
+                            size="sm"
+                          />
                           <span className="font-medium text-text-primary truncate">
                             {p.title}
                           </span>
@@ -1067,7 +1092,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <WorkItemTypeBadge type={s.type} size="sm" showLabel={false} />
-                          <StatusBadge status={s.status} size="sm" />
+                          <StatusBadge
+                            status={s.status}
+                            label={getStatusNameForTask(currentWorkflow, s)}
+                            color={findWorkflowStatus(currentWorkflow, s.status)?.color}
+                            size="sm"
+                          />
                           <span className="font-medium text-text-primary truncate">
                             {s.title}
                           </span>

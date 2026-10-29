@@ -13,6 +13,8 @@ import type {
   Role,
   SprintStatus,
   User,
+  Workflow,
+  WorkflowStatus,
 } from '../types';
 
 export const API_BASE_URL =
@@ -720,14 +722,29 @@ export async function deleteProjectLabelApi(projectId: string, labelId: string):
   );
 }
 
-export async function getProjectWorkflowApi(projectId: string): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
+export interface ProjectWorkflowResponse extends Workflow {
+  projectId: string;
+  stages?: WorkflowStatus[];
+  isDefault?: boolean;
+  updatedAt?: string;
+}
+
+export interface ProjectWorkflowApiResponse {
+  success: boolean;
+  data: ProjectWorkflowResponse;
+}
+
+export async function getProjectWorkflowApi(projectId: string): Promise<ProjectWorkflowApiResponse> {
+  return request<ProjectWorkflowApiResponse>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
     method: 'GET',
   });
 }
 
-export async function saveProjectWorkflowApi(projectId: string, payload: any): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
+export async function saveProjectWorkflowApi(
+  projectId: string,
+  payload: { name: string; stages: WorkflowStatus[] },
+): Promise<ProjectWorkflowApiResponse> {
+  return request<ProjectWorkflowApiResponse>(`/api/projects/${encodeURIComponent(projectId)}/workflow`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
@@ -989,23 +1006,15 @@ export function toUserFriendlyErrorMessage(
 }
 
 export function frontendStatusToBackend(status: string): string {
-  switch (status) {
-    case 'In Progress': return 'IN_PROGRESS';
-    case 'In Review': return 'IN_REVIEW';
-    case 'Testing / QA': return 'TESTING_QA';
-    case 'Blocked': return 'BLOCKED';
-    case 'Done': return 'DONE';
-    case 'On Hold': return 'ON_HOLD';
-    case 'Backlog': return 'BACKLOG';
-    default: {
-      const upper = String(status || '').toUpperCase().replace(/[\s\/-]+/g, '_');
-      if (['BACKLOG', 'IN_PROGRESS', 'IN_REVIEW', 'TESTING_QA', 'BLOCKED', 'DONE', 'ON_HOLD'].includes(upper)) {
-        return upper;
-      }
-      console.warn(`[TaskFlow API] Unknown task status "${status}", falling back to BACKLOG`);
-      return 'BACKLOG';
-    }
+  const normalized = String(status || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!normalized) {
+    throw new Error('A workflow status is required to save this work item.');
   }
+  return normalized;
 }
 
 export function backendStatusToFrontend(status?: string | null): TaskStatus {
@@ -1017,12 +1026,8 @@ export function backendStatusToFrontend(status?: string | null): TaskStatus {
     case 'DONE': return 'Done';
     case 'ON_HOLD': return 'On Hold';
     case 'BACKLOG': return 'Backlog';
-    default: {
-      if (status) {
-        console.warn(`[TaskFlow API] Unrecognized backend status "${status}", falling back to Backlog`);
-      }
-      return 'Backlog';
-    }
+    default:
+      return status || '';
   }
 }
 

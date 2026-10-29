@@ -12,13 +12,15 @@ import {
   Lock,
   Globe,
 } from 'lucide-react';
+import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 export interface ProjectsViewProps {
   onOpenCreateProject?: () => void;
 }
 
 export function ProjectsView({ onOpenCreateProject }: ProjectsViewProps) {
-  const { projects, tasks, allUsers, navigate, currentUser } = useApp();
+  const { projects, tasks, workflows, allUsers, navigate, currentUser } = useApp();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -106,7 +108,11 @@ export function ProjectsView({ onOpenCreateProject }: ProjectsViewProps) {
           <div className="divide-y divide-border/60">
             {filteredProjects.map((proj) => {
               const projTasks = tasks.filter((t) => t.projectId === proj.id);
-              const doneCount = projTasks.filter((t) => t.status === 'Done').length;
+              const workflow =
+                getWorkflowForProject(workflows, proj.id) || proj.workflow;
+              const doneCount = projTasks.filter((task) =>
+                isWorkflowStatusComplete(workflow, task.status),
+              ).length;
               const pct =
                 projTasks.length > 0 ? Math.round((doneCount / projTasks.length) * 100) : 0;
               const members = allUsers.filter((u) => (proj.memberIds || []).includes(u.id));
@@ -181,7 +187,7 @@ export function ProjectsView({ onOpenCreateProject }: ProjectsViewProps) {
                   {/* Target Delivery Date */}
                   <div className="flex items-center gap-1.5 text-text-secondary">
                     <Calendar size={13} className="text-text-muted" />
-                    <span>{proj.dueDate || '—'}</span>
+                    <span>{formatDisplayDate(proj.dueDate)}</span>
                   </div>
 
                   {/* Members */}

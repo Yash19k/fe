@@ -222,9 +222,9 @@ export function getTaskDateContext(task: Task, targetDateStr: string): string | 
 
 /**
  * Creates the next occurrence work item when a recurring task is completed.
- * Resets status to initial 'Backlog', uncompletes subtasks, and clears dependencies.
+ * Resets status to the project's initial workflow stage, uncompletes subtasks, and clears dependencies.
  */
-export function createNextRecurringTask(completedTask: Task): Task | null {
+export function createNextRecurringTask(completedTask: Task, initialStatus: string): Task | null {
   const rule = completedTask.recurrenceRule || (completedTask.recurrence as RecurrenceRule);
   if (!rule || !rule.frequency || rule.frequency === 'none') {
     return null;
@@ -264,7 +264,7 @@ export function createNextRecurringTask(completedTask: Task): Task | null {
   const nextTask: Task = {
     ...completedTask,
     id: newTaskId,
-    status: 'Backlog', // Reset to initial status
+    status: initialStatus,
     startDate: nextStartDateStr,
     dueDate: completedTask.dueDate ? nextDueDateStr : null,
     actualHours: 0,

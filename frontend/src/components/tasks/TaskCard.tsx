@@ -8,6 +8,7 @@ import { evaluateTaskSla } from '../../domain/sla';
 import { Network, ListTodo, Calendar, CornerDownRight } from 'lucide-react';
 import { WORK_ITEM_TYPES } from '../../domain/workItems';
 import { Task } from '../../types';
+import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
 
 export interface TaskCardProps {
   task: Task;
@@ -15,11 +16,14 @@ export interface TaskCardProps {
 }
 
 export function TaskCard({ task, onDragStart }: TaskCardProps) {
-  const { openTaskDrawer, allUsers, tasks } = useApp();
+  const { openTaskDrawer, allUsers, tasks, workflows, currentProject, currentWorkflow } = useApp();
+  const workflow =
+    getWorkflowForProject(workflows, task.projectId) ||
+    (currentProject?.id === task.projectId ? currentWorkflow : undefined);
 
   const assignees = resolveTaskAssignees(task, allUsers);
-  const isBlocked = isTaskBlocked(task, tasks);
-  const slaInfo = evaluateTaskSla(task);
+  const isBlocked = isTaskBlocked(task, tasks, workflow);
+  const slaInfo = evaluateTaskSla(task, undefined, workflow);
   const dateInfo = getRelativeDateLabel(task.dueDate);
 
   // Find parent task if item has a parent
@@ -28,7 +32,11 @@ export function TaskCard({ task, onDragStart }: TaskCardProps) {
   // Subtasks list
   const childSubtasks = tasks.filter((t) => t.parentId === task.id && t.type === WORK_ITEM_TYPES.SUBTASK);
   const subtasks = childSubtasks.length > 0 ? childSubtasks : (task.subtasks || []);
-  const completedSubtasks = subtasks.filter((s: any) => s.status === 'Done' || s.completed).length;
+  const completedSubtasks = subtasks.filter(
+    (subtask: any) =>
+      (subtask.status && isWorkflowStatusComplete(workflow, subtask.status)) ||
+      (!subtask.status && subtask.completed),
+  ).length;
 
   return (
     <div
@@ -75,20 +83,20 @@ export function TaskCard({ task, onDragStart }: TaskCardProps) {
       {/* Bottom metadata row: Due date, Subtasks, Assignee */}
       <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[11px] text-text-muted">
         <div className="flex items-center gap-2">
-          {task.dueDate && (
-            <span
-              className={`flex items-center gap-1 ${
-                dateInfo.isOverdue
+          <span
+            className={`flex items-center gap-1 ${
+              !task.dueDate || dateInfo.label === '-'
+                ? 'text-text-muted/40'
+                : dateInfo.isOverdue
                   ? 'text-rose-400 font-semibold'
                   : dateInfo.isDueSoon
                     ? 'text-amber-400 font-medium'
                     : 'text-text-muted'
-              }`}
-            >
-              <Calendar size={11} />
-              {dateInfo.label}
-            </span>
-          )}
+            }`}
+          >
+            <Calendar size={11} />
+            {dateInfo.label}
+          </span>
 
           {task.type !== WORK_ITEM_TYPES.SUBTASK && subtasks.length > 0 && (
             <span className="flex items-center gap-1 font-mono">

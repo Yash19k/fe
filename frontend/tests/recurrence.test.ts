@@ -100,10 +100,10 @@ describe('Recurrence Engine Tests', () => {
       dependencyIds: ['task-9'],
     } as unknown as Task;
 
-    const nextTask = createNextRecurringTask(completedTask);
+    const nextTask = createNextRecurringTask(completedTask, 'Queued');
     assert.ok(nextTask);
     assert.notEqual(nextTask.id, 'task-10');
-    assert.equal(nextTask.status, 'Backlog');
+    assert.equal(nextTask.status, 'Queued');
     assert.equal(nextTask.dueDate, '2026-11-01');
     assert.equal(nextTask.startDate, '2026-10-28'); // preserved 4-day duration
     assert.equal(nextTask.subtasks?.[0].completed, false);

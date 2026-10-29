@@ -193,8 +193,8 @@ export interface Label {
 export interface WorkflowStatus {
   id: string;
   name: TaskStatus;
-  category?: 'backlog' | 'active' | 'done' | string;
-  color: string;
+  category?: string;
+  color?: string;
   allowedTransitions?: string[];
   roleRestrictions?: Record<string, string[]>;
 }
@@ -202,9 +202,9 @@ export interface WorkflowStatus {
 export interface Workflow {
   id: string;
   name: string;
+  projectId?: string;
   description?: string;
   statuses: WorkflowStatus[];
-  [key: string]: any;
 }
 
 export interface ProjectSection {
@@ -317,6 +317,8 @@ export interface AppContextValue {
   workflows: Workflow[];
   currentWorkflow?: Workflow;
   setWorkflows: (workflows: Workflow[] | ((prev: Workflow[]) => Workflow[])) => void;
+  currentWorkflowLoading?: boolean;
+  currentWorkflowError?: string | null;
   tasks: Task[];
   projectTasks: Task[];
   myTasks: Task[];
@@ -328,7 +330,7 @@ export interface AppContextValue {
   uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
   updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }>;
   deleteTask: (taskId: string) => void;
-  changeTaskStatus: (taskId: string, newStatus: string) => boolean;
+  changeTaskStatus: (taskId: string, newStatus: string) => Promise<boolean>;
   requestReschedule: (taskId: string, newDueDate: string) => void;
   confirmRescheduleImpact: () => void;
   addDependency: (predecessorId: string, successorId: string) => any;

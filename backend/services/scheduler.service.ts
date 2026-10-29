@@ -10,6 +10,31 @@ let slaScheduler: Cron | undefined;
 let recurrenceScheduler: Cron | undefined;
 let isSlaJobRunning = false;
 let isRecurrenceJobRunning = false;
+const schedulerErrorLogIntervalMs = 5 * 60 * 1000;
+const schedulerErrorLogs = new Map<
+  string,
+  { lastLoggedAt: number; suppressedCount: number }
+>();
+
+function logSchedulerFailure(schedulerName: string, error: unknown): void {
+  const now = Date.now();
+  const previous = schedulerErrorLogs.get(schedulerName);
+
+  if (previous && now - previous.lastLoggedAt < schedulerErrorLogIntervalMs) {
+    previous.suppressedCount += 1;
+    return;
+  }
+
+  const suppressedCount = previous?.suppressedCount ?? 0;
+  console.error(
+    `[${schedulerName}] Job failed${suppressedCount > 0 ? ` (${suppressedCount} repeated failures suppressed)` : ""}:`,
+    error,
+  );
+  schedulerErrorLogs.set(schedulerName, {
+    lastLoggedAt: now,
+    suppressedCount: 0,
+  });
+}
 
 export function startScheduler(): void {
   if (!AppDataSource.isInitialized) {
@@ -46,7 +71,7 @@ export function startScheduler(): void {
           `[SLA Scheduler] Completed. Updated ${result.updatedCount} work items.`,
         );
       } catch (error) {
-        console.error("[SLA Scheduler] Job failed:", error);
+        logSchedulerFailure("SLA Scheduler", error);
       } finally {
         isSlaJobRunning = false;
       }
@@ -72,7 +97,7 @@ export function startScheduler(): void {
           );
         }
       } catch (error) {
-        console.error("[Recurrence Scheduler] Job failed:", error);
+        logSchedulerFailure("Recurrence Scheduler", error);
       } finally {
         isRecurrenceJobRunning = false;
       }

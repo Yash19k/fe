@@ -60,15 +60,15 @@ describe('Phase 1 Remediation Tests: F-01, F-02, F-03, F-04, F-05, F-12', () => 
       assert.equal(backendStatusToFrontend('backlog'), 'Backlog');
     });
 
-    test('safely handles unknown or invalid backend statuses without corruption', () => {
-      assert.equal(backendStatusToFrontend('UNKNOWN_STATUS'), 'Backlog');
-      assert.equal(backendStatusToFrontend(null), 'Backlog');
-      assert.equal(backendStatusToFrontend(undefined), 'Backlog');
+    test('preserves unknown backend statuses rather than changing them to Backlog', () => {
+      assert.equal(backendStatusToFrontend('UNKNOWN_STATUS'), 'UNKNOWN_STATUS');
+      assert.equal(backendStatusToFrontend(null), '');
+      assert.equal(backendStatusToFrontend(undefined), '');
     });
 
-    test('safely handles custom/unsupported frontend status values without crash', () => {
-      assert.equal(frontendStatusToBackend('Custom Status'), 'BACKLOG');
-      assert.equal(frontendStatusToBackend(''), 'BACKLOG');
+    test('preserves custom frontend statuses for explicit backend validation', () => {
+      assert.equal(frontendStatusToBackend('Custom Status'), 'CUSTOM_STATUS');
+      assert.throws(() => frontendStatusToBackend(''), /workflow status is required/i);
     });
   });
 
