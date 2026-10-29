@@ -90,7 +90,7 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search tasks, projects, members, or tags... (Esc to close)"
-            className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+            className="global-search-input w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
           />
           {query && (
             <button
