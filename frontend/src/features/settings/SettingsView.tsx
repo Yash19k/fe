@@ -44,7 +44,6 @@ export function SettingsView() {
 
   // Add Member State
   const [isAddingMember, setIsAddingMember] = useState<boolean>(false);
-  const [addFullName, setAddFullName] = useState<string>('');
   const [addEmail, setAddEmail] = useState<string>('');
   const [addRole, setAddRole] = useState<string>('Teammate');
   const [isSubmittingAdd, setIsSubmittingAdd] = useState<boolean>(false);
@@ -147,7 +146,6 @@ export function SettingsView() {
   async function handleAddMemberSubmit(e: React.FormEvent) {
     e.preventDefault();
     const email = addEmail.trim().toLowerCase();
-    const fullName = addFullName.trim();
 
     if (!email || !email.includes('@')) {
       setAddError('A valid email address is required.');
@@ -169,7 +167,6 @@ export function SettingsView() {
 
       showToast(res?.message || `Member ${email} added to organization`, 'success');
       setAddEmail('');
-      setAddFullName('');
       setAddRole('Teammate');
       setIsAddingMember(false);
       await loadOrgMembers();
@@ -285,16 +282,6 @@ export function SettingsView() {
 
             <div className="flex items-center gap-2">
               <Button
-                variant="secondary"
-                size="sm"
-                icon={RefreshCw}
-                onClick={loadOrgMembers}
-                disabled={isLoadingMembers}
-                className="h-8 text-xs"
-              >
-                Refresh
-              </Button>
-              <Button
                 variant="primary"
                 size="sm"
                 icon={UserPlus}
@@ -323,16 +310,7 @@ export function SettingsView() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-text-muted mb-1 font-medium">Full Name (Optional)</label>
-                  <Input
-                    placeholder="e.g. Jordan Smith"
-                    value={addFullName}
-                    onChange={(e) => setAddFullName(e.target.value)}
-                  />
-                </div>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-text-muted mb-1 font-medium">Email Address</label>
                   <Input

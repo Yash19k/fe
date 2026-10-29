@@ -11,7 +11,6 @@ import {
   ShieldAlert,
   Ban,
   Activity,
-  RefreshCw,
 } from 'lucide-react';
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -47,15 +46,10 @@ export function HomeView() {
     attentionTasks: any[];
     userTasks: any[];
   } | null>(null);
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(true);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const fetchPersonalDashboard = async () => {
-    if (!currentUser?.id) {
-      setIsLoadingDashboard(false);
-      return;
-    }
-    setIsLoadingDashboard(true);
+    if (!currentUser?.id) return;
     setDashboardError(null);
     try {
       const res = await getPersonalDashboardApi();
@@ -64,8 +58,6 @@ export function HomeView() {
       }
     } catch (err: any) {
       setDashboardError(err?.message || 'Failed to retrieve personal dashboard metrics');
-    } finally {
-      setIsLoadingDashboard(false);
     }
   };
 
@@ -180,17 +172,6 @@ export function HomeView() {
           <p className="text-xs text-text-muted mt-0.5">
             Active session: <span className="text-text-secondary font-medium">{currentUser.name}</span> ({currentUser.role}) · Focus queue and critical milestones
           </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <button
-            onClick={fetchPersonalDashboard}
-            disabled={isLoadingDashboard}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface border border-border text-xs text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors cursor-pointer"
-            title="Refresh personal metrics from server"
-          >
-            <RefreshCw size={12} className={isLoadingDashboard ? 'animate-spin' : ''} />
-            <span>{isLoadingDashboard ? 'Refreshing...' : 'Refresh Overview'}</span>
-          </button>
         </div>
       </div>
 
