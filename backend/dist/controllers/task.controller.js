@@ -1,9 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getWorkItemSlaAudit = exports.getWorkItemSla = exports.resolveWorkItemEscalation = exports.escalateWorkItem = exports.deleteWorkItem = exports.uploadAttachmentsToWorkItem = exports.getProjectWorkItems = exports.updateWorkItem = exports.createWorkItem = void 0;
+exports.getWorkItemSlaAudit = exports.getWorkItemSla = exports.resolveWorkItemEscalation = exports.escalateWorkItem = exports.deleteWorkItem = exports.uploadAttachmentsToWorkItem = exports.getProjectWorkItems = exports.getWorkItemById = exports.updateWorkItem = exports.createWorkItem = void 0;
+const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data.source");
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_assignee_entity_1 = require("../entities/work.item-assignee.entity");
+const work_item_comment_entity_1 = require("../entities/work.item.comment.entity");
+const work_item_time_entry_entity_1 = require("../entities/work.item.time.entry.entity");
+const work_item_attachment_entity_1 = require("../entities/work.item.attachment.entity");
+const work_item_dependency_entity_1 = require("../entities/work.item.dependency.entity");
+const project_label_entity_1 = require("../entities/project.label.entity");
 const audit_log_entity_1 = require("../entities/audit.log.entity");
 const work_item_attachment_service_1 = require("../services/work.item.attachment.service");
 const app_error_1 = require("../errors/app.error");
@@ -13,6 +19,7 @@ const sla_service_1 = require("../services/sla.service");
 const project_permission_1 = require("../middleware/project.permission");
 const pagination_1 = require("../utils/pagination");
 const work_item_service_1 = require("../services/work-item.service");
+const work_item_dependency_service_1 = require("../services/work-item-dependency.service");
 function requireUserId(req) {
     const userId = req.user?.id;
     if (!userId) {
@@ -72,6 +79,36 @@ const updateWorkItem = async (req, res) => {
     });
 };
 exports.updateWorkItem = updateWorkItem;
+const getWorkItemById = async (req, res) => {
+    const actor = await (0, work_item_service_1.getActiveActor)(requireUserId(req));
+    const workItem = await (0, work_item_service_1.getAccessibleWorkItem)(requireWorkItemId(req), actor);
+    const [assignments, label] = await Promise.all([
+        data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+            where: { workItemId: workItem.id },
+            relations: { user: true },
+        }),
+        workItem.labelId
+            ? data_source_1.AppDataSource.getRepository(project_label_entity_1.ProjectLabel).findOne({
+                where: { id: workItem.labelId, projectId: workItem.projectId },
+            })
+            : Promise.resolve(null),
+    ]);
+    const assigneeIds = assignments.map((assignment) => assignment.userId);
+    res.status(200).json({
+        success: true,
+        data: {
+            ...workItem,
+            label,
+            labels: label ? [label] : [],
+            assignments,
+            assigneeIds,
+            assigneeId: assigneeIds[0] || null,
+            assignees: assignments.map((assignment) => assignment.user).filter(Boolean),
+            sla: (0, sla_service_1.getSlaSnapshot)(workItem),
+        },
+    });
+};
+exports.getWorkItemById = getWorkItemById;
 // ==========================================
 // LIST PROJECT WORK ITEMS
 // ==========================================
@@ -86,13 +123,7 @@ const getProjectWorkItems = async (req, res) => {
     const { skip, take } = (0, pagination_1.getPagination)({ page, limit });
     const query = data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem)
         .createQueryBuilder("workItem")
-        .leftJoinAndSelect("workItem.assignments", "assignments")
-        .leftJoinAndSelect("assignments.user", "assigneeUser")
         .leftJoinAndSelect("workItem.label", "label")
-        .leftJoinAndSelect("workItem.comments", "comments")
-        .leftJoinAndSelect("workItem.timeEntries", "timeEntries")
-        .leftJoinAndSelect("workItem.children", "children")
-        .leftJoinAndSelect("workItem.attachments", "attachments")
         .where("workItem.projectId = :projectId", {
         projectId: project.id,
     })
@@ -110,6 +141,77 @@ const getProjectWorkItems = async (req, res) => {
         query.andWhere("workItem.type = :type", { type });
     }
     const [workItems, total] = await query.getManyAndCount();
+    if (workItems.length > 0) {
+        const workItemIds = workItems.map((workItem) => workItem.id);
+        const [assignments, comments, timeEntries, children, attachments, dependencies] = await Promise.all([
+            data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+                where: { workItemId: (0, typeorm_1.In)(workItemIds) },
+                relations: { user: true },
+            }),
+            data_source_1.AppDataSource.getRepository(work_item_comment_entity_1.WorkItemComment).find({
+                where: { workItemId: (0, typeorm_1.In)(workItemIds) },
+            }),
+            data_source_1.AppDataSource.getRepository(work_item_time_entry_entity_1.WorkItemTimeEntry).find({
+                where: { workItemId: (0, typeorm_1.In)(workItemIds) },
+            }),
+            data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).find({
+                where: { parentWorkItemId: (0, typeorm_1.In)(workItemIds) },
+            }),
+            data_source_1.AppDataSource.getRepository(work_item_attachment_entity_1.WorkItemAttachment).find({
+                where: { workItemId: (0, typeorm_1.In)(workItemIds) },
+            }),
+            data_source_1.AppDataSource.getRepository(work_item_dependency_entity_1.WorkItemDependency).find({
+                where: { workItemId: (0, typeorm_1.In)(workItemIds) },
+                order: { id: "ASC" },
+            }),
+        ]);
+        const assignmentsByWorkItem = new Map();
+        for (const assignment of assignments) {
+            const current = assignmentsByWorkItem.get(assignment.workItemId) ?? [];
+            current.push(assignment);
+            assignmentsByWorkItem.set(assignment.workItemId, current);
+        }
+        const commentsByWorkItem = new Map();
+        for (const comment of comments) {
+            const current = commentsByWorkItem.get(comment.workItemId) ?? [];
+            current.push(comment);
+            commentsByWorkItem.set(comment.workItemId, current);
+        }
+        const timeEntriesByWorkItem = new Map();
+        for (const entry of timeEntries) {
+            const current = timeEntriesByWorkItem.get(entry.workItemId) ?? [];
+            current.push(entry);
+            timeEntriesByWorkItem.set(entry.workItemId, current);
+        }
+        const childrenByParent = new Map();
+        for (const child of children) {
+            if (!child.parentWorkItemId)
+                continue;
+            const current = childrenByParent.get(child.parentWorkItemId) ?? [];
+            current.push(child);
+            childrenByParent.set(child.parentWorkItemId, current);
+        }
+        const attachmentsByWorkItem = new Map();
+        for (const attachment of attachments) {
+            const current = attachmentsByWorkItem.get(attachment.workItemId) ?? [];
+            current.push(attachment);
+            attachmentsByWorkItem.set(attachment.workItemId, current);
+        }
+        const dependenciesByWorkItem = new Map();
+        for (const dependency of dependencies) {
+            const current = dependenciesByWorkItem.get(dependency.workItemId) ?? [];
+            current.push(dependency);
+            dependenciesByWorkItem.set(dependency.workItemId, current);
+        }
+        for (const workItem of workItems) {
+            workItem.assignments = assignmentsByWorkItem.get(workItem.id) ?? [];
+            workItem.comments = commentsByWorkItem.get(workItem.id) ?? [];
+            workItem.timeEntries = timeEntriesByWorkItem.get(workItem.id) ?? [];
+            workItem.children = childrenByParent.get(workItem.id) ?? [];
+            workItem.attachments = attachmentsByWorkItem.get(workItem.id) ?? [];
+            workItem.dependencies = dependenciesByWorkItem.get(workItem.id) ?? [];
+        }
+    }
     for (const workItem of workItems) {
         if (!workItem.priority) {
             (0, work_item_service_1.clearSlaState)(workItem);
@@ -159,6 +261,52 @@ exports.uploadAttachmentsToWorkItem = uploadAttachmentsToWorkItem;
 const deleteWorkItem = async (req, res) => {
     const actor = await (0, work_item_service_1.getActiveActor)(requireUserId(req));
     const workItemId = requireWorkItemId(req);
+    await data_source_1.AppDataSource.transaction(async (manager) => {
+        const reference = await manager.getRepository(work_item_entity_1.WorkItem).findOne({
+            where: { id: workItemId, organizationId: actor.organizationId },
+            select: { id: true, projectId: true },
+        });
+        if (!reference) {
+            throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+        }
+        await (0, work_item_dependency_service_1.lockProjectSchedule)(manager, reference.projectId, actor.organizationId);
+        const workItem = await manager
+            .getRepository(work_item_entity_1.WorkItem)
+            .createQueryBuilder("workItem")
+            .where("workItem.id = :workItemId", { workItemId })
+            .andWhere("workItem.organizationId = :organizationId", {
+            organizationId: actor.organizationId,
+        })
+            .setLock("pessimistic_write")
+            .getOne();
+        if (!workItem) {
+            throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
+        }
+        await (0, work_item_service_1.assertAccessibleProject)(workItem.projectId, actor, manager);
+        const assignments = await manager.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+            where: { workItemId: workItem.id },
+            select: { userId: true },
+        });
+        await manager.getRepository(audit_log_entity_1.AuditLog).save(manager.getRepository(audit_log_entity_1.AuditLog).create({
+            organizationId: workItem.organizationId,
+            projectId: workItem.projectId,
+            userId: actor.id,
+            action: "deleted",
+            entityType: "task",
+            entityId: workItem.id,
+            description: `Deleted work item "${workItem.title}"`,
+            previousState: {
+                title: workItem.title,
+                type: workItem.type,
+                status: workItem.status,
+                priority: workItem.priority,
+                assigneeIds: assignments.map((assignment) => assignment.userId),
+            },
+            newState: null,
+            trustedForUndo: false,
+        }));
+        await manager.getRepository(work_item_entity_1.WorkItem).remove(workItem);
+    });
     const workItem = await (0, work_item_service_1.getAccessibleWorkItem)(workItemId, actor);
     await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).remove(workItem);
     res.status(200).json({

@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, DEFAULT_STANDARD_WORKFLOW, STORAGE_KEYS, emptyUser } from './storage';
+import { loadInitialState, saveStateToStorage, STORAGE_KEYS, emptyUser } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
-import { canTransitionStatus, hasPermission, PERMISSIONS } from '../domain/permissions';
+import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject } from '../domain/permissions';
 import { validateHierarchy } from '../domain/hierarchy';
-import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
+import { WORK_ITEM_TYPES, getWorkItemVersion, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
-import { normalizeProjectId, validateProjectId } from '../domain/projects';
+import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
+import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
 import {
   AppContextValue,
   User,
@@ -40,6 +41,7 @@ import {
   removeProjectMemberApi,
   updateProjectMemberRoleApi,
   getProjectWorkItemsApi,
+  getWorkItemApi,
   createWorkItemApi,
   uploadWorkItemAttachmentsApi,
   updateWorkItemApi,
@@ -47,6 +49,7 @@ import {
   deleteWorkItemApi,
   getProjectSprintsApi,
   currentUserApi,
+  registerOrganizationApi,
   loginApi,
   logoutApi,
   getOrganizationUsersApi,
@@ -83,6 +86,7 @@ import {
   isPersistedWorkItemId,
   isUuid,
   toUserFriendlyErrorMessage,
+  CreateWorkItemApiInput,
 } from '../services/api';
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -219,6 +223,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const projectFetchSeqRef = useRef<number>(0);
   const [isLoadingProjectData, setIsLoadingProjectData] = useState<boolean>(false);
   const [projectDataError, setProjectDataError] = useState<string | null>(null);
+  const [workflowLoadByProjectId, setWorkflowLoadByProjectId] = useState<
+    Record<string, { isLoading: boolean; error: string | null }>
+  >({});
 
   // Parallelized project asset loader
   const fetchProjectAssets = useCallback(async (projId: string, force: boolean = false) => {
@@ -228,6 +235,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const currentSeq = ++projectFetchSeqRef.current;
     setIsLoadingProjectData(true);
     setProjectDataError(null);
+    setWorkflowLoadByProjectId((previous) => ({
+      ...previous,
+      [projId]: { isLoading: true, error: null },
+    }));
 
     try {
       const [itemsRes, sprintsRes, membersRes, labelsRes, wfRes, auditRes] = await Promise.all([
@@ -315,41 +326,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      if (wfRes && !('error' in wfRes) && wfRes?.data) {
-        const backendWf = wfRes.data;
-        const resolvedName =
-          backendWf.name &&
-          backendWf.name !== 'Custom Engineering Flow' &&
-          !backendWf.name.endsWith(' Workflow') &&
-          !/^[0-9a-fA-F-]{20,}/.test(backendWf.name)
-            ? backendWf.name
-            : 'TaskFlow Pro — Final Statuses';
+      if (wfRes && 'error' in wfRes) {
+        setWorkflowLoadByProjectId((previous) => ({
+          ...previous,
+          [projId]: {
+            isLoading: false,
+            error: wfRes.error instanceof Error
+              ? wfRes.error.message
+              : 'Failed to load project workflow',
+          },
+        }));
+      } else {
+        const backendWf = wfRes?.data;
+        const statuses = backendWf?.statuses ?? backendWf?.stages;
+        if (
+          backendWf &&
+          typeof backendWf.name === 'string' &&
+          Array.isArray(statuses)
+        ) {
+          const projectWorkflow: Workflow = {
+            id: backendWf.id || `wf-${projId}`,
+            projectId: projId,
+            name: backendWf.name,
+            statuses,
+          };
 
-        setWorkflows((prev) => {
-          const exists = prev.some((w) => w.projectId === projId || w.id === `wf-${projId}`);
-          if (exists) {
-            return prev.map((w) => {
-              if (w.projectId === projId || w.id === `wf-${projId}`) {
-                return {
-                  ...w,
-                  name: resolvedName,
-                  statuses: backendWf.stages || backendWf.statuses || w.statuses,
-                };
-              }
-              return w;
-            });
-          } else {
-            return [
-              ...prev,
-              {
-                id: `wf-${projId}`,
-                projectId: projId,
-                name: resolvedName,
-                statuses: backendWf.stages || backendWf.statuses || DEFAULT_STANDARD_WORKFLOW.statuses,
-              },
-            ];
-          }
-        });
+          setWorkflows((previous) => [
+            ...previous.filter((workflow) => workflow.projectId !== projId),
+            projectWorkflow,
+          ]);
+          setProjects((previous) =>
+            previous.map((project) =>
+              project.id === projId
+                ? { ...project, workflow: projectWorkflow }
+                : project,
+            ),
+          );
+          setWorkflowLoadByProjectId((previous) => ({
+            ...previous,
+            [projId]: { isLoading: false, error: null },
+          }));
+        } else {
+          setWorkflowLoadByProjectId((previous) => ({
+            ...previous,
+            [projId]: {
+              isLoading: false,
+              error: 'The server returned an invalid project workflow configuration.',
+            },
+          }));
+        }
       }
 
       if (auditRes && !('error' in auditRes) && auditRes?.data && Array.isArray(auditRes.data)) {
@@ -395,6 +420,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (err: any) {
       if (currentSeq === projectFetchSeqRef.current) {
         setProjectDataError(err?.message || 'Failed to load project details');
+        setWorkflowLoadByProjectId((previous) => ({
+          ...previous,
+          [projId]: {
+            isLoading: false,
+            error: err?.message || 'Failed to load project workflow',
+          },
+        }));
       }
     } finally {
       if (currentSeq === projectFetchSeqRef.current) {
@@ -408,6 +440,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await fetchProjectAssets(currentProjectId, true);
     }
   }, [currentProjectId, fetchProjectAssets]);
+
+  const reloadWorkItem = useCallback(async (workItemId: string): Promise<Task> => {
+    const res = await getWorkItemApi(workItemId);
+    if (!res?.data?.id) {
+      throw new Error('The server did not return the latest work item.');
+    }
+
+    const latestTask = backendWorkItemToTask(res.data, res.data.projectId);
+    setTasks((prev) => {
+      const exists = prev.some((task) => task.id === latestTask.id);
+      let next = exists
+        ? prev.map((task) => task.id === latestTask.id ? latestTask : task)
+        : [latestTask, ...prev];
+      if (latestTask.type === WORK_ITEM_TYPES.SUBTASK && latestTask.parentId) {
+        next = next.map((task) => {
+          if (task.id !== latestTask.parentId) return task;
+          const subtask = {
+            id: latestTask.id,
+            title: latestTask.title,
+            completed: latestTask.status === 'Done',
+            assigneeId: latestTask.assigneeId,
+          };
+          return {
+            ...task,
+            subtasks: [
+              ...(task.subtasks || []).filter((item) => item.id !== latestTask.id),
+              subtask,
+            ],
+          };
+        });
+      }
+      return next;
+    });
+    return latestTask;
+  }, []);
 
   // Boot initialization
   useEffect(() => {
@@ -627,13 +694,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       previousValue,
       newValue,
       timestamp: new Date().toISOString(),
-      canUndo: entityType === 'task' ? false : canUndo,
+      canUndo,
     };
     setAuditLog((prev) => [entry, ...prev]);
 
-    if (entityType !== 'task' && isPersistedWorkItemId(resolvedProjectId)) {
+    const isPersistedTask = isPersistedWorkItemId(entityId);
+    if (isPersistedWorkItemId(resolvedProjectId) && (entityType !== 'task' || isPersistedTask)) {
       createAuditLogApi({
         projectId: resolvedProjectId,
+        workItemId: entityType === 'task' && isPersistedTask ? entityId : undefined,
         action,
         entityType,
         entityId,
@@ -668,39 +737,81 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [projects, currentProjectId]);
 
   const currentWorkflow = useMemo(() => {
-    const fallback = workflows[0] || DEFAULT_STANDARD_WORKFLOW;
-    if (!currentProject) {
-      return {
-        ...fallback,
-        name:
-          fallback.name && !fallback.name.endsWith(' Workflow') && !/^[0-9a-fA-F-]{20,}/.test(fallback.name)
-            ? fallback.name
-            : 'TaskFlow Pro — Final Statuses',
-      };
-    }
-    const found =
-      workflows.find((w) => w.projectId === currentProject.id || w.id === currentProject.workflowId) || fallback;
-    const isGeneric =
-      !found.name ||
-      found.name === 'Custom Engineering Flow' ||
-      found.name.endsWith(' Workflow') ||
-      /^[0-9a-fA-F-]{20,}/.test(found.name);
-
-    return {
-      ...found,
-      name: isGeneric ? 'TaskFlow Pro — Final Statuses' : found.name,
-    };
+    if (!currentProject) return undefined;
+    const projectWorkflow = workflows.find(
+      (workflow) => workflow.projectId === currentProject.id,
+    );
+    if (projectWorkflow) return projectWorkflow;
+    if (isPersistedWorkItemId(currentProject.id)) return undefined;
+    return currentProject.workflow ||
+      workflows.find((workflow) => workflow.id === currentProject.workflowId) ||
+      workflows.find((workflow) => !workflow.projectId);
   }, [workflows, currentProject]);
+
+  const currentWorkflowLoadState = currentProject
+    ? workflowLoadByProjectId[currentProject.id]
+    : undefined;
+  const currentWorkflowLoading = Boolean(
+    currentProject &&
+      isPersistedWorkItemId(currentProject.id) &&
+      (currentWorkflowLoadState?.isLoading ?? !currentWorkflow),
+  );
+  const currentWorkflowError = currentWorkflowLoadState?.error || null;
 
   const projectTasks = useMemo(() => {
     if (!currentProject) return [];
     return tasks.filter((t) => t.projectId === currentProject.id);
   }, [tasks, currentProject]);
 
+  const isTaskAssignedToUser = useCallback((task: Task, userId?: string | null): boolean => {
+    if (!userId) return false;
+    if (task.assigneeId === userId) return true;
+    if (Array.isArray(task.assigneeIds) && task.assigneeIds.includes(userId)) return true;
+    if (Array.isArray(task.assignees) && task.assignees.some((a: any) => (a.userId === userId || a.id === userId))) return true;
+    return false;
+  }, []);
+
   const myTasks = useMemo(() => {
     if (!currentUser?.id) return [];
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
-  }, [tasks, currentUser?.id]);
+    const seen = new Set<string>();
+    return tasks.filter((t) => {
+      if (seen.has(t.id)) return false;
+      if (isTaskAssignedToUser(t, currentUser.id)) {
+        seen.add(t.id);
+        return true;
+      }
+      return false;
+    });
+  }, [tasks, currentUser?.id, isTaskAssignedToUser]);
+
+  const loadCrossProjectTasks = useCallback(async () => {
+    if (!currentUser?.id) return;
+    const accessibleProjects = projects.filter((p) =>
+      canUserAccessProject(p, currentUser.id, currentUser.role) && isPersistedWorkItemId(p.id)
+    );
+
+    const promises = accessibleProjects.map(async (project) => {
+      try {
+        const res = await getProjectWorkItemsApi(project.id, 1, 100);
+        if (res?.data?.workItems && Array.isArray(res.data.workItems)) {
+          return res.data.workItems.map((item: any) => backendWorkItemToTask(item, project.id));
+        }
+      } catch (err) {
+        console.warn(`Could not fetch tasks for project ${project.id}:`, err);
+      }
+      return [];
+    });
+
+    const results = await Promise.all(promises);
+    const newTasks = results.flat();
+    if (newTasks.length > 0) {
+      setTasks((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const toAdd = newTasks.filter((t) => !existingIds.has(t.id));
+        return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      });
+    }
+  }, [currentUser?.id, currentUser?.role, projects]);
 
   const projectSprints = useMemo(() => {
     if (!currentProject) return [];
@@ -730,6 +841,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const targetProjectId = sanitized.projectId || currentProjectId;
     const targetProject = projects.find((p) => p.id === targetProjectId);
     const isServerProject = Boolean(targetProject && isPersistedWorkItemId(targetProject.id));
+    const targetWorkflow =
+      workflows.find((workflow) => workflow.projectId === targetProjectId) ||
+      (!isPersistedWorkItemId(targetProjectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
 
     if (!isServerProject) {
       showToast('A persisted backend project is required to create this task', 'error');
@@ -757,13 +873,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         projectId: targetProjectId,
         sprintId: isPersistedWorkItemId(sanitized.sprintId) ? sanitized.sprintId : null,
         parentWorkItemId: isPersistedWorkItemId(sanitized.parentId) ? sanitized.parentId : null,
+        plannedStartDate: sanitized.startDate || null,
+        plannedDurationWorkingDays: sanitized.plannedDurationWorkingDays ?? null,
         labelId: targetLabelId || null,
         labels: targetLabelId ? [targetLabelId] : [],
         type: frontendTypeToBackend(sanitized.type || WORK_ITEM_TYPES.TASK),
         title: sanitized.title.trim(),
         description: sanitized.description || null,
+        businessGoal: sanitized.businessGoal ?? null,
+        successCriteria: sanitized.successCriteria ?? null,
+        acceptanceCriteria: sanitized.acceptanceCriteria ?? null,
+        severity: sanitized.severity ?? null,
+        stepsToReproduce: sanitized.stepsToReproduce ?? null,
+        expectedBehavior: sanitized.expectedBehavior ?? null,
+        actualBehavior: sanitized.actualBehavior ?? null,
+        environment: sanitized.environment ?? null,
+        estimatedHours: sanitized.estimateHours ?? null,
         ...(backendPriority !== null ? { priority: backendPriority } : {}),
-        status: frontendStatusToBackend(sanitized.status || 'Backlog'),
+        status: frontendStatusToBackend(
+          sanitized.status || getInitialWorkflowStatus(targetWorkflow)?.name || '',
+        ),
         dueDate: sanitized.dueDate || null,
         assignees: (
           Array.isArray(sanitized.assigneeIds)
@@ -800,7 +929,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const subEntry = {
               id: authoritativeTask.id,
               title: authoritativeTask.title,
-              completed: authoritativeTask.status === 'Done',
+              completed: isWorkflowStatusComplete(targetWorkflow, authoritativeTask.status),
               assigneeId: authoritativeTask.assigneeId,
             };
 
@@ -811,8 +940,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return {
               ...task,
               subtasks: [...existing, subEntry],
-              version: (task.version || 1) + 1,
-              updatedAt: new Date().toISOString(),
             };
           })
         );
@@ -848,6 +975,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     currentProjectId,
     projects,
     tasks,
+    workflows,
     recordAudit,
     showToast,
     broadcastEvent,
@@ -902,18 +1030,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return persistedAttachments;
   }, []);
 
-  const updateTask = useCallback(async (taskId: string, updates: any, snapshotVersion: number | null = null): Promise<{ success: boolean; task?: Task; reason?: string }> => {
+  const updateTask = useCallback(async (taskId: string, updates: any, snapshotVersion: number | null = null): Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return { success: false, reason: 'Task not found' };
+    const persisted = isPersistedWorkItemId(taskId);
+    const targetVersion = getWorkItemVersion(target);
+    const targetWorkflow =
+      workflows.find((workflow) => workflow.projectId === target.projectId) ||
+      (!isPersistedWorkItemId(target.projectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
 
-    if (snapshotVersion !== null && (target.version || 1) !== snapshotVersion) {
+    if (persisted && targetVersion === undefined) {
+      const reason = 'Cannot save this task because its current version is missing. Refresh the task and try again.';
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    if (snapshotVersion !== null && targetVersion !== snapshotVersion) {
       setConflictModalData({
         taskId,
         snapshotVersion,
         latestTask: target,
         pendingUpdates: updates,
       });
-      return { success: false, reason: 'Version conflict' };
+      return { success: false, reason: 'Version conflict', conflict: true };
     }
 
     if (updates.type !== undefined || updates.parentId !== undefined) {
@@ -934,24 +1075,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const updated = {
       ...sanitized,
-      version: (target.version || 1) + 1,
-      updatedAt: new Date().toISOString(),
+      version: persisted
+        ? targetVersion
+        : (target.version || 1) + 1,
+      updatedAt: persisted
+        ? target.updatedAt
+        : new Date().toISOString(),
     };
 
-    if (isPersistedWorkItemId(taskId)) {
-      const backendUpdates: any = {};
+    if (persisted) {
+      const version = snapshotVersion ?? targetVersion;
+      if (version === undefined) {
+        const reason = 'Cannot save this task because its current version is missing. Refresh the task and try again.';
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
+      const backendUpdates: { version: number; [key: string]: any } = {
+        version,
+      };
       if (updates.sprintId !== undefined) backendUpdates.sprintId = isPersistedWorkItemId(updates.sprintId) ? updates.sprintId : null;
       if (updates.title !== undefined) backendUpdates.title = updates.title;
       if (updates.description !== undefined) backendUpdates.description = updates.description;
+      if (updates.businessGoal !== undefined) backendUpdates.businessGoal = updates.businessGoal;
+      if (updates.successCriteria !== undefined) backendUpdates.successCriteria = updates.successCriteria;
+      if (updates.acceptanceCriteria !== undefined) backendUpdates.acceptanceCriteria = updates.acceptanceCriteria;
+      if (updates.severity !== undefined) backendUpdates.severity = updates.severity;
+      if (updates.stepsToReproduce !== undefined) backendUpdates.stepsToReproduce = updates.stepsToReproduce;
+      if (updates.expectedBehavior !== undefined) backendUpdates.expectedBehavior = updates.expectedBehavior;
+      if (updates.actualBehavior !== undefined) backendUpdates.actualBehavior = updates.actualBehavior;
+      if (updates.environment !== undefined) backendUpdates.environment = updates.environment;
+      if (updates.estimateHours !== undefined) backendUpdates.estimatedHours = updates.estimateHours;
       if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
       if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
       if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
-      if (updates.plannedStartDate !== undefined) backendUpdates.plannedStartDate = updates.plannedStartDate || null;
-      if (updates.plannedDurationWorkingDays !== undefined) backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
-      if (updates.isSchedulePinned !== undefined) backendUpdates.isSchedulePinned = updates.isSchedulePinned;
+      if (updates.startDate !== undefined) backendUpdates.plannedStartDate = updates.startDate || null;
+      if (updates.plannedDurationWorkingDays !== undefined) {
+        backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
+      }
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
-
+      
       if (updates.assignees !== undefined) {
         const mapped = Array.isArray(updates.assignees)
           ? updates.assignees
@@ -998,68 +1161,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       try {
         let authoritativeTask: Task = updated;
-        let authoritativeRescheduledTasks: Task[] = [];
-        if (Object.keys(backendUpdates).length > 0) {
+        if (Object.keys(backendUpdates).length > 1) {
           const res = await updateWorkItemApi(taskId, backendUpdates);
           if (res?.data) {
-            const serverTask = backendWorkItemToTask(
+            authoritativeTask = backendWorkItemToTask(
               res.data,
-              res.data.projectId || res.data.workItem?.projectId || currentProjectId,
+              res.data.projectId || res.data.workItem?.projectId || currentProjectId
             );
-            authoritativeTask = {
-              ...target,
-              ...serverTask,
-              dependencyIds: target.dependencyIds || [],
-              subtasks: target.subtasks,
-              comments: target.comments,
-              timeEntries: target.timeEntries,
-              attachments: target.attachments,
-              tags: target.tags,
-              estimateHours: target.estimateHours,
-              actualHours: target.actualHours,
-              sla: res.data.sla || target.sla,
-            };
-            authoritativeRescheduledTasks = Array.isArray(res.data.rescheduledTasks)
-              ? res.data.rescheduledTasks.map((task: any) => {
-                  const mapped = backendWorkItemToTask(
-                    task,
-                    task.projectId || currentProjectId,
-                  );
-                  const existing = tasks.find((current) => current.id === task.id);
-                  if (!existing) return mapped;
-                  return {
-                    ...existing,
-                    startDate: mapped.startDate,
-                    plannedStartDate: mapped.plannedStartDate,
-                    dueDate: mapped.dueDate,
-                    plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
-                    isSchedulePinned: mapped.isSchedulePinned,
-                    updatedAt: task.updatedAt || existing.updatedAt,
-                  };
-                })
-              : [];
           }
         }
 
         setTasks((prev) => {
-          const serverUpdates = new Map(
-            [...authoritativeRescheduledTasks, authoritativeTask].map((task) => [
-              task.id,
-              task,
-            ]),
-          );
-          let nextList = prev.map((task) =>
-            serverUpdates.has(task.id)
-              ? { ...task, ...serverUpdates.get(task.id) }
-              : task,
-          );
+          let nextList = prev.map((t) => (t.id === taskId ? { ...t, ...authoritativeTask } : t));
+
+          if (
+            target.type === WORK_ITEM_TYPES.SUBTASK &&
+            target.parentId &&
+            target.parentId !== authoritativeTask.parentId
+          ) {
+            nextList = nextList.map((t) => {
+              if (t.id !== target.parentId) return t;
+              return {
+                ...t,
+                subtasks: (t.subtasks || []).filter((subtask) => subtask.id !== taskId),
+              };
+            });
+          }
 
           if (authoritativeTask.type === WORK_ITEM_TYPES.SUBTASK && authoritativeTask.parentId) {
             nextList = nextList.map((t) => {
               if (t.id === authoritativeTask.parentId) {
                 const subtasks = (t.subtasks || []).map((s: any) =>
                   s.id === taskId
-                    ? { ...s, title: authoritativeTask.title, completed: authoritativeTask.status === 'Done', assigneeId: authoritativeTask.assigneeId }
+                    ? {
+                        ...s,
+                        title: authoritativeTask.title,
+                        completed: isWorkflowStatusComplete(targetWorkflow, authoritativeTask.status),
+                        assigneeId: authoritativeTask.assigneeId,
+                      }
                     : s
                 );
                 return { ...t, subtasks };
@@ -1073,10 +1212,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         recordAudit('updated', 'task', taskId, `Updated ${authoritativeTask.type || 'task'} "${authoritativeTask.title}"`, target, authoritativeTask, true, authoritativeTask.projectId);
         broadcastEvent('TASK_UPDATED', authoritativeTask);
-        authoritativeRescheduledTasks.forEach((task) => broadcastEvent('TASK_UPDATED', task));
         showToast(`${authoritativeTask.type || 'Task'} "${authoritativeTask.title}" updated`, 'success');
         return { success: true, task: authoritativeTask };
       } catch (err: any) {
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          let latestTask: Task | undefined;
+          try {
+            latestTask = await reloadWorkItem(taskId);
+          } catch (reloadError: any) {
+            console.warn('TaskFlow: Could not load the current work item after a version conflict:', reloadError?.message || reloadError);
+          }
+          const currentVersion = err?.details?.data?.currentVersion;
+          if (!latestTask && typeof currentVersion === 'number' && Number.isInteger(currentVersion) && currentVersion >= 1) {
+            latestTask = { ...target, version: currentVersion };
+          }
+          if (!latestTask) {
+            const reason = 'This task was updated by another user, but its latest version could not be loaded. Refresh before trying again.';
+            showToast(reason, 'error');
+            return { success: false, reason, conflict: true };
+          }
+          setConflictModalData({
+            taskId,
+            snapshotVersion: backendUpdates.version,
+            latestTask,
+            pendingUpdates: updates,
+          });
+          return {
+            success: false,
+            reason: err.message || 'This work item was updated by another user.',
+            conflict: true,
+          };
+        }
         const friendly = toUserFriendlyErrorMessage(err, 'Unable to save changes. Please try again.');
         console.warn('TaskFlow: Backend task update error:', err?.message || err);
         showToast(friendly, 'error');
@@ -1092,7 +1258,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (t.id === updated.parentId) {
             const subtasks = (t.subtasks || []).map((s: any) =>
               s.id === taskId
-                ? { ...s, title: updated.title, completed: updated.status === 'Done', assigneeId: updated.assigneeId }
+                ? {
+                    ...s,
+                    title: updated.title,
+                    completed: isWorkflowStatusComplete(targetWorkflow, updated.status),
+                    assigneeId: updated.assigneeId,
+                  }
                 : s
             );
             return { ...t, subtasks };
@@ -1108,7 +1279,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     broadcastEvent('TASK_UPDATED', updated);
     showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
     return { success: true, task: updated };
-  }, [tasks, labels, currentProjectId, recordAudit, showToast, broadcastEvent]);
+  }, [tasks, labels, workflows, currentProjectId, recordAudit, showToast, broadcastEvent]);
 
   const deleteTask = useCallback((taskId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_TASK)) {
@@ -1158,9 +1329,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [currentUser.role, tasks, activeDrawerTaskId, recordAudit, showToast]);
 
-  const changeTaskStatus = useCallback((taskId: string, newStatus: TaskStatus) => {
+  const changeTaskStatus = useCallback(async (taskId: string, newStatus: TaskStatus): Promise<boolean> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return false;
+    const persisted = isPersistedWorkItemId(taskId);
+    const version = getWorkItemVersion(target);
 
     if (!currentUser) return false;
     const transitionCheck = canTransitionStatus(currentUser.role, target.status, newStatus, currentWorkflow);
@@ -1169,17 +1342,82 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
+    if (persisted && version === undefined) {
+      showToast('Cannot move this task because its current version is missing. Refresh the board and try again.', 'error');
+      return false;
+    }
+
+    let response: any;
+    if (persisted) {
+      if (version === undefined) {
+        showToast('Cannot move this task because its current version is missing. Refresh the board and try again.', 'error');
+        return false;
+      }
+      try {
+        response = await updateWorkItemApi(taskId, {
+          version,
+          status: frontendStatusToBackend(newStatus),
+        });
+      } catch (err: any) {
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          try {
+            await reloadWorkItem(taskId);
+          } catch (reloadError: any) {
+            console.warn('TaskFlow: Could not refresh the task after a status version conflict:', reloadError?.message || reloadError);
+          }
+          showToast('This task was updated by another user. The latest version was refreshed; review it and try again.', 'error');
+          return false;
+        }
+        const reason = toUserFriendlyErrorMessage(err, 'Could not update task status.');
+        console.warn('TaskFlow: Backend status update failed:', err?.message || reason);
+        showToast(reason, 'error');
+        return false;
+      }
+    }
+
+    let authoritativeTarget = target;
+    if (persisted) {
+      if (response?.data) {
+        authoritativeTarget = backendWorkItemToTask(response.data, target.projectId);
+      } else {
+        try {
+          authoritativeTarget = await reloadWorkItem(taskId);
+        } catch (reloadError: any) {
+          console.warn('TaskFlow: Could not refresh the task after a status update:', reloadError?.message || reloadError);
+          authoritativeTarget = { ...target, status: newStatus, version: undefined };
+          showToast('The status was updated, but its latest version could not be loaded. Refresh the task before moving it again.', 'error');
+        }
+      }
+      if (response?.data && getWorkItemVersion(authoritativeTarget) === undefined) {
+        try {
+          authoritativeTarget = await reloadWorkItem(taskId);
+        } catch (reloadError: any) {
+          console.warn('TaskFlow: Could not refresh the task version after a status update:', reloadError?.message || reloadError);
+          showToast('The status was updated, but its latest version could not be loaded. Refresh the task before moving it again.', 'error');
+        }
+      }
+    }
+
     const previousValue = { status: target.status };
     const updated = {
-      ...target,
-      status: newStatus,
-      version: (target.version || 1) + 1,
-      updatedAt: new Date().toISOString(),
+      ...authoritativeTarget,
+      status: authoritativeTarget.status || newStatus,
+      version: persisted
+        ? authoritativeTarget.version
+        : (target.version || 1) + 1,
+      updatedAt: persisted
+        ? authoritativeTarget.updatedAt
+        : new Date().toISOString(),
     };
 
+    const isComplete = isWorkflowStatusComplete(currentWorkflow, newStatus);
+    const wasComplete = isWorkflowStatusComplete(currentWorkflow, target.status);
     const nextRecurring =
-      newStatus === 'Done' && target.status !== 'Done'
-        ? createNextRecurringTask(target)
+      isComplete && !wasComplete
+        ? createNextRecurringTask(
+            target,
+            getInitialWorkflowStatus(currentWorkflow)?.name || target.status,
+          )
         : null;
 
     setTasks((prev) => {
@@ -1188,7 +1426,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         nextList = nextList.map((t) => {
           if (t.id === updated.parentId) {
             const subtasks = (t.subtasks || []).map((s) =>
-              s.id === taskId ? { ...s, completed: newStatus === 'Done' } : s
+              s.id === taskId ? { ...s, completed: isComplete } : s
             );
             return { ...t, subtasks };
           }
@@ -1207,52 +1445,137 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (nextRecurring) {
       recordAudit('created', 'task', nextRecurring.id, `Generated next recurring occurrence of "${target.title}" for ${nextRecurring.dueDate || nextRecurring.startDate}`, null, nextRecurring, false, target.projectId);
       broadcastEvent('TASK_CREATED', nextRecurring);
-      showToast(`Completed "${target.title}". Next occurrence scheduled for ${nextRecurring.dueDate || nextRecurring.startDate}.`, 'success');
-    } else {
+      if (!isPersistedWorkItemId(taskId)) {
+        showToast(`Completed "${target.title}". Next occurrence scheduled for ${nextRecurring.dueDate || nextRecurring.startDate}.`, 'success');
+      }
+    } else if (!isPersistedWorkItemId(taskId)) {
       showToast(`Status updated to ${newStatus}`, 'success');
     }
 
-    if (isPersistedWorkItemId(taskId)) {
-      updateWorkItemApi(taskId, { status: frontendStatusToBackend(newStatus) }).catch((err) => {
-        console.warn('TaskFlow: Backend status update notice:', err.message);
-      });
-    }
-
     return true;
-  }, [tasks, currentUser.role, currentWorkflow, recordAudit, showToast]);
+  }, [tasks, currentUser, currentWorkflow, recordAudit, showToast, reloadWorkItem]);
 
   const requestReschedule = useCallback(async (taskId: string, newDueDate: string) => {
+    const target = tasks.find((task) => task.id === taskId);
+    if (!target) return;
+    const version = getWorkItemVersion(target);
+    if (isPersistedWorkItemId(taskId) && version === undefined) {
+      showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+      return;
+    }
     const impact = calculateScheduleImpact(taskId, newDueDate, tasks);
     if (impact.affectedTasks && impact.affectedTasks.length > 0) {
       setImpactModalData(impact);
       return;
     }
-    if (!isPersistedWorkItemId(taskId)) {
-      setTasks(applyScheduleChanges(impact, tasks));
-      showToast(`Rescheduled to ${newDueDate}`, 'success');
-      return;
+    const updatedTasks = applyScheduleChanges(impact, tasks);
+    setTasks(updatedTasks);
+    recordAudit('rescheduled', 'task', taskId, `Rescheduled task to ${newDueDate}`, null, { dueDate: newDueDate }, true);
+    broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
+
+    if (isPersistedWorkItemId(taskId)) {
+      if (version === undefined) {
+        setTasks(tasks);
+        showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
+      try {
+        const res = await updateWorkItemApi(taskId, {
+          version,
+          dueDate: impact.newDueDate || newDueDate,
+        });
+        if (res?.data) {
+          const authoritativeTask = backendWorkItemToTask(res.data, target.projectId);
+          setTasks((prev) => prev.map((task) =>
+            task.id === taskId ? authoritativeTask : task
+          ));
+        }
+      } catch (err: any) {
+        console.warn('Failed to persist task reschedule to backend:', err?.message);
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          try {
+            await reloadWorkItem(taskId);
+          } catch (reloadError: any) {
+            console.warn('Could not refresh the work item after a reschedule conflict:', reloadError?.message || reloadError);
+          }
+        } else {
+          setTasks(tasks);
+        }
+        showToast(toUserFriendlyErrorMessage(err, 'Could not save the work item schedule.'), 'error');
+        return;
+      }
     }
-    await updateTask(taskId, { dueDate: newDueDate });
-  }, [tasks, updateTask, showToast]);
+    showToast(`Rescheduled to ${newDueDate}`, 'success');
+  }, [tasks, recordAudit, showToast, reloadWorkItem]);
 
   const confirmRescheduleImpact = useCallback(async () => {
     if (!impactModalData) return;
-    if (!isPersistedWorkItemId(impactModalData.taskId)) {
-      setTasks(applyScheduleChanges(impactModalData, tasks));
-      setImpactModalData(null);
-      showToast(
-        `Reschedule applied to ${impactModalData.affectedTasks.length + 1} local tasks`,
-        'success',
-      );
+    const impact = impactModalData;
+    const rootTask = tasks.find((task) => task.id === impact.taskId);
+    const rootTaskVersion = rootTask ? getWorkItemVersion(rootTask) : undefined;
+    if (rootTask && isPersistedWorkItemId(rootTask.id) && rootTaskVersion === undefined) {
+      showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
       return;
     }
-    const result = await updateTask(impactModalData.taskId, {
-      dueDate: impactModalData.newDueDate,
-    });
-    if (result.success) setImpactModalData(null);
-  }, [impactModalData, tasks, updateTask, showToast]);
+    const updatedTasks = applyScheduleChanges(impact, tasks);
+    setTasks(updatedTasks);
+    recordAudit(
+      'rescheduled',
+      'task',
+      impact.taskId,
+      `Rescheduled "${impact.taskTitle}" and cascade-shifted ${impact.affectedTasks.length} dependent tasks`,
+      null,
+      impact,
+      true
+    );
+    broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
+    setImpactModalData(null);
 
-  const addDependency = useCallback(async (predecessorId: string, successorId: string) => {
+    if (rootTask && isPersistedWorkItemId(rootTask.id)) {
+      if (rootTaskVersion === undefined) {
+        setTasks(tasks);
+        showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
+      try {
+        const res = await updateWorkItemApi(rootTask.id, {
+          version: rootTaskVersion,
+          dueDate: impact.newDueDate || null,
+        });
+        if (res?.data) {
+          const authoritativeTasks = [
+            backendWorkItemToTask(res.data, rootTask.projectId),
+            ...(Array.isArray(res.data.rescheduledTasks)
+              ? res.data.rescheduledTasks.map((item: any) =>
+                  backendWorkItemToTask(item, rootTask.projectId)
+                )
+              : []),
+          ];
+          const tasksById = new Map(authoritativeTasks.map((task) => [task.id, task]));
+          setTasks((prev) => prev.map((task) => tasksById.get(task.id) || task));
+        }
+      } catch (err: any) {
+        const affectedIds = [
+          rootTask.id,
+          ...impact.affectedTasks.map((item: any) => item.taskId),
+        ];
+        await Promise.all(affectedIds.map(async (taskId: string) => {
+          try {
+            if (isPersistedWorkItemId(taskId)) await reloadWorkItem(taskId);
+          } catch (reloadError: any) {
+            console.warn('Could not reload a work item after a schedule update failure:', reloadError?.message || reloadError);
+          }
+        }));
+        showToast(toUserFriendlyErrorMessage(err, 'Could not save the work item schedule.'), 'error');
+        return;
+      }
+      showToast(`Reschedule applied and synced for ${impact.affectedTasks.length + 1} tasks`, 'success');
+    } else {
+      showToast(`Reschedule applied to ${impact.affectedTasks.length + 1} tasks`, 'success');
+    }
+  }, [impactModalData, tasks, recordAudit, showToast, reloadWorkItem]);
+
+  const addDependency = useCallback((predecessorId: string, successorId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
       showToast('Permission denied: Role cannot modify dependencies', 'error');
       return { success: false, reason: 'Permission denied' };
@@ -1264,71 +1587,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, ...validation };
     }
 
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === successorId) {
+          const currentDeps = t.dependencyIds || [];
+          return {
+            ...t,
+            dependencyIds: [...currentDeps, predecessorId],
+          };
+        }
+        return t;
+      })
+    );
+
     const pred = tasks.find((t) => t.id === predecessorId);
     const succ = tasks.find((t) => t.id === successorId);
-    if (!pred?.dueDate || !succ?.dueDate) {
-      const reason = !pred?.dueDate
-        ? `Predecessor "${pred?.title || 'Task'}" must have a due date before it can be linked.`
-        : `Successor "${succ?.title || 'Task'}" must have a due date before it can be linked.`;
-      showToast(reason, 'error');
-      return { success: false, reason };
-    }
-
-    const successorIsPersisted = isPersistedWorkItemId(successorId);
-    const predecessorIsPersisted = isPersistedWorkItemId(predecessorId);
-    if (successorIsPersisted !== predecessorIsPersisted) {
-      const reason = 'Dependencies can only link tasks persisted in the same project.';
-      showToast(reason, 'error');
-      return { success: false, reason };
-    }
-
-    let response: any = null;
-    if (successorIsPersisted && predecessorIsPersisted) {
-      try {
-        response = await addWorkItemDependencyApi(successorId, predecessorId);
-      } catch (error: any) {
-        const reason = toUserFriendlyErrorMessage(error, 'Unable to save dependency.');
-        showToast(reason, 'error');
-        return { success: false, reason };
-      }
-    }
-
-    const canonicalDependencyIds = Array.isArray(response?.dependencies)
-      ? response.dependencies.map((edge: any) => edge.dependsOnWorkItemId)
-      : [...(succ.dependencyIds || []), predecessorId];
-    const rescheduledTasks: Task[] = Array.isArray(response?.rescheduledTasks)
-      ? response.rescheduledTasks.map((task: any) => {
-          const mapped = backendWorkItemToTask(
-            task,
-            task.projectId || succ.projectId,
-          );
-          const existing = tasks.find((current) => current.id === task.id);
-          if (!existing) return mapped;
-          return {
-            ...existing,
-            startDate: mapped.startDate,
-            plannedStartDate: mapped.plannedStartDate,
-            dueDate: mapped.dueDate,
-            plannedDurationWorkingDays: mapped.plannedDurationWorkingDays,
-            isSchedulePinned: mapped.isSchedulePinned,
-            updatedAt: task.updatedAt || existing.updatedAt,
-          };
-        })
-      : [];
-    setTasks((previous) => {
-      const changedById = new Map(rescheduledTasks.map((task) => [task.id, task]));
-      changedById.set(successorId, {
-        ...succ,
-        ...changedById.get(successorId),
-        dependencyIds: canonicalDependencyIds,
-      });
-      return previous.map((task) =>
-        changedById.has(task.id)
-          ? { ...task, ...changedById.get(task.id) }
-          : task,
-      );
-    });
-
     recordAudit(
       'dependency_added',
       'task',
@@ -1339,71 +1612,184 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       true
     );
 
-    showToast(`Dependency linked: ${pred?.title} → ${succ?.title}`, 'success');
-    return { success: true };
-  }, [currentUser.role, tasks, recordAudit, showToast]);
-
-  const removeDependency = useCallback(async (predecessorId: string, successorId: string) => {
-    if (!hasPermission(currentUser.role, PERMISSIONS.MANAGE_DEPENDENCIES)) {
-      showToast('Permission denied: Role cannot modify dependencies', 'error');
-      return { success: false, reason: 'Permission denied' };
+    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
+      addWorkItemDependencyApi(successorId, predecessorId, succ?.version || 1).then((res) => {
+        const authoritativeTasks = Array.isArray(res.rescheduledTasks)
+          ? res.rescheduledTasks.map((item: any) =>
+              backendWorkItemToTask(item, succ?.projectId)
+            )
+          : [];
+        const rescheduledById = new Map<string, Task>(
+          authoritativeTasks.map((task: Task): [string, Task] => [task.id, task])
+        );
+        const dependencyIds = Array.isArray(res.dependencies)
+          ? res.dependencies.map((dependency: any) => dependency.dependsOnWorkItemId)
+          : [ ...(succ?.dependencyIds || []), predecessorId ];
+        setTasks((prev) => prev.map((task) => {
+          if (task.id === successorId) {
+            return {
+              ...(rescheduledById.get(task.id) || task),
+              dependencyIds,
+              version: res.workItem?.version ?? task.version,
+              updatedAt: res.workItem?.updatedAt || task.updatedAt,
+            };
+          }
+          return rescheduledById.get(task.id) || task;
+        }));
+        showToast(`Dependency linked: ${pred?.title} → ${succ?.title}`, 'success');
+      }).catch(async (err: any) => {
+        console.warn('TaskFlow: Backend dependency link failed:', err?.message || err);
+        setTasks((prev) => prev.map((task) => task.id === successorId
+          ? {
+              ...task,
+              dependencyIds: succ?.dependencyIds || [],
+              version: succ?.version || task.version,
+              updatedAt: succ?.updatedAt || task.updatedAt,
+            }
+          : task
+        ));
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to link work item dependency.'), 'error');
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          try {
+            await reloadWorkItem(successorId);
+            const latestDependencies = await getWorkItemDependenciesApi(successorId);
+            setTasks((prev) => prev.map((task) => task.id === successorId
+              ? { ...task, dependencyIds: latestDependencies.data || [] }
+              : task
+            ));
+          } catch (reloadError: any) {
+            console.warn('Could not reload the work item after a dependency conflict:', reloadError?.message || reloadError);
+          }
+        }
+      });
+    } else {
+      showToast(`Dependency linked: ${pred?.title} → ${succ?.title}`, 'success');
     }
 
-    const successor = tasks.find((task) => task.id === successorId);
-    if (!successor) return { success: false, reason: 'Successor task not found' };
+    return { success: true };
+  }, [currentUser.role, tasks, recordAudit, showToast, reloadWorkItem]);
 
-    let remainingDependencyIds: string[] | null = null;
-    if (isPersistedWorkItemId(successorId)) {
-      try {
-        const response = await deleteWorkItemDependencyApi(
-          successorId,
-          predecessorId,
-        );
-        if (Array.isArray(response?.dependencies)) {
-          remainingDependencyIds = response.dependencies.map(
-            (edge: any) => edge.dependsOnWorkItemId,
-          );
+  const removeDependency = useCallback((predecessorId: string, successorId: string) => {
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === successorId) {
+          return {
+            ...t,
+            dependencyIds: (t.dependencyIds || []).filter((id: string) => id !== predecessorId),
+          };
         }
-      } catch (error: any) {
-        const reason = toUserFriendlyErrorMessage(error, 'Unable to remove dependency.');
+        return t;
+      })
+    );
+    recordAudit('dependency_removed', 'task', successorId, `Removed dependency link from ${predecessorId}`, null, null, true);
+    if (isPersistedWorkItemId(successorId) && isPersistedWorkItemId(predecessorId)) {
+      const successor = tasks.find((task) => task.id === successorId);
+      deleteWorkItemDependencyApi(successorId, predecessorId, successor?.version || 1).then((res) => {
+        const dependencyIds = Array.isArray(res.dependencies)
+          ? res.dependencies.map((dependency: any) => dependency.dependsOnWorkItemId)
+          : (successor?.dependencyIds || []).filter((id: string) => id !== predecessorId);
+        setTasks((prev) => prev.map((task) => task.id === successorId
+          ? {
+              ...task,
+              dependencyIds,
+              version: res.workItem?.version ?? task.version,
+              updatedAt: res.workItem?.updatedAt || task.updatedAt,
+            }
+          : task
+        ));
+        showToast('Dependency removed', 'info');
+      }).catch((err: any) => {
+        console.warn('TaskFlow: Backend dependency removal failed:', err?.message || err);
+        setTasks((prev) => prev.map((task) => task.id === successorId
+          ? {
+              ...task,
+              dependencyIds: successor?.dependencyIds || [],
+              version: successor?.version || task.version,
+              updatedAt: successor?.updatedAt || task.updatedAt,
+            }
+          : task
+        ));
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to remove work item dependency.'), 'error');
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          Promise.all([
+            reloadWorkItem(successorId),
+            getWorkItemDependenciesApi(successorId),
+          ]).then(([, latestDependencies]) => {
+            setTasks((prev) => prev.map((task) => task.id === successorId
+              ? { ...task, dependencyIds: latestDependencies.data || [] }
+              : task
+            ));
+          }).catch((reloadError: any) => {
+            console.warn('Could not reload dependencies after a conflict:', reloadError?.message || reloadError);
+          });
+        }
+      });
+    } else {
+      showToast('Dependency removed', 'info');
+    }
+  }, [tasks, recordAudit, showToast, reloadWorkItem]);
+
+  const addSubtask = useCallback(async (taskId: string, title: string, assigneeId: string | null = null): Promise<boolean> => {
+    const parentTask = tasks.find((t) => t.id === taskId);
+    if (!parentTask) return false;
+
+    if (!title.trim()) {
+      showToast('Subtask title cannot be empty', 'error');
+      return false;
+    }
+
+    let subId = `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+    const parentWorkflow =
+      workflows.find((workflow) => workflow.projectId === parentTask.projectId) ||
+      (!isPersistedWorkItemId(parentTask.projectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
+    const initialStatus = getInitialWorkflowStatus(parentWorkflow)?.name;
+    if (!initialStatus) {
+      showToast('The project workflow does not define an initial status.', 'error');
+      return false;
+    }
+
+    let subtaskRecord: Task | null = null;
+    if (isPersistedWorkItemId(taskId) && isPersistedWorkItemId(parentTask.projectId)) {
+      try {
+        const payload: CreateWorkItemApiInput = {
+          projectId: parentTask.projectId,
+          parentWorkItemId: taskId,
+          plannedStartDate: parentTask.startDate || null,
+          plannedDurationWorkingDays: parentTask.plannedDurationWorkingDays ?? null,
+          type: 'SUBTASK',
+          title: title.trim(),
+          priority: parentTask.priority ? (parentTask.priority.toUpperCase() as any) : 'MEDIUM',
+          status: frontendStatusToBackend(initialStatus),
+          dueDate: parentTask.dueDate || null,
+          estimatedHours: 2,
+          assignees: (assigneeId || parentTask.assigneeId)
+            ? [{ userId: (assigneeId || parentTask.assigneeId)! }]
+            : [],
+        };
+        const res = await createWorkItemApi(payload);
+        if (!res?.data?.id) {
+          throw new Error('The server did not return the persisted subtask ID.');
+        }
+        subtaskRecord = backendWorkItemToTask(res.data, parentTask.projectId);
+      } catch (err: any) {
+        const reason = toUserFriendlyErrorMessage(err, 'Failed to save subtask to server');
         showToast(reason, 'error');
-        return { success: false, reason };
+        return false;
       }
     }
 
-    setTasks((previous) =>
-      previous.map((task) =>
-        task.id === successorId
-          ? {
-              ...task,
-              dependencyIds:
-                remainingDependencyIds ??
-                (task.dependencyIds || []).filter(
-                  (id: string) => id !== predecessorId,
-                ),
-            }
-          : task,
-      ),
-    );
-    recordAudit('dependency_removed', 'task', successorId, `Removed dependency link from ${predecessorId}`, null, null, true);
-    showToast('Dependency removed', 'info');
-    return { success: true };
-  }, [currentUser.role, tasks, recordAudit, showToast]);
-
-  const addSubtask = useCallback((taskId: string, title: string, assigneeId: string | null = null) => {
-    const parentTask = tasks.find((t) => t.id === taskId);
-    if (!parentTask) return;
-
-    const newSubId = `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
-    const newSubtaskRecord = {
-      id: newSubId,
+    const subtaskId = subtaskRecord?.id || `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+    const newSubtaskRecord: Task = subtaskRecord || {
+      id: subtaskId,
       type: WORK_ITEM_TYPES.SUBTASK,
       parentId: taskId,
       projectId: parentTask.projectId,
       sectionId: parentTask.sectionId,
       title: title.trim(),
       description: '',
-      status: 'Backlog',
+      status: initialStatus,
       priority: parentTask.priority || 'Medium',
       assigneeId: assigneeId || parentTask.assigneeId,
       creatorId: currentUser?.id || '',
@@ -1424,10 +1810,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     const newSubEntry = {
-      id: newSubId,
+      id: subtaskId,
       title: title.trim(),
       completed: false,
-      assigneeId: assigneeId || parentTask.assigneeId,
+      assigneeId: subtaskRecord?.assigneeId || assigneeId || parentTask.assigneeId,
     };
 
     setTasks((prev) => [
@@ -1437,51 +1823,162 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return {
             ...t,
             subtasks: [...(t.subtasks || []), newSubEntry],
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
           };
         }
         return t;
       }),
     ]);
-  }, [tasks, currentUser.id]);
+    showToast('Subtask created', 'success');
+    return true;
+  }, [tasks, workflows, currentUser?.id, showToast]);
 
-  const toggleSubtask = useCallback((taskId: string, subtaskId: string) => {
-    setTasks((prev) => {
-      const subtaskItem = prev.find((t) => t.id === subtaskId);
-      const parentTask = prev.find((t) => t.id === taskId);
-      const isCurrentlyDone = subtaskItem
-        ? subtaskItem.status === 'Done'
-        : Boolean(parentTask?.subtasks?.find((s) => s.id === subtaskId)?.completed);
+  const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const subtaskItem = tasks.find((t) => t.id === subtaskId);
+    const parentTask = tasks.find((t) => t.id === taskId);
+    const workflow =
+      workflows.find((entry) => entry.projectId === parentTask?.projectId) ||
+      (!isPersistedWorkItemId(parentTask?.projectId)
+        ? workflows.find((entry) => !entry.projectId)
+        : undefined);
+    const isCurrentlyDone = subtaskItem
+      ? isWorkflowStatusComplete(workflow, subtaskItem.status)
+      : Boolean(parentTask?.subtasks?.find((s) => s.id === subtaskId)?.completed);
 
-      const nextStatus = isCurrentlyDone ? 'Backlog' : 'Done';
+    const targetStatus = isCurrentlyDone
+      ? getInitialWorkflowStatus(workflow)
+      : workflow?.statuses.find((stage) => isWorkflowStatusComplete(workflow, stage.name));
+    if (subtaskItem && !targetStatus) {
+      showToast('The project workflow does not define a target status for this action.', 'error');
+      return;
+    }
+    if (subtaskItem && targetStatus) {
+      const transition = canTransitionStatus(
+        currentUser.role,
+        subtaskItem.status,
+        targetStatus.name,
+        workflow,
+      );
+      if (!transition.allowed) {
+        showToast(transition.reason || 'Status transition not allowed', 'error');
+        return;
+      }
+    }
+    const nextStatus = targetStatus?.name || subtaskItem?.status || '';
+    const nextCompleted = !isCurrentlyDone;
+    const persistedSubtask = isPersistedWorkItemId(subtaskId);
+    const subtaskVersion = subtaskItem ? getWorkItemVersion(subtaskItem) : undefined;
+    if (persistedSubtask && subtaskVersion === undefined) {
+      showToast('Cannot update this subtask because its current version is missing. Refresh the task and try again.', 'error');
+      return;
+    }
 
-      return prev.map((t) => {
+    // Optimistic update
+    setTasks((prev) =>
+      prev.map((t) => {
         if (t.id === subtaskId) {
           return {
             ...t,
             status: nextStatus,
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
+            version: persistedSubtask
+              ? subtaskVersion
+              : (t.version || 1) + 1,
+            updatedAt: persistedSubtask
+              ? t.updatedAt
+              : new Date().toISOString(),
           };
         }
         if (t.id === taskId) {
           const subtasks = (t.subtasks || []).map((s) =>
-            s.id === subtaskId ? { ...s, completed: !isCurrentlyDone } : s
+            s.id === subtaskId ? { ...s, completed: nextCompleted } : s
           );
           return {
             ...t,
             subtasks,
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
           };
         }
         return t;
-      });
-    });
-  }, []);
+      })
+    );
 
-  const deleteSubtask = useCallback((taskId: string, subtaskId: string) => {
+    if (persistedSubtask) {
+      if (subtaskVersion === undefined) {
+        setTasks((prev) =>
+          prev.map((task) => {
+            if (task.id === subtaskId) {
+              return {
+                ...task,
+                status: subtaskItem?.status ?? task.status,
+                version: subtaskItem?.version,
+                updatedAt: subtaskItem?.updatedAt,
+              };
+            }
+            if (task.id === taskId) {
+              return {
+                ...task,
+                subtasks: (task.subtasks || []).map((subtask) =>
+                  subtask.id === subtaskId
+                    ? { ...subtask, completed: isCurrentlyDone }
+                    : subtask,
+                ),
+              };
+            }
+            return task;
+          }),
+        );
+        showToast('Cannot update this subtask because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
+      try {
+        const res = await updateWorkItemApi(subtaskId, {
+          version: subtaskVersion,
+          status: frontendStatusToBackend(nextStatus),
+        });
+        if (res?.data) {
+          const authoritativeTask = backendWorkItemToTask(res.data, subtaskItem?.projectId);
+          setTasks((prev) => prev.map((task) =>
+            task.id === subtaskId ? authoritativeTask : task
+          ));
+        }
+      } catch (err: any) {
+        // Rollback on failure
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.id === subtaskId) {
+              return {
+                ...t,
+                status: subtaskItem?.status ?? t.status,
+                version: subtaskItem?.version,
+                updatedAt: subtaskItem?.updatedAt,
+              };
+            }
+            if (t.id === taskId) {
+              const subtasks = (t.subtasks || []).map((s) =>
+                s.id === subtaskId ? { ...s, completed: isCurrentlyDone } : s
+              );
+              return {
+                ...t,
+                subtasks,
+              };
+            }
+            return t;
+          })
+        );
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          try {
+            await reloadWorkItem(subtaskId);
+          } catch (reloadError: any) {
+            console.warn('Could not reload the subtask after a version conflict:', reloadError?.message || reloadError);
+          }
+        }
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to update subtask status'), 'error');
+      }
+    }
+  }, [tasks, workflows, currentUser.role, showToast]);
+
+  const deleteSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const prevTasksSnapshot = tasks;
+
+    // Optimistic remove
     setTasks((prev) =>
       prev
         .filter((t) => t.id !== subtaskId)
@@ -1497,7 +1994,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return t;
         })
     );
-  }, []);
+
+    if (isPersistedWorkItemId(subtaskId)) {
+      try {
+        await deleteWorkItemApi(subtaskId);
+        showToast('Subtask deleted', 'info');
+      } catch (err: any) {
+        // Rollback on failure
+        setTasks(prevTasksSnapshot);
+        showToast(toUserFriendlyErrorMessage(err, 'Failed to delete subtask'), 'error');
+      }
+    }
+  }, [tasks, showToast]);
 
   const addComment = useCallback(async (taskId: string, body: string) => {
     if (!body.trim()) {
@@ -1712,63 +2220,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [auditLog, currentProjectId, currentUser, showToast]);
 
-  const createProject = useCallback((projectData: any) => {
+  const createProject = useCallback(async (projectData: any): Promise<Project | null> => {
     if (!hasPermission(currentUser.role, PERMISSIONS.CREATE_PROJECT)) {
       showToast('Permission denied: Only Managers and Admins can create projects', 'error');
       return null;
     }
 
-    const newId = `proj-${Date.now()}`;
-    const newProj: Project = {
-      id: newId,
-      name: projectData.name.trim(),
-      projectKey: projectData.projectKey?.trim() || projectData.id || `PRJ-${Date.now().toString().slice(-4)}`,
-      description: projectData.description || '',
-      visibility: projectData.visibility || 'global',
-      status: 'On Track',
-      color: projectData.color || '#7465F6',
-      ownerId: currentUser.id,
-      memberIds: [currentUser.id],
-      memberRoles: { [currentUser.id]: currentUser.role },
-      startDate: projectData.startDate || '',
-      dueDate: projectData.dueDate || '',
-      workflowId: projectData.workflowId || 'wf-1',
-      sections: [
-        { id: `sec-${Date.now()}-1`, name: 'Discovery & Plan', order: 1 },
-        { id: `sec-${Date.now()}-2`, name: 'Execution', order: 2 },
-        { id: `sec-${Date.now()}-3`, name: 'Review & Launch', order: 3 },
-      ],
-      settings: { slaHighHours: 24, slaMediumHours: 48, allowWeekendWork: false },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const rawKey = projectData.projectKey?.trim() || projectData.key?.trim() || '';
+      const finalKey = rawKey
+        ? normalizeProjectId(rawKey)
+        : generateSuggestedProjectId(projectData.name || 'PROJECT', projects);
 
-    setProjects((prev) => [...prev, newProj]);
-    setCurrentProjectId(newProj.id);
-    recordAudit('created', 'project', newProj.id, `Created project "${newProj.name}"`, null, newProj, false, newProj.id);
-    showToast(`Project "${newProj.name}" created`, 'success');
+      const res = await createProjectApi({
+        name: projectData.name.trim(),
+        key: finalKey,
+        description: projectData.description?.trim() || null,
+        startDate: projectData.startDate || null,
+        endDate: projectData.dueDate || projectData.endDate || null,
+        visibility: projectData.visibility === 'global' ? 'PUBLIC' : 'PRIVATE',
+      });
 
-    createProjectApi({
-      name: newProj.name,
-      key: newProj.projectKey || newProj.id.slice(0, 10).toUpperCase(),
-      description: newProj.description || null,
-      startDate: newProj.startDate || null,
-      endDate: newProj.dueDate || null,
-      visibility: newProj.visibility === 'global' ? 'PUBLIC' : 'PRIVATE',
-    }).then((res) => {
       const serverProj = res?.project || res?.data;
-      if (serverProj?.id) {
-        setProjects((prev) =>
-          prev.map((p) => (p.id === newId ? { ...p, id: serverProj.id } : p))
-        );
-        setCurrentProjectId((prev) => (prev === newId ? serverProj.id : prev));
+      if (!serverProj?.id) {
+        showToast(res?.message || 'Failed to create project', 'error');
+        return null;
       }
-    }).catch((err) => {
-      console.warn('TaskFlow: Backend project creation notice:', err.message);
-    });
 
-    return newProj;
-  }, [currentUser, recordAudit, showToast]);
+      const baseProj = backendProjectToFrontend(serverProj);
+      const newProj: Project = {
+        ...baseProj,
+        color: projectData.color || baseProj.color || '#7465F6',
+        workflowId: projectData.workflowId || baseProj.workflowId || 'wf-1',
+        ownerId: currentUser.id || baseProj.ownerId,
+        memberIds: baseProj.memberIds && baseProj.memberIds.length > 0 ? baseProj.memberIds : [currentUser.id],
+        memberRoles: baseProj.memberRoles && Object.keys(baseProj.memberRoles).length > 0 ? baseProj.memberRoles : { [currentUser.id]: currentUser.role },
+      };
+
+      setProjects((prev) => [...prev, newProj]);
+      setCurrentProjectId(newProj.id);
+      recordAudit('created', 'project', newProj.id, `Created project "${newProj.name}"`, null, newProj, false, newProj.id);
+      showToast(`Project "${newProj.name}" created`, 'success');
+
+      return newProj;
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to create project';
+      showToast(msg, 'error');
+      console.warn('TaskFlow: Backend project creation notice:', msg);
+      return null;
+    }
+  }, [currentUser, projects, recordAudit, showToast]);
 
   const updateProject = useCallback((projectId: string, updates: Partial<Project>) => {
     if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.EDIT_PROJECT_SETTINGS)) {
@@ -2230,6 +2731,60 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     navigate('/login');
   }, [navigate, showToast]);
 
+  const register = useCallback(async (params: {
+    name: string;
+    email: string;
+    password: string;
+    companyName?: string;
+  }): Promise<boolean> => {
+    const orgName = (params.companyName || `${params.name.trim()}'s Workspace`).trim();
+    const res = await registerOrganizationApi({
+      user: {
+        fullName: params.name.trim(),
+        email: params.email.trim(),
+        password: params.password,
+      },
+      organization: {
+        name: orgName,
+      },
+    });
+
+    if (res?.user) {
+      const u = res.user;
+      const org = res.organization || { id: res.organizationId, name: orgName };
+      const mappedUser: User = {
+        id: u.id,
+        name: u.name || u.fullName || params.name.trim(),
+        email: u.email,
+        role: normalizeRole(u.role),
+        companyId: org?.id,
+        companyName: org?.name,
+        onboardingCompleted: false,
+      };
+      const mappedCompany: Company = {
+        id: org?.id || res.organizationId || `comp-${u.id}`,
+        name: org?.name || orgName,
+        createdByUserId: u.id,
+        createdAt: new Date().toISOString(),
+      };
+      setCurrentUser(mappedUser);
+      setCurrentCompany(mappedCompany);
+      saveStateToStorage('CURRENT_USER', mappedUser);
+      saveStateToStorage('COMPANY', mappedCompany);
+
+      getProjectsApi()
+        .then((pRes) => {
+          if (pRes?.data && Array.isArray(pRes.data)) {
+            setProjects(pRes.data.map(backendProjectToFrontend));
+          }
+        })
+        .catch(() => null);
+
+      return true;
+    }
+    return false;
+  }, []);
+
   const registerUser = useCallback((userData: { name: string; email: string }): User => {
     const initials = userData.name
       .trim()
@@ -2260,11 +2815,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!trimmed) return false;
 
     try {
+      const existingCompany = currentCompany;
       const newCompany: Company = {
-        id: `comp-${Date.now()}`,
+        id: existingCompany?.id || `comp-${Date.now()}`,
         name: trimmed,
         createdByUserId: currentUser?.id || '',
-        createdAt: new Date().toISOString(),
+        createdAt: existingCompany?.createdAt || new Date().toISOString(),
       };
 
       const updatedUser: User = {
@@ -2284,7 +2840,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.error('TaskFlow: Failed to complete company setup:', err);
       return false;
     }
-  }, [currentUser, recordAudit]);
+  }, [currentUser, currentCompany, recordAudit]);
 
   const finishOnboarding = useCallback(() => {
     setCurrentUser((prev) => {
@@ -2420,9 +2976,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast('Label removed', 'info');
   }, [labels, currentProjectId, recordAudit, showToast]);
 
-  const value: AppContextValue = {
+  const value: AppContextValue = useMemo(() => ({
     currentUser,
     currentCompany,
+    register,
     registerUser,
     completeCompanyOnboarding,
     finishOnboarding,
@@ -2444,9 +3001,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     workflows,
     currentWorkflow,
     setWorkflows,
+    currentWorkflowLoading,
+    currentWorkflowError,
     tasks,
     projectTasks,
     myTasks,
+    loadCrossProjectTasks,
     createTask,
     uploadTaskAttachments,
     updateTask,
@@ -2500,7 +3060,84 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isLoadingProjectData,
     projectDataError,
     reloadProjectData,
-  };
+    reloadWorkItem,
+  }), [
+    currentUser,
+    currentCompany,
+    register,
+    registerUser,
+    completeCompanyOnboarding,
+    finishOnboarding,
+    projects,
+    createProject,
+    updateProject,
+    renameProject,
+    updateProjectVisibility,
+    updateProjectKey,
+    deleteProject,
+    addProjectMember,
+    removeProjectMember,
+    updateProjectMemberRole,
+    currentProjectId,
+    currentProject,
+    projectTab,
+    workflows,
+    currentWorkflow,
+    currentWorkflowLoading,
+    currentWorkflowError,
+    tasks,
+    projectTasks,
+    myTasks,
+    loadCrossProjectTasks,
+    createTask,
+    uploadTaskAttachments,
+    updateTask,
+    deleteTask,
+    changeTaskStatus,
+    requestReschedule,
+    confirmRescheduleImpact,
+    addDependency,
+    removeDependency,
+    addSubtask,
+    toggleSubtask,
+    deleteSubtask,
+    addComment,
+    pendingSignupPassword,
+    setPendingSignupPassword,
+    logTimeEntry,
+    escalateTask,
+    simulateExternalTaskEdit,
+    auditLog,
+    undoAuditEntry,
+    notifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+    activeRoute,
+    navigate,
+    activeDrawerTaskId,
+    searchQuery,
+    impactModalData,
+    conflictModalData,
+    toasts,
+    showToast,
+    crossTabIndicator,
+    allUsers,
+    login,
+    logout,
+    isLoadingBackend,
+    isInitializingAuth,
+    sprints,
+    projectSprints,
+    createSprint,
+    labels,
+    projectLabels,
+    createLabel,
+    deleteLabel,
+    isLoadingProjectData,
+    projectDataError,
+    reloadProjectData,
+    reloadWorkItem,
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

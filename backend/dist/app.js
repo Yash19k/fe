@@ -18,8 +18,21 @@ const sla_routes_1 = __importDefault(require("./routes/sla.routes"));
 const error_handler_1 = require("./middleware/error.handler");
 const config_1 = require("./config/config");
 const chat_routes_1 = __importDefault(require("./routes/chat.routes"));
+const whiteboard_routes_1 = __importDefault(require("./routes/whiteboard.routes"));
+const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 exports.app = (0, express_1.default)();
 console.log("App.ts executed");
+exports.app.disable("x-powered-by");
+exports.app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production") {
+        res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+});
 exports.app.use(express_1.default.json({ limit: "1mb" }));
 exports.app.use(express_1.default.urlencoded({ extended: false, limit: "1mb" }));
 exports.app.use((0, cors_1.default)({
@@ -35,6 +48,7 @@ exports.app.use((0, cors_1.default)({
     credentials: true,
 }));
 exports.app.use((0, cookie_parser_1.default)());
+exports.app.use("/api/auth", auth_routes_1.default);
 exports.app.use("/api/users", user_routes_1.default);
 exports.app.use("/api/projects", project_routes_1.default);
 exports.app.use("/api/work-items", work_item_routes_1.default);
@@ -44,6 +58,7 @@ exports.app.use("/api/notifications", notification_routes_1.default);
 exports.app.use("/api/chat/conversations", chat_routes_1.default);
 exports.app.use("/api/conversations", chat_routes_1.default);
 exports.app.use("/api/chat", chat_routes_1.default);
+exports.app.use("/api", whiteboard_routes_1.default);
 exports.app.use("/api/sla", sla_routes_1.default);
 exports.app.use("/api/organization/sla", sla_routes_1.default);
 exports.app.use("/api", sprint_routes_1.default);

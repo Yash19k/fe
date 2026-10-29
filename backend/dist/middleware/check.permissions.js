@@ -48,24 +48,22 @@ const checkPermission = (permission) => {
             });
             return;
         }
-        const userRepository = data_source_1.AppDataSource.getRepository(user_entity_1.User);
-        const user = await userRepository.findOne({
-            where: {
-                id: req.user.id,
-            },
-            select: {
-                id: true,
-                role: true,
-            },
-        });
-        if (!user) {
-            res.status(401).json({
-                success: false,
-                message: "User not found. Please log in again.",
+        let role = req.user.role;
+        if (!role) {
+            const userRepository = data_source_1.AppDataSource.getRepository(user_entity_1.User);
+            const user = await userRepository.findOne({
+                where: { id: req.user.id },
+                select: { id: true, role: true },
             });
-            return;
+            if (!user) {
+                res.status(401).json({
+                    success: false,
+                    message: "User not found. Please log in again.",
+                });
+                return;
+            }
+            role = user.role;
         }
-        const role = user.role;
         if (!Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role)) {
             res.status(403).json({
                 success: false,

@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  VersionColumn,
   ManyToOne,
   OneToMany,
   JoinColumn,
@@ -98,6 +99,39 @@ export class WorkItem {
   @Column({ type: "text", nullable: true })
   description: string | null;
 
+  @Column({ name: "business_goal", type: "text", nullable: true })
+  businessGoal: string | null;
+
+  @Column({ name: "success_criteria", type: "text", nullable: true })
+  successCriteria: string | null;
+
+  @Column({ name: "acceptance_criteria", type: "text", nullable: true })
+  acceptanceCriteria: string | null;
+
+  @Column({ name: "bug_severity", type: "varchar", length: 20, nullable: true })
+  severity: string | null;
+
+  @Column({ name: "steps_to_reproduce", type: "text", nullable: true })
+  stepsToReproduce: string | null;
+
+  @Column({ name: "expected_behavior", type: "text", nullable: true })
+  expectedBehavior: string | null;
+
+  @Column({ name: "actual_behavior", type: "text", nullable: true })
+  actualBehavior: string | null;
+
+  @Column({ name: "environment", type: "text", nullable: true })
+  environment: string | null;
+
+  @Column({
+    name: "estimated_hours",
+    type: "numeric",
+    precision: 8,
+    scale: 2,
+    nullable: true,
+  })
+  estimatedHours: string | null;
+
  @Column({
   type: "enum",
   enum: WorkItemStatus,
@@ -173,6 +207,9 @@ priority: WorkItemPriority | null;
 
   @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
+
+  @VersionColumn({ type: "integer", default: 1 })
+  version: number;
 
   @ManyToOne(() => Project, (project) => project.workItems, {
     nullable: false,

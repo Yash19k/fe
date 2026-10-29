@@ -11,6 +11,10 @@ import {
   Layers,
 } from 'lucide-react';
 import type { Task, WorkflowStatus } from '../../types';
+import {
+  findWorkflowStatus,
+  getInitialWorkflowStatus,
+} from '../../domain/workflow';
 
 interface ProjectListViewProps {
   onOpenCreateTask: () => void;
@@ -22,16 +26,6 @@ interface TaskGroup {
   color?: string;
   tasks: Task[];
 }
-
-const STANDARD_STATUS_ORDER = [
-  'Backlog',
-  'In Progress',
-  'In Review',
-  'Testing / QA',
-  'Done',
-  'Blocked',
-  'On Hold',
-];
 
 export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
   const { currentProject, projectTasks, createTask, currentWorkflow } = useApp();
@@ -46,23 +40,8 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
   const [inlineTitle, setInlineTitle] = useState('');
 
   // Workflow statuses
-  const workflowStatuses: WorkflowStatus[] = useMemo(() => {
-    const isStandardWorkflow =
-      !currentWorkflow || currentWorkflow.isDefault || currentWorkflow.id === 'wf-1';
-
-    if (isStandardWorkflow) {
-      return [
-        { id: 'st-backlog', name: 'Backlog', color: '#6B7280' },
-        { id: 'st-inprogress', name: 'In Progress', color: '#3B82F6' },
-        { id: 'st-inreview', name: 'In Review', color: '#A855F7' },
-        { id: 'st-testingqa', name: 'Testing / QA', color: '#06B6D4' },
-        { id: 'st-done', name: 'Done', color: '#22C55E' },
-        { id: 'st-blocked', name: 'Blocked', color: '#EF4444' },
-        { id: 'st-onhold', name: 'On Hold', color: '#F97316' },
-      ];
-    }
-    return currentWorkflow?.statuses || [];
-  }, [currentWorkflow]);
+  const workflowStatuses: WorkflowStatus[] = currentWorkflow?.statuses || [];
+  const initialStatus = getInitialWorkflowStatus(currentWorkflow)?.name || '';
 
   const sections = useMemo(() => {
     return currentProject?.sections || [
@@ -81,38 +60,48 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
         }
       }
       if (typeFilter !== 'ALL' && (t.type || 'Task') !== typeFilter) return false;
-      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      if (statusFilter !== 'ALL') {
+        const selectedStatus = workflowStatuses.find((status) => status.id === statusFilter);
+        if (selectedStatus) {
+          if (findWorkflowStatus(currentWorkflow, t.status)?.id !== selectedStatus.id) return false;
+        } else if (t.status !== statusFilter) {
+          return false;
+        }
+      }
       if (priorityFilter !== 'ALL' && t.priority !== priorityFilter) return false;
       return true;
     });
-  }, [projectTasks, search, typeFilter, statusFilter, priorityFilter]);
+  }, [projectTasks, search, typeFilter, statusFilter, priorityFilter, workflowStatuses, currentWorkflow]);
 
   // Group tasks based on groupBy
   const groups: TaskGroup[] = useMemo(() => {
     if (groupBy === 'status') {
       const result: TaskGroup[] = [];
-      const knownStatuses = new Set<string>();
-
       workflowStatuses.forEach((st) => {
-        knownStatuses.add(st.name);
         result.push({
-          id: st.name,
+          id: st.id,
           name: st.name,
           color: st.color,
-          tasks: filteredTasks.filter((t: Task) => t.status === st.name),
+          tasks: filteredTasks.filter(
+            (task: Task) => findWorkflowStatus(currentWorkflow, task.status)?.id === st.id,
+          ),
         });
       });
 
-      // Catch any tasks with custom/other status
-      const otherTasks = filteredTasks.filter((t: Task) => !knownStatuses.has(t.status));
-      if (otherTasks.length > 0) {
+      const otherStatuses = new Map<string, Task[]>();
+      filteredTasks.forEach((task) => {
+        if (findWorkflowStatus(currentWorkflow, task.status)) return;
+        const id = `legacy:${task.status}`;
+        otherStatuses.set(id, [...(otherStatuses.get(id) || []), task]);
+      });
+      otherStatuses.forEach((tasks, id) => {
         result.push({
-          id: 'other',
-          name: 'Other',
-          color: '#9CA3AF',
-          tasks: otherTasks,
+          id,
+          name: `${tasks[0]?.status || 'Unknown status'} (not in workflow)`,
+          color: '#737987',
+          tasks,
         });
-      }
+      });
       return result;
     }
 
@@ -150,7 +139,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
         tasks: filteredTasks,
       },
     ];
-  }, [groupBy, workflowStatuses, sections, filteredTasks]);
+  }, [groupBy, workflowStatuses, sections, filteredTasks, currentWorkflow]);
 
   function toggleGroup(groupId: string) {
     setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
@@ -160,11 +149,12 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
     if (!inlineTitle.trim() || !currentProject) return;
 
     if (groupBy === 'status') {
+      const groupStatus = workflowStatuses.find((status) => status.id === groupId);
       createTask({
         title: inlineTitle.trim(),
         projectId: currentProject.id,
         type: 'Task',
-        status: groupId === 'other' ? 'Backlog' : groupId,
+        status: groupStatus?.name || initialStatus,
         priority: null,
         assigneeId: null,
         dueDate: '',
@@ -176,7 +166,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
         projectId: currentProject.id,
         sectionId: groupId === 'unassigned-section' ? undefined : groupId,
         type: 'Task',
-        status: 'Backlog',
+        status: initialStatus,
         priority: null,
         assigneeId: null,
         dueDate: '',
@@ -187,7 +177,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
         title: inlineTitle.trim(),
         projectId: currentProject.id,
         type: 'Task',
-        status: 'Backlog',
+        status: initialStatus,
         priority: null,
         assigneeId: null,
         dueDate: '',
@@ -245,9 +235,9 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
             title="Filter by status"
           >
             <option value="ALL">All Statuses</option>
-            {STANDARD_STATUS_ORDER.map((st) => (
-              <option key={st} value={st}>
-                {st}
+            {workflowStatuses.map((status) => (
+              <option key={status.id} value={status.id}>
+                {status.name}
               </option>
             ))}
           </select>
@@ -260,6 +250,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
             title="Filter by priority"
           >
             <option value="ALL">All Priorities</option>
+            <option value="Urgent">Urgent</option>
             <option value="High">High</option>
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>

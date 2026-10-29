@@ -8,9 +8,14 @@ import {
   CheckSquare,
 } from 'lucide-react';
 import { Task } from '../../types';
+import { getStatusNameForTask, getWorkflowForProject } from '../../domain/workflow';
 
 export function MyTasksView() {
-  const { currentUser, myTasks, projects } = useApp();
+  const { currentUser, myTasks, projects, workflows, loadCrossProjectTasks } = useApp();
+
+  React.useEffect(() => {
+    loadCrossProjectTasks?.();
+  }, [loadCrossProjectTasks]);
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -19,6 +24,19 @@ export function MyTasksView() {
   const [projectFilter, setProjectFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('dueDate'); // dueDate, priority, status, title
   const [groupBy, setGroupBy] = useState('status'); // none, status, priority
+  const statusOptions = useMemo(() => {
+    const names = new Set<string>();
+    workflows.forEach((workflow) => workflow.statuses.forEach((status) => names.add(status.name)));
+    myTasks.forEach((task) =>
+      names.add(
+        getStatusNameForTask(
+          getWorkflowForProject(workflows, task.projectId),
+          task,
+        ),
+      ),
+    );
+    return Array.from(names);
+  }, [workflows, myTasks]);
 
   // Filtered tasks - deduplicated by ID to prevent any parent/child double rendering
   const filteredTasks = useMemo(() => {
@@ -37,12 +55,15 @@ export function MyTasksView() {
         }
       }
       if (typeFilter !== 'ALL' && (t.type || 'Task') !== typeFilter) return false;
-      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      if (
+        statusFilter !== 'ALL' &&
+        getStatusNameForTask(getWorkflowForProject(workflows, t.projectId), t) !== statusFilter
+      ) return false;
       if (priorityFilter !== 'ALL' && t.priority !== priorityFilter) return false;
       if (projectFilter !== 'ALL' && t.projectId !== projectFilter) return false;
       return true;
     });
-  }, [myTasks, search, typeFilter, statusFilter, priorityFilter, projectFilter]);
+  }, [myTasks, search, typeFilter, statusFilter, priorityFilter, projectFilter, workflows]);
 
   // Sorted tasks
   const sortedTasks = useMemo(() => {
@@ -54,7 +75,7 @@ export function MyTasksView() {
         return a.dueDate.localeCompare(b.dueDate);
       }
       if (sortBy === 'priority') {
-        const pMap: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
+        const pMap: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
         const scoreB = b.priority ? (pMap[b.priority] || 0) : 0;
         const scoreA = a.priority ? (pMap[a.priority] || 0) : 0;
         return scoreB - scoreA;
@@ -78,9 +99,13 @@ export function MyTasksView() {
 
     if (groupBy === 'status') {
       const groups: Record<string, Task[]> = {};
-      sortedTasks.forEach((t) => {
-        if (!groups[t.status]) groups[t.status] = [];
-        groups[t.status].push(t);
+      sortedTasks.forEach((task) => {
+        const statusName = getStatusNameForTask(
+          getWorkflowForProject(workflows, task.projectId),
+          task,
+        );
+        if (!groups[statusName]) groups[statusName] = [];
+        groups[statusName].push(task);
       });
       return Object.entries(groups).map(([st, items]) => ({
         title: st,
@@ -89,7 +114,7 @@ export function MyTasksView() {
     }
 
     if (groupBy === 'priority') {
-      const groups: Record<string, Task[]> = { High: [], Medium: [], Low: [], 'No priority': [] };
+      const groups: Record<string, Task[]> = { Urgent: [], High: [], Medium: [], Low: [], 'No priority': [] };
       sortedTasks.forEach((t) => {
         const key = t.priority || 'No priority';
         if (!groups[key]) groups[key] = [];
@@ -104,7 +129,7 @@ export function MyTasksView() {
     }
 
     return [{ title: 'All Tasks', items: sortedTasks }];
-  }, [sortedTasks, groupBy]);
+  }, [sortedTasks, groupBy, workflows]);
 
   const hasActiveFilters =
     search || typeFilter !== 'ALL' || statusFilter !== 'ALL' || priorityFilter !== 'ALL' || projectFilter !== 'ALL';
@@ -167,13 +192,11 @@ export function MyTasksView() {
             title="Filter by status"
           >
             <option value="ALL">All Statuses</option>
-            <option value="Backlog">Backlog</option>
-            <option value="In Progress">In Progress</option>
-            <option value="In Review">In Review</option>
-            <option value="Testing / QA">Testing / QA</option>
-            <option value="Blocked">Blocked</option>
-            <option value="On Hold">On Hold</option>
-            <option value="Done">Done</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
           </select>
 
           {/* Priority Filter */}
@@ -183,6 +206,7 @@ export function MyTasksView() {
             className="h-8 rounded-lg bg-surface-elevated border border-border px-2 text-xs text-text-secondary focus:outline-none"
           >
             <option value="ALL">All Priorities</option>
+            <option value="Urgent">Urgent</option>
             <option value="High">High</option>
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>

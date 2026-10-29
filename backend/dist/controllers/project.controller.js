@@ -266,18 +266,24 @@ const addProjectMember = async (req, res) => {
         };
     });
     if (result.userId !== actor.id) {
-        await notification_service_1.notificationService.createNotification({
-            userId: result.userId,
-            organizationId: actor.organizationId,
-            type: notification_entity_1.NotificationType.PROJECT_MEMBER_ADDED,
-            title: "Added to a project",
-            message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
-            projectId,
-            link: `/projects/${projectId}`,
-            metadata: {
-                addedByUserId: actor.id,
-                role: result.role,
+        await (0, notification_service_1.createNotificationsBestEffort)([
+            {
+                userId: result.userId,
+                organizationId: actor.organizationId,
+                type: notification_entity_1.NotificationType.PROJECT_MEMBER_ADDED,
+                title: "Added to a project",
+                message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
+                projectId,
+                link: `/projects/${projectId}`,
+                metadata: {
+                    addedByUserId: actor.id,
+                    role: result.role,
+                },
             },
+        ], {
+            operation: "project-member-add",
+            organizationId: actor.organizationId,
+            projectId,
         });
     }
     res.status(201).json({

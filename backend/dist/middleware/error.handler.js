@@ -42,6 +42,9 @@ const errorHandler = (err, _req, res, next) => {
         message: statusCode >= 500
             ? "Internal Server Error"
             : err.message || "Request failed",
+        ...(err.code === "WORK_ITEM_VERSION_CONFLICT" && err.details
+            ? { data: err.details }
+            : {}),
     });
 };
 exports.errorHandler = errorHandler;

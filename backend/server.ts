@@ -3,10 +3,14 @@ import { app } from "./app";
 import { createServer } from "http";
 // import { app } from "./src/app"; 
 import { config } from "./config/config";
-import { AppDataSource } from "./config/data.source";
+import {
+  AppDataSource,
+  assertRequiredEntityMetadata,
+} from "./config/data.source";
 
 import { refreshSlaStatuses } from "./services/sla.service";
 import { attachChatWebSocket } from "./websocket/chat.gateway";
+import { attachWhiteboardSocket } from "./websocket/whiteboard.gateway";
 
 import { startScheduler, stopScheduler } from "./services/scheduler.service";
 
@@ -17,6 +21,7 @@ async function startServer(): Promise<void> {
     console.log("Connecting to PostgreSQL...");
 
     await AppDataSource.initialize();
+    assertRequiredEntityMetadata();
 
     console.log("Database connected successfully.");
 
@@ -25,6 +30,7 @@ async function startServer(): Promise<void> {
 
     const server = createServer(app);
     attachChatWebSocket(server);
+    attachWhiteboardSocket(server);
     server.listen(config.port, config.host, () => {
       console.log(
         `Server running at http://${config.host}:${config.port}`,

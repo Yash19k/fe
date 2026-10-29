@@ -4,6 +4,7 @@
  */
 
 import { Role, Workflow } from '../types';
+import { findWorkflowStatus, normalizeWorkflowStatus } from './workflow';
 
 export const ROLES = {
   ADMIN: 'Admin' as const,
@@ -55,8 +56,24 @@ const ROLE_PERMISSIONS_MATRIX: Record<Role, Set<string>> = {
   ]),
 };
 
-export function hasPermission(role: Role, permission: Permission | string): boolean {
-  const allowed = ROLE_PERMISSIONS_MATRIX[role];
+export function normalizeRole(role?: Role | string | null): Role {
+  if (!role) return ROLES.TEAMMATE;
+  switch (String(role).toUpperCase()) {
+    case 'ADMIN':
+      return ROLES.ADMIN;
+    case 'MANAGER':
+    case 'LEAD':
+      return ROLES.MANAGER;
+    case 'TEAMMATE':
+    case 'MEMBER':
+    default:
+      return ROLES.TEAMMATE;
+  }
+}
+
+export function hasPermission(role: Role | string, permission: Permission | string): boolean {
+  const normalized = normalizeRole(role);
+  const allowed = ROLE_PERMISSIONS_MATRIX[normalized];
   return allowed ? allowed.has(permission) : false;
 }
 
@@ -65,8 +82,14 @@ export function hasPermission(role: Role, permission: Permission | string): bool
  * Global projects: all users in current workspace can view.
  * Private projects: only the owner and explicitly added memberIds can view.
  */
-export function canUserAccessProject(project?: any | null, userId?: string | null): boolean {
+export function canUserAccessProject(
+  project?: any | null,
+  userId?: string | null,
+  userRole?: Role | string | null
+): boolean {
   if (!project) return false;
+  const normalizedRole = userRole ? String(userRole).toUpperCase() : null;
+  if (normalizedRole === 'ADMIN') return true;
   if (project.visibility !== 'private') return true;
   if (!userId) return false;
   if (project.ownerId === userId) return true;
@@ -83,50 +106,53 @@ export interface TransitionCheckResult {
  * based on role and project workflow permissions.
  */
 export function canTransitionStatus(
-  role: Role,
+  role: Role | string,
   fromStatus: string,
   toStatus: string,
   workflow?: Workflow | null
 ): TransitionCheckResult {
-  if (role === ROLES.ADMIN) return { allowed: true };
-
-  // Check if status exists in workflow
-  if (!workflow || !workflow.statuses) return { allowed: true };
-
-  const currentStatusObj = workflow.statuses.find((s) => s.name === fromStatus);
-  if (!currentStatusObj) return { allowed: true };
-
-  // Check if target is in allowed transitions
-  if (currentStatusObj.allowedTransitions && currentStatusObj.allowedTransitions.length > 0) {
-    if (!currentStatusObj.allowedTransitions.includes(toStatus)) {
-      return {
-        allowed: false,
-        reason: `Workflow rule prevents direct transition from "${fromStatus}" to "${toStatus}".`,
-      };
-    }
+  const normalizedRole = normalizeRole(role);
+  if (!workflow) {
+    return { allowed: false, reason: 'Project workflow configuration is not available.' };
   }
 
-  // Check role transition restrictions if defined
-  if (currentStatusObj.roleRestrictions && currentStatusObj.roleRestrictions[toStatus]) {
-    const allowedRoles = currentStatusObj.roleRestrictions[toStatus];
-    if (!allowedRoles.includes(role)) {
-      return {
-        allowed: false,
-        reason: `Role restriction: Only ${allowedRoles.join('/')} can move tasks into "${toStatus}".`,
-      };
-    }
+  const currentStatusObj = findWorkflowStatus(workflow, fromStatus);
+  const targetStatusObj = findWorkflowStatus(workflow, toStatus);
+  if (!currentStatusObj || !targetStatusObj) {
+    return {
+      allowed: false,
+      reason: 'This status is not present in the project workflow.',
+    };
   }
 
-  // Default teammate restriction: Teammates cannot move directly into Done without review or testing
+  const allowedTransitions = currentStatusObj.allowedTransitions || [];
+  const targetIdentifiers = new Set([
+    normalizeWorkflowStatus(targetStatusObj.name),
+    normalizeWorkflowStatus(targetStatusObj.id),
+  ]);
   if (
-    role === ROLES.TEAMMATE &&
-    toStatus === 'Done' &&
-    (fromStatus === 'To Do' || fromStatus === 'Backlog' || fromStatus === 'In Progress')
+    !allowedTransitions.some((transition) =>
+      targetIdentifiers.has(normalizeWorkflowStatus(transition)),
+    )
   ) {
     return {
       allowed: false,
-      reason: 'Teammates must submit tasks for "In Review" or "Testing / QA" before marking "Done".',
+      reason: `Workflow rule prevents direct transition from "${currentStatusObj.name}" to "${targetStatusObj.name}".`,
     };
+  }
+
+  if (normalizedRole !== ROLES.ADMIN && currentStatusObj.roleRestrictions) {
+    const targetRestriction = Object.entries(currentStatusObj.roleRestrictions).find(
+      ([target]) => targetIdentifiers.has(normalizeWorkflowStatus(target)),
+    )?.[1];
+    if (targetRestriction && !targetRestriction.some((allowedRole) =>
+      normalizeRole(allowedRole) === normalizedRole,
+    )) {
+      return {
+        allowed: false,
+        reason: `Role restriction: Only ${targetRestriction.join('/')} can move tasks into "${targetStatusObj.name}".`,
+      };
+    }
   }
 
   return { allowed: true };

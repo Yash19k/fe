@@ -4,6 +4,12 @@ import { Input, Textarea } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useApp } from '../../hooks/useApp';
 import { isPersistedWorkItemId } from '../../services/api';
+import { toDateInputValue } from '../../utils/dateUtils';
+import {
+  findWorkflowStatus,
+  getStatusNameForTask,
+  isWorkflowStatusUnstarted,
+} from '../../domain/workflow';
 import { WorkItemTypeBadge, StatusBadge } from '../ui/Badge';
 import { Avatar } from '../ui/Avatar';
 import {
@@ -19,7 +25,7 @@ export interface CreateSprintModalProps {
 }
 
 export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
-  const { currentProject, projectTasks, allUsers, createSprint } = useApp();
+  const { currentProject, currentWorkflow, projectTasks, allUsers, createSprint } = useApp();
 
   // Form State
   const [sprintName, setSprintName] = useState('');
@@ -58,12 +64,14 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
     onClose();
   }
 
-  // Eligible Backlog Tasks for current project (not already assigned to active sprint or in backlog)
+  // Eligible unstarted workflow tasks for the current project.
   const eligibleTasks = useMemo(() => {
     return projectTasks.filter((t: Task) => {
-      return t.status === 'Backlog' && !t.sprintId && isPersistedWorkItemId(t.id);
+      return isWorkflowStatusUnstarted(currentWorkflow, t.status) &&
+        !t.sprintId &&
+        isPersistedWorkItemId(t.id);
     });
-  }, [projectTasks]);
+  }, [projectTasks, currentWorkflow]);
 
   // Filtered tasks by search term
   const filteredTasks = useMemo(() => {
@@ -216,7 +224,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
             <input
               id="sprint-start"
               type="date"
-              value={startDate}
+              value={toDateInputValue(startDate)}
               onChange={(e) => {
                 setStartDate(e.target.value);
                 if (errors.startDate) setErrors((prev) => ({ ...prev, startDate: '' }));
@@ -236,7 +244,7 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
             <input
               id="sprint-end"
               type="date"
-              value={endDate}
+              value={toDateInputValue(endDate)}
               onChange={(e) => {
                 setEndDate(e.target.value);
                 if (errors.endDate) setErrors((prev) => ({ ...prev, endDate: '' }));
@@ -343,7 +351,12 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
                       ) : (
                         <span className="text-[10px] text-text-muted">Unassigned</span>
                       )}
-                      <StatusBadge status={t.status} size="sm" />
+                      <StatusBadge
+                        status={t.status}
+                        label={getStatusNameForTask(currentWorkflow, t)}
+                        color={findWorkflowStatus(currentWorkflow, t.status)?.color}
+                        size="sm"
+                      />
                     </div>
                   </label>
                 );

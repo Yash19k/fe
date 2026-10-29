@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getProjectSprints = exports.createSprint = void 0;
+exports.deleteSprint = exports.completeSprint = exports.startSprint = exports.updateSprint = exports.getSprintById = exports.getProjectSprints = exports.createSprint = void 0;
 const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data.source");
 const project_entity_1 = require("../entities/project.entity");
@@ -208,7 +208,7 @@ const createSprint = async (req, res) => {
             });
         }
     }
-    await Promise.all([...notifications.entries()].map(([assigneeId, item]) => notification_service_1.notificationService.createNotification({
+    await (0, notification_service_1.createNotificationsBestEffort)([...notifications.entries()].map(([assigneeId, item]) => ({
         userId: assigneeId,
         organizationId,
         type: notification_entity_1.NotificationType.TASK_UPDATED,
@@ -221,7 +221,11 @@ const createSprint = async (req, res) => {
             sprintId: result.sprint.id,
             sprintName: result.sprint.name,
         },
-    })));
+    })), {
+        operation: "sprint-create",
+        organizationId,
+        projectId,
+    });
     res.status(201).json({
         success: true,
         message: "Sprint created successfully.",
@@ -267,3 +271,143 @@ const getProjectSprints = async (req, res) => {
     });
 };
 exports.getProjectSprints = getProjectSprints;
+const getSprintById = async (req, res) => {
+    const projectId = getProjectId(req);
+    const sprintId = req.params.sprintId;
+    if (typeof sprintId !== "string" || !UUID_REGEX.test(sprintId)) {
+        throw new app_error_1.AppError("Invalid sprint ID.", 400, "INVALID_SPRINT_ID");
+    }
+    const sprintRepo = data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint);
+    const sprint = await sprintRepo.findOne({
+        where: { id: sprintId, projectId },
+        relations: {
+            workItems: {
+                assignments: {
+                    user: true,
+                },
+            },
+        },
+    });
+    if (!sprint) {
+        throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+    }
+    res.status(200).json({
+        success: true,
+        data: sprint,
+    });
+};
+exports.getSprintById = getSprintById;
+const updateSprint = async (req, res) => {
+    const projectId = getProjectId(req);
+    const sprintId = req.params.sprintId;
+    if (typeof sprintId !== "string" || !UUID_REGEX.test(sprintId)) {
+        throw new app_error_1.AppError("Invalid sprint ID.", 400, "INVALID_SPRINT_ID");
+    }
+    const sprintRepo = data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint);
+    const sprint = await sprintRepo.findOne({
+        where: { id: sprintId, projectId },
+    });
+    if (!sprint) {
+        throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+    }
+    const { name, goal, startDate, endDate, status } = req.body;
+    if (name !== undefined)
+        sprint.name = name;
+    if (goal !== undefined)
+        sprint.goal = goal ?? null;
+    if (startDate !== undefined)
+        sprint.startDate = startDate;
+    if (endDate !== undefined)
+        sprint.endDate = endDate;
+    if (status !== undefined)
+        sprint.status = status;
+    const updatedSprint = await sprintRepo.save(sprint);
+    res.status(200).json({
+        success: true,
+        message: "Sprint updated successfully.",
+        data: updatedSprint,
+    });
+};
+exports.updateSprint = updateSprint;
+const startSprint = async (req, res) => {
+    const projectId = getProjectId(req);
+    const sprintId = req.params.sprintId;
+    if (typeof sprintId !== "string" || !UUID_REGEX.test(sprintId)) {
+        throw new app_error_1.AppError("Invalid sprint ID.", 400, "INVALID_SPRINT_ID");
+    }
+    const sprintRepo = data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint);
+    const sprint = await sprintRepo.findOne({
+        where: { id: sprintId, projectId },
+    });
+    if (!sprint) {
+        throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+    }
+    if (sprint.status === sprint_entities_1.SprintStatus.ACTIVE) {
+        throw new app_error_1.AppError("Sprint is already active.", 400, "SPRINT_ALREADY_ACTIVE");
+    }
+    if (sprint.status === sprint_entities_1.SprintStatus.COMPLETED) {
+        throw new app_error_1.AppError("Cannot start a completed sprint.", 400, "SPRINT_ALREADY_COMPLETED");
+    }
+    const activeSprint = await sprintRepo.findOne({
+        where: { projectId, status: sprint_entities_1.SprintStatus.ACTIVE },
+    });
+    if (activeSprint) {
+        throw new app_error_1.AppError(`Sprint "${activeSprint.name}" is already active. Complete it before starting another.`, 400, "ANOTHER_SPRINT_ACTIVE");
+    }
+    sprint.status = sprint_entities_1.SprintStatus.ACTIVE;
+    const updatedSprint = await sprintRepo.save(sprint);
+    res.status(200).json({
+        success: true,
+        message: "Sprint started successfully.",
+        data: updatedSprint,
+    });
+};
+exports.startSprint = startSprint;
+const completeSprint = async (req, res) => {
+    const projectId = getProjectId(req);
+    const sprintId = req.params.sprintId;
+    if (typeof sprintId !== "string" || !UUID_REGEX.test(sprintId)) {
+        throw new app_error_1.AppError("Invalid sprint ID.", 400, "INVALID_SPRINT_ID");
+    }
+    const sprintRepo = data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint);
+    const sprint = await sprintRepo.findOne({
+        where: { id: sprintId, projectId },
+    });
+    if (!sprint) {
+        throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+    }
+    if (sprint.status !== sprint_entities_1.SprintStatus.ACTIVE) {
+        throw new app_error_1.AppError("Only active sprints can be completed.", 400, "SPRINT_NOT_ACTIVE");
+    }
+    sprint.status = sprint_entities_1.SprintStatus.COMPLETED;
+    const updatedSprint = await sprintRepo.save(sprint);
+    res.status(200).json({
+        success: true,
+        message: "Sprint completed successfully.",
+        data: updatedSprint,
+    });
+};
+exports.completeSprint = completeSprint;
+const deleteSprint = async (req, res) => {
+    const projectId = getProjectId(req);
+    const sprintId = req.params.sprintId;
+    if (typeof sprintId !== "string" || !UUID_REGEX.test(sprintId)) {
+        throw new app_error_1.AppError("Invalid sprint ID.", 400, "INVALID_SPRINT_ID");
+    }
+    const sprintRepo = data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint);
+    const workItemRepo = data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem);
+    const sprint = await sprintRepo.findOne({
+        where: { id: sprintId, projectId },
+    });
+    if (!sprint) {
+        throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+    }
+    // Safely unlink any work items associated with this sprint before deleting
+    await workItemRepo.update({ sprintId }, { sprintId: null });
+    await sprintRepo.remove(sprint);
+    res.status(200).json({
+        success: true,
+        message: "Sprint deleted successfully.",
+    });
+};
+exports.deleteSprint = deleteSprint;

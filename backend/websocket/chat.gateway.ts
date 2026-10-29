@@ -4,7 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { AppDataSource } from "../config/data.source";
 import { config } from "../config/config";
 import { User, UserStatus } from "../entities/user.entity";
-import { canAccessConversation, saveMessage, ChatActor } from "../services/chat.service";
+import { canAccessConversation, saveMessage, ChatActor, registerRoomEvictor } from "../services/chat.service";
 
 interface AccessPayload extends JwtPayload {
   userId: string;
@@ -52,6 +52,14 @@ async function authenticateUpgrade(request: IncomingMessage): Promise<ChatActor 
   return { id: user.id, organizationId: user.organizationId ?? undefined, role: user.role };
 }
 
+async function isActiveActor(actor: ChatActor): Promise<boolean> {
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: { id: actor.id },
+    select: { id: true, status: true },
+  });
+  return user?.status === UserStatus.ACTIVE;
+}
+
 function sendError(socket: ChatSocket, message: string) {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ event: "chat:error", message }));
@@ -89,9 +97,11 @@ export function evictUserFromConversationRoom(conversationId: string, userId: st
         }
       }
     }
-  }
-  if (room.size === 0) rooms.delete(conversationId);
 }
+if (room.size === 0) rooms.delete(conversationId);
+}
+
+registerRoomEvictor(evictUserFromConversationRoom);
 
 export function attachChatWebSocket(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
@@ -157,6 +167,11 @@ export function attachChatWebSocket(server: HttpServer) {
       const conversationId = event.conversationId;
 
       void (async () => {
+        if (!(await isActiveActor(socket.actor))) {
+          sendError(socket, "Authentication required.");
+          socket.close(1008, "Authentication required.");
+          return;
+        }
         if (!(await canAccessConversation(socket.actor, conversationId))) {
           sendError(socket, "You do not have access to this conversation.");
           return;

@@ -14,6 +14,7 @@ exports.sendMessageController = sendMessageController;
 exports.markReadController = markReadController;
 const joi_1 = __importDefault(require("joi"));
 const chat_conversation_entity_1 = require("../entities/chat-conversation.entity");
+const app_error_1 = require("../errors/app.error");
 const chat_service_1 = require("../services/chat.service");
 const uuid = joi_1.default.string().uuid();
 const createSchema = joi_1.default.object({
@@ -25,13 +26,17 @@ const createSchema = joi_1.default.object({
     memberIds: joi_1.default.array().items(uuid).unique(),
 }).or("participantId", "memberIds");
 const memberSchema = joi_1.default.object({ userId: uuid.required() });
+const conversationQuerySchema = joi_1.default.object({
+    page: joi_1.default.number().integer().min(1).max(1000000).default(1),
+    limit: joi_1.default.number().integer().min(1).max(100).default(50),
+});
 const messageQuerySchema = joi_1.default.object({
     limit: joi_1.default.number().integer().min(1).max(100).default(50),
     before: joi_1.default.date().iso(),
 });
 function actor(req) {
     if (!req.user)
-        throw new Error("Authenticated user context is missing.");
+        throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
     return req.user;
 }
 function param(value) {
@@ -59,10 +64,19 @@ async function createConversationController(req, res) {
     if (error)
         return validationError(res, error);
     const conversation = await (0, chat_service_1.createConversation)(actor(req), value);
-    return res.status(200).json({ success: true, data: conversation });
+    return res.status(201).json({ success: true, data: conversation });
 }
 async function listConversationsController(req, res) {
-    return res.json({ success: true, data: await (0, chat_service_1.listConversations)(actor(req)) });
+    const { error, value } = conversationQuerySchema.validate(req.query, {
+        stripUnknown: true,
+        convert: true,
+    });
+    if (error)
+        return validationError(res, error);
+    return res.json({
+        success: true,
+        data: await (0, chat_service_1.listConversations)(actor(req), value.page, value.limit),
+    });
 }
 async function listMembersController(req, res) {
     return res.json({ success: true, data: await (0, chat_service_1.listMembers)(actor(req)) });

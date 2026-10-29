@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Dialog } from '../ui/Dialog';
 import { Input, Textarea, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -13,7 +13,9 @@ import { formatRecurrenceRule } from '../../domain/recurrence';
 import { WorkItemType, Priority, BugSeverity, TaskAttachment } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { LabelPicker } from '../ui/LabelPicker';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { Repeat } from 'lucide-react';
+import { getInitialWorkflowStatus } from '../../domain/workflow';
 
 export interface CreateTaskModalProps {
   isOpen: boolean;
@@ -43,6 +45,7 @@ export function CreateTaskModal({
     tasks,
     projectLabels,
   } = useApp();
+  const defaultStatus = getInitialWorkflowStatus(currentWorkflow)?.name || '';
 
   // Core Common Fields - default to unassigned, no priority, empty dates and hours
   const [type, setType] = useState<WorkItemType>(WORK_ITEM_TYPES.TASK);
@@ -50,7 +53,7 @@ export function CreateTaskModal({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [sectionId, setSectionId] = useState(currentProject?.sections?.[0]?.id || 'sec-1');
-  const [status, setStatus] = useState('Backlog');
+  const [status, setStatus] = useState(defaultStatus);
   const [priority, setPriority] = useState<Priority | ''>('');
   const [assigneeId, setAssigneeId] = useState('');
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
@@ -62,6 +65,14 @@ export function CreateTaskModal({
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [attachmentPickerKey, setAttachmentPickerKey] = useState(0);
   const [createdWorkItemId, setCreatedWorkItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStatus((previous) =>
+      currentWorkflow?.statuses.some((workflowStatus) => workflowStatus.name === previous)
+        ? previous
+        : defaultStatus,
+    );
+  }, [currentProject?.id, currentWorkflow, defaultStatus]);
 
   // Recurrence configuration
   const [recFrequency, setRecFrequency] = useState('none');
@@ -118,14 +129,22 @@ export function CreateTaskModal({
 
   function handleToggleLabel(labelName: string) {
     setSelectedLabels((prev) =>
-      prev.includes(labelName) ? prev.filter((l) => l !== labelName) : [...prev, labelName]
+      prev.includes(labelName) ? [] : [labelName]
     );
   }
+
+  const dateRangeError =
+    startDate && dueDate && dueDate <= startDate
+      ? 'Due date must be later than start date.'
+      : undefined;
 
   function validateForm() {
     const errs: Record<string, string> = {};
     if (!title.trim()) {
       errs.title = 'Title is required';
+    }
+    if (!status) {
+      errs.status = 'The project workflow is not available. Please retry after it loads.';
     }
 
     if (type === WORK_ITEM_TYPES.SUBTASK) {
@@ -141,6 +160,10 @@ export function CreateTaskModal({
       if (!stepsToReproduce.trim()) {
         errs.stepsToReproduce = 'Steps to reproduce are required for Bugs.';
       }
+    }
+
+    if (dateRangeError) {
+      errs.dueDate = dateRangeError;
     }
 
     setErrors(errs);
@@ -271,7 +294,7 @@ export function CreateTaskModal({
     setParentId('');
     setTitle('');
     setDescription('');
-    setStatus('Backlog');
+    setStatus(defaultStatus);
     setPriority('');
     setAssigneeId('');
     setSelectedAssigneeIds([]);
@@ -393,47 +416,6 @@ export function CreateTaskModal({
         />
 
         {/* --- TYPE-SPECIFIC DYNAMIC FIELDS --- */}
-
-        {/* 1. Epic Fields */}
-        {type === WORK_ITEM_TYPES.EPIC && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border space-y-3">
-            <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-              Epic Specifications
-            </h4>
-            <Input
-              label="Business Goal"
-              placeholder="Strategic outcome or business value..."
-              value={businessGoal}
-              onChange={(e) => setBusinessGoal(e.target.value)}
-              disabled={isSubmitting}
-            />
-            <Textarea
-              label="Success Criteria"
-              placeholder="Measurable KPIs or acceptance definition..."
-              value={successCriteria}
-              onChange={(e) => setSuccessCriteria(e.target.value)}
-              disabled={isSubmitting}
-              rows={2}
-            />
-          </div>
-        )}
-
-        {/* 2. Story Fields */}
-        {type === WORK_ITEM_TYPES.STORY && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border space-y-3">
-            <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-              Story Acceptance
-            </h4>
-            <Textarea
-              label="Acceptance Criteria"
-              placeholder="Given... When... Then... criteria"
-              value={acceptanceCriteria}
-              onChange={(e) => setAcceptanceCriteria(e.target.value)}
-              disabled={isSubmitting}
-              rows={2}
-            />
-          </div>
-        )}
 
         {/* 3. Bug Fields */}
         {type === WORK_ITEM_TYPES.BUG && (
@@ -568,14 +550,18 @@ export function CreateTaskModal({
             label="Initial Status"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !currentWorkflow?.statuses.length}
           >
             {currentWorkflow?.statuses?.map((st) => (
               <option key={st.id} value={st.name}>
                 {st.name}
               </option>
-            )) || <option value="Backlog">Backlog</option>}
+            ))}
+            {!currentWorkflow?.statuses.length && (
+              <option value="">Workflow statuses unavailable</option>
+            )}
           </Select>
+          {errors.status && <p className="text-[11px] text-rose-400">{errors.status}</p>}
 
           <Select
             label="Priority"
@@ -584,6 +570,7 @@ export function CreateTaskModal({
             disabled={isSubmitting}
           >
             <option value="">No priority</option>
+            <option value="Urgent">Urgent</option>
             <option value="High">High</option>
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>
@@ -592,7 +579,7 @@ export function CreateTaskModal({
           <Input
             label="Start Date"
             type="date"
-            value={startDate}
+            value={toDateInputValue(startDate)}
             onChange={(e) => setStartDate(e.target.value)}
             disabled={isSubmitting}
           />
@@ -600,8 +587,9 @@ export function CreateTaskModal({
           <Input
             label="Due Date"
             type="date"
-            value={dueDate}
+            value={toDateInputValue(dueDate)}
             onChange={(e) => setDueDate(e.target.value)}
+            error={errors.dueDate || dateRangeError}
             disabled={isSubmitting}
           />
         </div>

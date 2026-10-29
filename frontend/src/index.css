@@ -318,6 +318,12 @@ html, body {
   outline-offset: 1px;
 }
 
+.global-search-input:focus,
+.global-search-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 /* Modal Backdrop */
 .modal-backdrop {
   position: fixed;

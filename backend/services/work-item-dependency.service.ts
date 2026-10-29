@@ -177,6 +177,24 @@ function makeError(message: string, code: string): AppError {
   return new AppError(message, 409, code);
 }
 
+function assertDependencyVersion(
+  workItem: Pick<WorkItem, "version" | "updatedAt">,
+  expectedVersion: number,
+): void {
+  if (workItem.version !== expectedVersion) {
+    throw new AppError(
+      "This work item was updated by another user. Refresh the latest version and review your changes before modifying dependencies.",
+      409,
+      "WORK_ITEM_VERSION_CONFLICT",
+      undefined,
+      {
+        currentVersion: workItem.version,
+        updatedAt: workItem.updatedAt,
+      },
+    );
+  }
+}
+
 async function assertDependencyProjectAccess(
   manager: EntityManager,
   projectId: string,
@@ -590,6 +608,7 @@ export async function addWorkItemDependency(
   actor: DependencyActor,
   successorId: string,
   predecessorId: string,
+  expectedVersion: number,
 ) {
   return AppDataSource.transaction(async (manager) => {
     const successorReference = await manager.getRepository(WorkItem).findOne({
@@ -620,6 +639,7 @@ export async function addWorkItemDependency(
         "INVALID_DEPENDENCY",
       );
     }
+    assertDependencyVersion(successor, expectedVersion);
     if (successorId === predecessorId) {
       throw new AppError(
         "A work item cannot depend on itself.",
@@ -688,6 +708,9 @@ export async function addWorkItemDependency(
       [predecessorId],
       actor,
     );
+    const updatedSuccessor =
+      rescheduledTasks.find((item) => item.id === successor.id) ??
+      await manager.getRepository(WorkItem).save(successor);
     await writeDependencyAudit(
       manager,
       actor,
@@ -701,6 +724,11 @@ export async function addWorkItemDependency(
       dependency,
       dependencies: nextEdges.filter((edge) => edge.workItemId === successorId),
       rescheduledTasks,
+      workItem: {
+        id: updatedSuccessor.id,
+        version: updatedSuccessor.version,
+        updatedAt: updatedSuccessor.updatedAt,
+      },
     };
   });
 }
@@ -709,6 +737,7 @@ export async function removeWorkItemDependency(
   actor: DependencyActor,
   successorId: string,
   dependencyIdentifier: string,
+  expectedVersion: number,
 ) {
   return AppDataSource.transaction(async (manager) => {
     const successorReference = await manager.getRepository(WorkItem).findOne({
@@ -732,6 +761,7 @@ export async function removeWorkItemDependency(
     if (!successor) {
       throw new AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
     }
+    assertDependencyVersion(successor, expectedVersion);
     const edges = await loadEdges(manager, projectWorkItems);
     const dependency = edges.find(
       (edge) =>
@@ -744,6 +774,7 @@ export async function removeWorkItemDependency(
     }
 
     await manager.getRepository(WorkItemDependency).delete({ id: dependency.id });
+    const updatedSuccessor = await manager.getRepository(WorkItem).save(successor);
     await writeDependencyAudit(
       manager,
       actor,
@@ -759,6 +790,11 @@ export async function removeWorkItemDependency(
         (edge) => edge.workItemId === successorId && edge.id !== dependency.id,
       ),
       rescheduledTasks: [],
+      workItem: {
+        id: updatedSuccessor.id,
+        version: updatedSuccessor.version,
+        updatedAt: updatedSuccessor.updatedAt,
+      },
     };
   });
 }

@@ -6,12 +6,14 @@ import {
   validateWorkItemId,
   validateWorkItemDependencyParams,
   validateWorkItemDependencyBody,
+  validateWorkItemDependencyVersion,
 } from "../validations/work.item.validations";
 
 import { isLoggedIn } from "../middleware/is.loggedin";
 import { undoAuditLog } from "../controllers/auditlog.controller";
 import {
   createWorkItem,
+  getWorkItemById,
   deleteWorkItem,
   getProjectWorkItems,
   updateWorkItem,
@@ -51,6 +53,14 @@ router.patch(
   requireProjectPermission("task:update"),
   validateUpdateWorkItem,
   asyncHandler(updateWorkItem)
+);
+
+router.get(
+  "/:workItemId",
+  isLoggedIn,
+  validateWorkItemId,
+  requireProjectPermission("task:read"),
+  asyncHandler(getWorkItemById),
 );
 
 router.post(
@@ -115,7 +125,7 @@ router.post(
   "/:workItemId/comments",
   isLoggedIn,
   validateWorkItemId,
-  requireProjectPermission("task:read"),
+  requireProjectPermission("task:update"),
   asyncHandler(addWorkItemComment),
 );
 router.get(
@@ -131,7 +141,7 @@ router.post(
   "/:workItemId/time-entries",
   isLoggedIn,
   validateWorkItemId,
-  requireProjectPermission("task:read"),
+  requireProjectPermission("task:update"),
   asyncHandler(addWorkItemTimeEntry),
 );
 router.get(
@@ -163,6 +173,7 @@ router.delete(
   isLoggedIn,
   validateWorkItemDependencyParams,
   requireProjectPermission("task:update"),
+  validateWorkItemDependencyVersion,
   asyncHandler(deleteWorkItemDependency),
 );
 

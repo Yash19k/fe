@@ -87,9 +87,9 @@ export function ProjectActivityView() {
     const q = auditFilter.toLowerCase();
     return sourceRecords.filter((log: AuditLogEntry) => {
       const actor = getAuditActor(log, allUsers);
-      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+      const entity = getAuditEntityInfo(log, projectTasks, currentProject?.name || '');
       const actionInfo = formatAuditAction(log.action);
-      const desc = formatAuditDescription(log, projectTasks, currentProject.name);
+      const desc = formatAuditDescription(log, projectTasks, currentProject?.name || '');
 
       return (
         actionInfo.label.toLowerCase().includes(q) ||

@@ -183,6 +183,7 @@ router.post(
 router.post(
   "/audit-logs/:logId/undo",
   isLoggedIn,
+  requireProjectPermission("project:update"),
   asyncHandler(undoAuditLog),
 );
 

@@ -13,6 +13,8 @@ import slaRoutes from "./routes/sla.routes";
 import { errorHandler } from "./middleware/error.handler";
 import { config } from "./config/config";
 import chatRoutes from "./routes/chat.routes";
+import whiteboardRoutes from "./routes/whiteboard.routes";
+import authRoutes from "./routes/auth.routes";
 
 export const app = express();
 
@@ -50,6 +52,7 @@ app.use(
   }),
 );
 app.use(cookieParser());
+app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/work-items", workItemRoutes);
@@ -60,6 +63,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/chat/conversations", chatRoutes);
 app.use("/api/conversations", chatRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api", whiteboardRoutes);
 
 app.use("/api/sla", slaRoutes);
 app.use("/api/organization/sla", slaRoutes);

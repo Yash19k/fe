@@ -11,17 +11,28 @@ import {
   ShieldAlert,
   Ban,
   Activity,
-  RefreshCw,
 } from 'lucide-react';
 import { getRelativeDateLabel } from '../../domain/businessDays';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import { isTaskBlocked } from '../../domain/dependencyGraph';
 import { evaluateTaskSla } from '../../domain/sla';
 import { canUserAccessProject } from '../../domain/permissions';
+import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
 import { getPersonalDashboardApi, backendWorkItemToTask } from '../../services/api';
 import type { User } from '../../types';
 
 export function HomeView() {
-  const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer } = useApp();
+  const {
+    currentUser,
+    tasks,
+    projects,
+    workflows,
+    auditLog,
+    navigate,
+    openTaskDrawer,
+    myTasks,
+    loadCrossProjectTasks,
+  } = useApp();
 
   const [personalData, setPersonalData] = useState<{
     summary: {
@@ -35,15 +46,10 @@ export function HomeView() {
     attentionTasks: any[];
     userTasks: any[];
   } | null>(null);
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(true);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const fetchPersonalDashboard = async () => {
-    if (!currentUser?.id) {
-      setIsLoadingDashboard(false);
-      return;
-    }
-    setIsLoadingDashboard(true);
+    if (!currentUser?.id) return;
     setDashboardError(null);
     try {
       const res = await getPersonalDashboardApi();
@@ -52,23 +58,33 @@ export function HomeView() {
       }
     } catch (err: any) {
       setDashboardError(err?.message || 'Failed to retrieve personal dashboard metrics');
-    } finally {
-      setIsLoadingDashboard(false);
     }
   };
 
   useEffect(() => {
     fetchPersonalDashboard();
-  }, [currentUser?.id]);
+    if (loadCrossProjectTasks) {
+      loadCrossProjectTasks();
+    }
+  }, [currentUser?.id, loadCrossProjectTasks]);
 
   const accessibleProjects = useMemo(() => {
-    return projects.filter((p) => canUserAccessProject(p, currentUser.id));
-  }, [projects, currentUser.id]);
+    return projects.filter((p) => canUserAccessProject(p, currentUser?.id, currentUser?.role));
+  }, [projects, currentUser?.id, currentUser?.role]);
 
-  // Tasks assigned to current user
+  // Tasks assigned to current user (including multi-assignee tasks)
   const userTasks = useMemo(() => {
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
-  }, [tasks, currentUser.id]);
+    if (Array.isArray(myTasks) && myTasks.length > 0) {
+      return myTasks;
+    }
+    if (!currentUser?.id) return [];
+    return tasks.filter((t) => {
+      if (t.assigneeId === currentUser.id) return true;
+      if (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(currentUser.id)) return true;
+      if (Array.isArray(t.assignees) && t.assignees.some((a: any) => a.id === currentUser.id || a.userId === currentUser.id)) return true;
+      return false;
+    });
+  }, [myTasks, tasks, currentUser?.id]);
 
   // Personal metrics from backend or local fallback
   const personalMetrics = useMemo(() => {
@@ -76,14 +92,24 @@ export function HomeView() {
       return personalData.summary;
     }
     const total = userTasks.length;
-    const completed = userTasks.filter((t) => t.status === 'Done').length;
-    const active = userTasks.filter((t) => t.status !== 'Done');
+    const completed = userTasks.filter((task) =>
+      isWorkflowStatusComplete(
+        getWorkflowForProject(workflows, task.projectId),
+        task.status,
+      ),
+    ).length;
+    const active = userTasks.filter((task) =>
+      !isWorkflowStatusComplete(
+        getWorkflowForProject(workflows, task.projectId),
+        task.status,
+      ),
+    );
     const overdue = active.filter((t) => getRelativeDateLabel(t.dueDate).isOverdue).length;
     const dueSoon = active.filter((t) => getRelativeDateLabel(t.dueDate).isDueSoon).length;
-    const blocked = active.filter((t) => isTaskBlocked(t, tasks)).length;
+    const blocked = active.filter((task) => isTaskBlocked(task, tasks, workflows)).length;
 
     return { total, completed, active: total - completed, overdue, dueSoon, blocked };
-  }, [personalData, userTasks, tasks]);
+  }, [personalData, userTasks, tasks, workflows]);
 
   // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
   const attentionTasks = useMemo(() => {
@@ -113,25 +139,27 @@ export function HomeView() {
     }
     return userTasks
       .filter((t) => {
-        if (t.status === 'Done') return false;
+        const workflow = getWorkflowForProject(workflows, t.projectId);
+        if (isWorkflowStatusComplete(workflow, t.status)) return false;
         const date = getRelativeDateLabel(t.dueDate);
-        const blocked = isTaskBlocked(t, tasks);
-        const sla = evaluateTaskSla(t);
+        const blocked = isTaskBlocked(t, tasks, workflows);
+        const sla = evaluateTaskSla(t, undefined, workflow);
         return date.isOverdue || date.isDueSoon || blocked || sla.isBreached || sla.isApproaching;
       })
       .slice(0, 6);
-  }, [personalData, userTasks, tasks, currentUser]);
+  }, [personalData, userTasks, tasks, currentUser, workflows]);
 
   // SLA Warnings across all projects
   const atRiskTasks = useMemo(() => {
     return tasks
       .filter((t) => {
-        if (t.status === 'Done') return false;
-        const sla = evaluateTaskSla(t);
+        const workflow = getWorkflowForProject(workflows, t.projectId);
+        if (isWorkflowStatusComplete(workflow, t.status)) return false;
+        const sla = evaluateTaskSla(t, undefined, workflow);
         return sla.isBreached || sla.isApproaching || sla.isEscalated;
       })
       .slice(0, 4);
-  }, [tasks]);
+  }, [tasks, workflows]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -144,17 +172,6 @@ export function HomeView() {
           <p className="text-xs text-text-muted mt-0.5">
             Active session: <span className="text-text-secondary font-medium">{currentUser.name}</span> ({currentUser.role}) · Focus queue and critical milestones
           </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <button
-            onClick={fetchPersonalDashboard}
-            disabled={isLoadingDashboard}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface border border-border text-xs text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors cursor-pointer"
-            title="Refresh personal metrics from server"
-          >
-            <RefreshCw size={12} className={isLoadingDashboard ? 'animate-spin' : ''} />
-            <span>{isLoadingDashboard ? 'Refreshing...' : 'Refresh Overview'}</span>
-          </button>
         </div>
       </div>
 
@@ -300,8 +317,10 @@ export function HomeView() {
                 const projTasks = tasks.filter((t) => t.projectId === p.id);
                 const deliverableTasks = projTasks.filter((t) => t.type !== 'Subtask');
                 const deliverableTotal = deliverableTasks.length > 0 ? deliverableTasks.length : projTasks.length;
+                const workflow =
+                  getWorkflowForProject(workflows, p.id) || p.workflow;
                 const doneCount = (deliverableTasks.length > 0 ? deliverableTasks : projTasks).filter(
-                  (t) => t.status === 'Done'
+                  (task) => isWorkflowStatusComplete(workflow, task.status),
                 ).length;
                 const pct =
                   deliverableTotal > 0 ? Math.round((doneCount / deliverableTotal) * 100) : 0;
@@ -350,7 +369,7 @@ export function HomeView() {
 
                     <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-border/50">
                       <span>{projTasks.length} tasks</span>
-                      <span>Due {p.dueDate}</span>
+                      <span>Due {formatDisplayDate(p.dueDate)}</span>
                     </div>
                   </div>
                 );
@@ -378,7 +397,11 @@ export function HomeView() {
                 </p>
               ) : (
                 atRiskTasks.map((t) => {
-                  const sla = evaluateTaskSla(t);
+                  const sla = evaluateTaskSla(
+                    t,
+                    undefined,
+                    getWorkflowForProject(workflows, t.projectId),
+                  );
                   return (
                     <div
                       key={t.id}

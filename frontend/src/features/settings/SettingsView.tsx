@@ -24,6 +24,7 @@ import {
   getOrganizationSlaApi,
   updateOrganizationSlaApi,
   toUserFriendlyErrorMessage,
+  toBackendRole,
 } from '../../services/api';
 
 export function SettingsView() {
@@ -43,7 +44,6 @@ export function SettingsView() {
 
   // Add Member State
   const [isAddingMember, setIsAddingMember] = useState<boolean>(false);
-  const [addFullName, setAddFullName] = useState<string>('');
   const [addEmail, setAddEmail] = useState<string>('');
   const [addRole, setAddRole] = useState<string>('Teammate');
   const [isSubmittingAdd, setIsSubmittingAdd] = useState<boolean>(false);
@@ -146,7 +146,6 @@ export function SettingsView() {
   async function handleAddMemberSubmit(e: React.FormEvent) {
     e.preventDefault();
     const email = addEmail.trim().toLowerCase();
-    const fullName = addFullName.trim();
 
     if (!email || !email.includes('@')) {
       setAddError('A valid email address is required.');
@@ -168,7 +167,6 @@ export function SettingsView() {
 
       showToast(res?.message || `Member ${email} added to organization`, 'success');
       setAddEmail('');
-      setAddFullName('');
       setAddRole('Teammate');
       setIsAddingMember(false);
       await loadOrgMembers();
@@ -182,16 +180,27 @@ export function SettingsView() {
   }
 
   async function handleRoleChange(userId: string, newRole: string) {
+    const canonicalRole = toBackendRole(newRole as any) || newRole.toUpperCase();
+    if (!['ADMIN', 'MANAGER', 'TEAMMATE'].includes(canonicalRole)) {
+      showToast('Invalid role specified', 'error');
+      return;
+    }
+    const previousMember = members.find((m) => m.id === userId);
     setUpdatingRoleId(userId);
     try {
-      const res = await updateOrganizationMemberRoleApi(userId, newRole);
+      const res = await updateOrganizationMemberRoleApi(userId, canonicalRole);
       showToast(res?.message || 'Member role updated successfully', 'success');
       setMembers((prev) =>
-        prev.map((m) => (m.id === userId ? { ...m, role: newRole } : m))
+        prev.map((m) => (m.id === userId ? { ...m, role: canonicalRole } : m))
       );
     } catch (err: any) {
       const msg = err?.message || 'Failed to update member role';
       showToast(msg, 'error');
+      if (previousMember) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === userId ? { ...m, role: previousMember.role } : m))
+        );
+      }
     } finally {
       setUpdatingRoleId(null);
     }
@@ -273,16 +282,6 @@ export function SettingsView() {
 
             <div className="flex items-center gap-2">
               <Button
-                variant="secondary"
-                size="sm"
-                icon={RefreshCw}
-                onClick={loadOrgMembers}
-                disabled={isLoadingMembers}
-                className="h-8 text-xs"
-              >
-                Refresh
-              </Button>
-              <Button
                 variant="primary"
                 size="sm"
                 icon={UserPlus}
@@ -311,16 +310,7 @@ export function SettingsView() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-text-muted mb-1 font-medium">Full Name (Optional)</label>
-                  <Input
-                    placeholder="e.g. Jordan Smith"
-                    value={addFullName}
-                    onChange={(e) => setAddFullName(e.target.value)}
-                  />
-                </div>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-text-muted mb-1 font-medium">Email Address</label>
                   <Input
@@ -424,16 +414,31 @@ export function SettingsView() {
                       {/* Role Selector with "All users can be managers" support */}
                       <div className="flex items-center gap-1.5">
                         <span className="text-text-muted text-[11px]">Role:</span>
-                        <select
-                          value={m.role}
-                          disabled={isSelf || isUpdating}
-                          onChange={(e) => handleRoleChange(m.id, e.target.value)}
-                          className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
-                        >
-                          <option value="Admin">Admin</option>
-                          <option value="Manager">Manager</option>
-                          <option value="Teammate">Teammate</option>
-                        </select>
+                        {(() => {
+                          const backendRole = toBackendRole(m.role);
+                          const isRecognized = ['ADMIN', 'MANAGER', 'TEAMMATE'].includes(backendRole);
+                          const selectValue = isRecognized ? backendRole : (m.role ? String(m.role) : '');
+                          if (!isRecognized) {
+                            console.warn(`[Settings] Member ${m.id} (${m.email}) has unexpected or missing role:`, m.role);
+                          }
+                          return (
+                            <select
+                              value={selectValue}
+                              disabled={isSelf || isUpdating}
+                              onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                              className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
+                            >
+                              <option value="ADMIN">Admin</option>
+                              <option value="MANAGER">Manager</option>
+                              <option value="TEAMMATE">Teammate</option>
+                              {!isRecognized && (
+                                <option value={selectValue} disabled>
+                                  {m.role ? `Unrecognized (${m.role})` : 'Missing Role'}
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
                       </div>
 
                       {/* Remove Member Button */}

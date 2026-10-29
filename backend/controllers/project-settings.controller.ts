@@ -6,15 +6,6 @@ import { Project } from "../entities/project.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
-import {
-  DEFAULT_WORKFLOW_NAME,
-  DEFAULT_WORKFLOW_STATUSES,
-} from "../services/work-item-workflow.service";
-
-export {
-  DEFAULT_WORKFLOW_NAME,
-  DEFAULT_WORKFLOW_STATUSES,
-} from "../services/work-item-workflow.service";
 
 /**
  * Validates that the project exists in the user's organization and
@@ -141,6 +132,18 @@ export async function deleteProjectLabel(req: Request, res: Response) {
 // ==========================================
 // Workflows
 // ==========================================
+
+export const DEFAULT_WORKFLOW_NAME = "TaskFlow Pro — Final Statuses";
+
+export const DEFAULT_WORKFLOW_STATUSES = [
+  { id: "st-backlog", name: "Backlog", category: "unstarted", color: "#6B7280", allowedTransitions: ["In Progress"] },
+  { id: "st-inprogress", name: "In Progress", category: "active", color: "#3B82F6", allowedTransitions: ["In Review", "Testing / QA", "Blocked", "On Hold"] },
+  { id: "st-inreview", name: "In Review", category: "active", color: "#A855F7", allowedTransitions: ["Testing / QA", "In Progress", "Blocked", "On Hold"] },
+  { id: "st-testingqa", name: "Testing / QA", category: "active", color: "#06B6D4", allowedTransitions: ["Done", "In Progress", "Blocked", "On Hold"], roleRestrictions: { Done: ["Manager", "Admin"] } },
+  { id: "st-blocked", name: "Blocked", category: "impediment", color: "#EF4444", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+  { id: "st-onhold", name: "On Hold", category: "impediment", color: "#F97316", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+  { id: "st-done", name: "Done", category: "completed", color: "#22C55E", allowedTransitions: ["In Progress"] },
+];
 
 export async function getProjectWorkflow(req: Request, res: Response) {
   const projectId = String(req.params.projectId);

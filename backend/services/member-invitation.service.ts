@@ -1,157 +1,211 @@
 import { createHash, randomBytes } from "crypto";
 import bcrypt from "bcrypt";
+import { IsNull } from "typeorm";
 import { AppDataSource } from "../config/data.source";
-import { User } from "../entities/user.entity";
+import { config } from "../config/config";
+import { MemberInvitation } from "../entities/member-invitation.entity";
 import { Organization } from "../entities/organization.entity";
-import { UserRole, UserStatus } from "../entities/user.entity";
+import { User, UserRole, UserStatus } from "../entities/user.entity";
+import { AppError } from "../errors/app.error";
+import { createAuthSession } from "./auth-session.service";
 import { sendInvitationEmail } from "./mail.service";
-
-const INVITATION_EXPIRY_HOURS = 48;
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export function createInvitationUrl(token: string): string {
+  const url = new URL(config.frontendUrl);
+  url.hash = `/accept-invitation?token=${encodeURIComponent(token)}`;
+  return url.toString();
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
 export async function inviteOrganizationMembers(
   organizationId: string,
-  members: Array<{
-    email: string;
-    role: UserRole.MANAGER | UserRole.TEAMMATE;
-  }>,
+  members: Array<{ email: string; role: UserRole }>,
 ) {
   const normalizedMembers = members.map((member) => ({
     email: member.email.trim().toLowerCase(),
     role: member.role || UserRole.TEAMMATE,
   }));
-
   const emails = normalizedMembers.map((member) => member.email);
 
   if (new Set(emails).size !== emails.length) {
-    throw new Error("Duplicate email addresses are not allowed");
-  }
-
-  const organizationRepo = AppDataSource.getRepository(Organization);
-  const userRepo = AppDataSource.getRepository(User);
-
-  const organization = await organizationRepo.findOneBy({
-    id: organizationId,
-  });
-
-  if (!organization) {
-    throw new Error("Organization not found");
-  }
-
-  const existingUsers = await userRepo
-    .createQueryBuilder("user")
-    .where("LOWER(user.email) IN (:...emails)", { emails })
-    .getMany();
-
-  const conflictingUsers = existingUsers.filter(
-    (user) =>
-      user.status !== UserStatus.PENDING ||
-      user.organizationId !== organizationId,
-  );
-
-  if (conflictingUsers.length > 0) {
-    throw new Error(
-      `These email addresses already exist or belong to another organization: ${conflictingUsers
-        .map((user) => user.email)
-        .join(", ")}`,
+    throw new AppError(
+      "Duplicate email addresses are not allowed.",
+      400,
+      "DUPLICATE_INVITATION_EMAIL",
     );
   }
 
-  const invitations = await Promise.all(
-    normalizedMembers.map(async (member) => {
-      const inviteToken = randomBytes(32).toString("hex");
-      const inviteTokenHash = hashToken(inviteToken);
-      const inviteExpiresAt = new Date(
-        Date.now() + INVITATION_EXPIRY_HOURS * 60 * 60 * 1000,
-      );
+  const organization = await AppDataSource.getRepository(Organization).findOne({
+    where: { id: organizationId },
+  });
+  if (!organization) {
+    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
+  }
 
-      return {
-        ...member,
-        inviteToken,
-        inviteTokenHash,
-        inviteExpiresAt,
-      };
-    }),
-  );
+  const results: Array<{ email: string; role: UserRole; emailSent: true }> = [];
+  for (const member of normalizedMembers) {
+    const rawToken = randomBytes(32).toString("hex");
+    const tokenHash = hashToken(rawToken);
+    const expiresAt = new Date(
+      Date.now() + config.invitationLifetimeHours * 60 * 60 * 1000,
+    );
 
-  // Create or update pending user records atomically before sending emails
-  await AppDataSource.transaction(async (manager) => {
-    const repository = manager.getRepository(User);
+    let createdUser = false;
+    let previousUserState: Pick<
+      User,
+      | "email"
+      | "fullName"
+      | "passwordHash"
+      | "organizationId"
+      | "role"
+      | "status"
+      | "inviteTokenHash"
+      | "inviteExpiresAt"
+    > | null = null;
+    let invitationId: string | null = null;
 
-    for (const invitation of invitations) {
-      const existingPending = await repository
-        .createQueryBuilder("user")
-        .setLock("pessimistic_write")
-        .where("LOWER(user.email) = :email", { email: invitation.email })
-        .getOne();
+    try {
+      await AppDataSource.transaction(async (manager) => {
+        const users = manager.getRepository(User);
+        const user = await users
+          .createQueryBuilder("user")
+          .setLock("pessimistic_write")
+          .where("LOWER(user.email) = :email", { email: member.email })
+          .getOne();
 
-      if (existingPending) {
         if (
-          existingPending.status !== UserStatus.PENDING ||
-          existingPending.organizationId !== organizationId
+          user &&
+          (user.status !== UserStatus.PENDING ||
+            user.organizationId !== organizationId)
         ) {
-          throw new Error(
-            `These email addresses already exist or belong to another organization: ${invitation.email}`,
+          throw new AppError(
+            "An account with this email cannot be invited.",
+            409,
+            "INVITATION_EMAIL_UNAVAILABLE",
           );
         }
-        existingPending.organizationId = organizationId;
-        existingPending.role = invitation.role;
-        existingPending.passwordHash = null;
-        existingPending.inviteTokenHash = invitation.inviteTokenHash;
-        existingPending.inviteExpiresAt = invitation.inviteExpiresAt;
-        existingPending.status = UserStatus.PENDING;
-        await repository.save(existingPending);
-      } else {
-        const user = repository.create({
-          email: invitation.email,
-          fullName: null,
-          organizationId,
-          role: invitation.role,
-          passwordHash: null,
-          status: UserStatus.PENDING,
-          inviteTokenHash: invitation.inviteTokenHash,
-          inviteExpiresAt: invitation.inviteExpiresAt,
-        });
-        await repository.save(user);
+
+        let invitedUser: User;
+        if (user) {
+          invitedUser = user;
+          previousUserState = {
+            email: user.email,
+            fullName: user.fullName,
+            passwordHash: user.passwordHash,
+            organizationId: user.organizationId,
+            role: user.role,
+            status: user.status,
+            inviteTokenHash: user.inviteTokenHash,
+            inviteExpiresAt: user.inviteExpiresAt,
+          };
+          invitedUser.email = member.email;
+          invitedUser.role = member.role;
+          invitedUser.passwordHash = null;
+          invitedUser.status = UserStatus.PENDING;
+          invitedUser.inviteTokenHash = null;
+          invitedUser.inviteExpiresAt = null;
+          await users.save(invitedUser);
+        } else {
+          invitedUser = await users.save(
+            users.create({
+              email: member.email,
+              fullName: null,
+              organizationId,
+              role: member.role,
+              passwordHash: null,
+              status: UserStatus.PENDING,
+            }),
+          );
+          createdUser = true;
+        }
+
+        const invitations = manager.getRepository(MemberInvitation);
+        await invitations.update(
+          {
+            userId: invitedUser.id,
+            consumedAt: IsNull(),
+            revokedAt: IsNull(),
+          },
+          { revokedAt: new Date() },
+        );
+
+        const invitation = await invitations.save(
+          invitations.create({
+            userId: invitedUser.id,
+            organizationId,
+            email: member.email,
+            role: member.role,
+            tokenHash,
+            expiresAt,
+            consumedAt: null,
+            revokedAt: null,
+          }),
+        );
+        invitationId = invitation.id;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new AppError(
+          "An account with this email cannot be invited.",
+          409,
+          "INVITATION_EMAIL_UNAVAILABLE",
+        );
       }
+      throw error;
     }
-  });
 
-  // Send each user their invitation details
-  const results = await Promise.all(
-    invitations.map(async (invitation) => {
-      try {
-        await sendInvitationEmail({
-          email: invitation.email,
-          organizationName: organization.name,
-          role: invitation.role,
-          invitationToken: invitation.inviteToken,
-        });
+    try {
+      await sendInvitationEmail({
+        email: member.email,
+        organizationName: organization.name,
+        role: member.role,
+        invitationUrl: createInvitationUrl(rawToken),
+        expiresInHours: config.invitationLifetimeHours,
+      });
+    } catch (deliveryError) {
+      await AppDataSource.transaction(async (manager) => {
+        const invitations = manager.getRepository(MemberInvitation);
+        if (invitationId) {
+          await invitations.delete({ id: invitationId });
+        }
 
-        return {
-          email: invitation.email,
-          role: invitation.role,
-          token: invitation.inviteToken,
-          emailSent: true,
-        };
-      } catch {
-        // Never expose the temporary password in error responses or logs.
-        return {
-          email: invitation.email,
-          role: invitation.role,
-          token: invitation.inviteToken,
-          emailSent: false,
-          message: "User created, but the login email could not be submitted",
-        };
-      }
-    }),
-  );
+        const users = manager.getRepository(User);
+        const user = await users
+          .createQueryBuilder("user")
+          .setLock("pessimistic_write")
+          .where("LOWER(user.email) = :email", { email: member.email })
+          .andWhere("user.organization_id = :organizationId", {
+            organizationId,
+          })
+          .getOne();
+
+        if (user && createdUser) {
+          await users.delete({ id: user.id });
+        } else if (user && previousUserState) {
+          Object.assign(user, previousUserState);
+          await users.save(user);
+        }
+      });
+      throw deliveryError;
+    }
+
+    results.push({ email: member.email, role: member.role, emailSent: true });
+  }
 
   return {
-    message: "Member creation completed",
+    message: "Invitation emails submitted successfully.",
     invitations: results,
   };
 }
@@ -162,38 +216,98 @@ export async function acceptOrganizationInvitation(
   password: string,
 ) {
   const tokenHash = hashToken(token);
-  const passwordHash = await bcrypt.hash(password, 12);
+  const invitationRepository = AppDataSource.getRepository(MemberInvitation);
+  const candidate = await invitationRepository.findOne({
+    where: { tokenHash },
+  });
+
+  if (!candidate) {
+    throw new AppError(
+      "This invitation is invalid or no longer available.",
+      400,
+      "INVITATION_INVALID",
+    );
+  }
 
   return AppDataSource.transaction(async (manager) => {
-    const userRepo = manager.getRepository(User);
-    const user = await userRepo
+    const users = manager.getRepository(User);
+    const user = await users
       .createQueryBuilder("user")
       .setLock("pessimistic_write")
-      .where("user.invite_token_hash = :tokenHash", { tokenHash })
+      .where("user.id = :userId", { userId: candidate.userId })
+      .getOne();
+    const invitations = manager.getRepository(MemberInvitation);
+    const invitation = await invitations
+      .createQueryBuilder("invitation")
+      .setLock("pessimistic_write")
+      .where("invitation.token_hash = :tokenHash", { tokenHash })
       .getOne();
 
-    if (!user || !user.inviteExpiresAt) {
-      throw new Error("Invalid invitation token");
+    if (!user || !invitation) {
+      throw new AppError(
+        "This invitation is invalid or no longer available.",
+        400,
+        "INVITATION_INVALID",
+      );
+    }
+    if (invitation.revokedAt) {
+      throw new AppError(
+        "This invitation is invalid or no longer available.",
+        400,
+        "INVITATION_REVOKED",
+      );
+    }
+    if (invitation.consumedAt) {
+      throw new AppError(
+        "This invitation is invalid or no longer available.",
+        400,
+        "INVITATION_CONSUMED",
+      );
+    }
+    if (invitation.expiresAt.getTime() <= Date.now()) {
+      throw new AppError(
+        "This invitation is invalid or no longer available.",
+        400,
+        "INVITATION_EXPIRED",
+      );
     }
 
-    if (user.inviteExpiresAt.getTime() <= Date.now()) {
-      throw new Error("Invitation has expired");
-    }
-
-    if (user.status !== UserStatus.PENDING) {
-      throw new Error("Invitation has already been accepted or is invalid");
+    const organization = await manager
+      .getRepository(Organization)
+      .findOne({ where: { id: invitation.organizationId } });
+    if (
+      user.status !== UserStatus.PENDING ||
+      user.organizationId !== invitation.organizationId ||
+      user.role !== invitation.role ||
+      user.email.trim().toLowerCase() !== invitation.email.trim().toLowerCase() ||
+      !organization
+    ) {
+      throw new AppError(
+        "This invitation is invalid or no longer available.",
+        400,
+        "INVITATION_INVALID",
+      );
     }
 
     user.fullName = fullName.trim();
-    user.passwordHash = passwordHash;
+    user.passwordHash = await bcrypt.hash(password, 12);
     user.status = UserStatus.ACTIVE;
     user.inviteTokenHash = null;
     user.inviteExpiresAt = null;
+    await users.save(user);
 
-    await userRepo.save(user);
+    invitation.consumedAt = new Date();
+    await invitations.save(invitation);
+
+    const session = await createAuthSession(manager, {
+      id: user.id,
+      role: user.role,
+      organizationId: invitation.organizationId,
+    });
 
     return {
-      message: "Invitation accepted successfully. You can now log in.",
+      session,
+      message: "Invitation accepted successfully.",
       user: {
         id: user.id,
         email: user.email,

@@ -34,7 +34,9 @@ import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { LabelPicker } from '../ui/LabelPicker';
+import { findWorkflowStatus, getStatusNameForTask, isWorkflowStatusComplete } from '../../domain/workflow';
 
 interface TaskDetailsContentProps {
   task: Task;
@@ -46,6 +48,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     tasks,
     updateTask,
     deleteTask,
+    uploadTaskAttachments,
     addSubtask,
     toggleSubtask,
     deleteSubtask,
@@ -64,7 +67,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     showToast,
   } = useApp();
 
-  const [snapshotVersion] = useState<number>(task.version || 1);
+  const [snapshotVersion, setSnapshotVersion] = useState<number>(task.version || 1);
   const [activeTab, setActiveTab] = useState<string>(
     task.type === WORK_ITEM_TYPES.SUBTASK ? 'dependencies' : 'subtasks'
   );
@@ -88,20 +91,15 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     title: task.title || '',
     description: task.description || '',
     type: (task.type || WORK_ITEM_TYPES.TASK) as WorkItemType,
-    status: task.status || 'Backlog',
+    status: task.status || '',
     priority: (task.priority || '') as Priority | '',
     assigneeId: task.assigneeId || '',
     assigneeIds: (task.assigneeIds && task.assigneeIds.length > 0)
       ? [...task.assigneeIds]
       : (task.assigneeId ? [task.assigneeId] : []),
     labels: task.labels ? [...task.labels] : [],
-    dueDate: task.dueDate || '',
-    plannedStartDate: task.plannedStartDate || '',
-    plannedDurationWorkingDays:
-      task.plannedDurationWorkingDays == null
-        ? ''
-        : String(task.plannedDurationWorkingDays),
-    isSchedulePinned: Boolean(task.isSchedulePinned),
+    startDate: toDateInputValue(task.startDate),
+    dueDate: toDateInputValue(task.dueDate),
     estimateHours: task.estimateHours !== null && task.estimateHours !== undefined ? task.estimateHours : '',
     parentId: task.parentId || '',
     businessGoal: task.businessGoal || '',
@@ -116,12 +114,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
   const [draft, setDraft] = useState(initialDraft);
 
-  useEffect(() => {
-    setDraft(initialDraft);
-  }, [initialDraft]);
-
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -167,10 +162,8 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       draft.type !== initialDraft.type ||
       draft.status !== initialDraft.status ||
       draft.priority !== initialDraft.priority ||
+      draft.startDate !== initialDraft.startDate ||
       draft.dueDate !== initialDraft.dueDate ||
-      draft.plannedStartDate !== initialDraft.plannedStartDate ||
-      draft.plannedDurationWorkingDays !== initialDraft.plannedDurationWorkingDays ||
-      draft.isSchedulePinned !== initialDraft.isSchedulePinned ||
       String(draft.estimateHours) !== String(initialDraft.estimateHours) ||
       draft.parentId !== initialDraft.parentId ||
       JSON.stringify(draft.assigneeIds) !== JSON.stringify(initialDraft.assigneeIds) ||
@@ -186,6 +179,20 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     );
   }, [draft, initialDraft]);
 
+  useEffect(() => {
+    if (!isDirty) {
+      setDraft(initialDraft);
+      setSnapshotVersion(task.version || 1);
+    }
+  }, [initialDraft, isDirty, task.version]);
+
+  const dateRangeError =
+    draft.startDate &&
+    draft.dueDate &&
+    draft.dueDate <= draft.startDate
+      ? 'Due date must be later than start date.'
+      : null;
+
   // Live timer tick
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -200,7 +207,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }, [isTimerRunning]);
 
   const currentType = draft.type;
-  const slaInfo = evaluateTaskSla(task);
+  const slaInfo = evaluateTaskSla(task, undefined, currentWorkflow);
   const slaDeadline = task.sla?.deadline ? new Date(task.sla.deadline) : null;
   const handleEscalate = async () => {
     if (isEscalating || slaInfo.isEscalated) return;
@@ -213,8 +220,8 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       setIsEscalating(false);
     }
   };
-  const isBlocked = isTaskBlocked(task, tasks);
-  const blockingTasks = getBlockingTasks(task, tasks);
+  const isBlocked = isTaskBlocked(task, tasks, currentWorkflow);
+  const blockingTasks = getBlockingTasks(task, tasks, currentWorkflow);
   const predecessors = getPredecessorTasks(task, tasks);
   const successors = getSuccessorTasks(task, tasks);
 
@@ -226,7 +233,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   // Subtasks list
   const childSubtasks = tasks.filter((t) => t.parentId === task.id && t.type === WORK_ITEM_TYPES.SUBTASK);
   const subtasksList = childSubtasks.length > 0 ? childSubtasks : (task.subtasks || []);
-  const completedSubtasks = subtasksList.filter((s: any) => s.status === 'Done' || s.completed).length;
+  const completedSubtasks = subtasksList.filter(
+    (subtask: any) =>
+      (subtask.status && isWorkflowStatusComplete(currentWorkflow, subtask.status)) ||
+      (!subtask.status && subtask.completed),
+  ).length;
   const subtaskProgress =
     subtasksList.length > 0 ? Math.round((completedSubtasks / subtasksList.length) * 100) : 0;
 
@@ -249,9 +260,18 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   function handleToggleLabel(labelName: string) {
     setDraft((prev) => ({
       ...prev,
-      labels: prev.labels.includes(labelName)
-        ? prev.labels.filter((l) => l !== labelName)
-        : [...prev.labels, labelName],
+      labels: prev.labels.includes(labelName) ? [] : [labelName],
+    }));
+  }
+
+  function handleDraftTypeChange(value: string) {
+    const nextType = value as WorkItemType;
+    const keepsParent = getEligibleParents(nextType, task.id, tasks, task.projectId)
+      .some((parent) => parent.id === draft.parentId);
+    setDraft((prev) => ({
+      ...prev,
+      type: nextType,
+      parentId: keepsParent ? prev.parentId : '',
     }));
   }
 
@@ -277,6 +297,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       }
     }
 
+    if (dateRangeError) {
+      showToast(dateRangeError, 'error');
+      return;
+    }
+
     setIsSaving(true);
     try {
       const allAssignees = draft.assigneeIds.length > 0
@@ -294,39 +319,30 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         assigneeId: allAssignees[0] || null,
         assigneeIds: allAssignees,
         labels: draft.labels,
+        startDate: draft.startDate || null,
+        dueDate: draft.dueDate || null,
         estimateHours: draft.estimateHours !== '' ? Number(draft.estimateHours) : null,
         parentId: draft.parentId || null,
-        businessGoal: draft.businessGoal,
-        successCriteria: draft.successCriteria,
-        acceptanceCriteria: draft.acceptanceCriteria,
-        severity: draft.severity,
-        stepsToReproduce: draft.stepsToReproduce,
-        expectedBehavior: draft.expectedBehavior,
-        actualBehavior: draft.actualBehavior,
-        environment: draft.environment,
       };
-      if (draft.dueDate !== initialDraft.dueDate) {
-        updates.dueDate = draft.dueDate || null;
-      }
-      if (draft.plannedStartDate !== initialDraft.plannedStartDate) {
-        updates.plannedStartDate = draft.plannedStartDate || null;
-      }
-      if (
-        draft.plannedDurationWorkingDays !==
-        initialDraft.plannedDurationWorkingDays
-      ) {
-        updates.plannedDurationWorkingDays =
-          draft.plannedDurationWorkingDays === ''
-            ? null
-            : Number(draft.plannedDurationWorkingDays);
-      }
-      if (draft.isSchedulePinned !== initialDraft.isSchedulePinned) {
-        updates.isSchedulePinned = draft.isSchedulePinned;
+      if (draft.type === WORK_ITEM_TYPES.EPIC) {
+        updates.businessGoal = draft.businessGoal;
+        updates.successCriteria = draft.successCriteria;
+      } else if (draft.type === WORK_ITEM_TYPES.STORY) {
+        updates.acceptanceCriteria = draft.acceptanceCriteria;
+      } else if (draft.type === WORK_ITEM_TYPES.BUG) {
+        updates.severity = draft.severity;
+        updates.stepsToReproduce = draft.stepsToReproduce;
+        updates.expectedBehavior = draft.expectedBehavior;
+        updates.actualBehavior = draft.actualBehavior;
+        updates.environment = draft.environment;
       }
 
       const result = await updateTask(task.id, updates, snapshotVersion);
+      if (result?.conflict) return;
       if (result && !result.success && result.reason) {
         showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
+      } else if (result?.success && result.task?.version) {
+        setSnapshotVersion(result.task.version);
       }
     } catch (err: any) {
       showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
@@ -348,11 +364,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     }
   }
 
-  function handleAddSubtaskSubmit(e: React.FormEvent) {
+  async function handleAddSubtaskSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newSubtaskTitle.trim()) return;
-    addSubtask(task.id, newSubtaskTitle.trim());
-    setNewSubtaskTitle('');
+    if (await addSubtask(task.id, newSubtaskTitle.trim())) {
+      setNewSubtaskTitle('');
+    }
   }
 
   async function handleAddCommentSubmit(e: React.FormEvent) {
@@ -423,17 +440,19 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => simulateExternalTaskEdit(task.id)}
-            className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
-            title="Simulate remote edit (tests conflict collision modal)"
-          >
-            <Zap size={15} />
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => simulateExternalTaskEdit(task.id)}
+              className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
+              title="Simulate remote edit (tests conflict collision modal)"
+            >
+              <Zap size={15} />
+            </button>
+          )}
 
           {currentUser.role !== 'Teammate' && (
             <button
-              onClick={() => deleteTask(task.id)}
+              onClick={() => setConfirmDeleteOpen(true)}
               className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-surface-hover transition-colors"
               title="Delete task"
             >
@@ -507,7 +526,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <ArrowUpRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
               </button>
             </div>
-            <StatusBadge status={parentWorkItem.status} size="sm" />
+            <StatusBadge
+              status={parentWorkItem.status}
+              label={getStatusNameForTask(currentWorkflow, parentWorkItem)}
+              color={findWorkflowStatus(currentWorkflow, parentWorkItem.status)?.color}
+              size="sm"
+            />
           </div>
         )}
 
@@ -518,7 +542,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <label className="text-[11px] text-text-muted block mb-1">Type</label>
             <select
               value={draft.type}
-              onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value as WorkItemType }))}
+              onChange={(e) => handleDraftTypeChange(e.target.value)}
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               {WORK_ITEM_TYPE_LIST.map((t) => (
@@ -533,7 +557,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
           <div>
             <label className="text-[11px] text-text-muted block mb-1">Status</label>
             <select
-              value={draft.status}
+              value={getStatusNameForTask(currentWorkflow, draft)}
               onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
@@ -542,6 +566,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                   {st.name}
                 </option>
               )) || <option value={draft.status}>{draft.status}</option>}
+              {!findWorkflowStatus(currentWorkflow, draft.status) && (
+                <option value={draft.status}>{draft.status || 'Unknown status'} (not in workflow)</option>
+              )}
             </select>
           </div>
 
@@ -554,10 +581,22 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               <option value="">No priority</option>
+              <option value="Urgent">Urgent</option>
               <option value="High">High</option>
               <option value="Medium">Medium</option>
               <option value="Low">Low</option>
             </select>
+          </div>
+
+          {/* Start Date */}
+          <div>
+            <label className="text-[11px] text-text-muted block mb-1">Start Date</label>
+            <input
+              type="date"
+              value={toDateInputValue(draft.startDate)}
+              onChange={(e) => setDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
+            />
           </div>
 
           {/* Due Date */}
@@ -565,50 +604,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <label className="text-[11px] text-text-muted block mb-1">Due Date</label>
             <input
               type="date"
-              value={draft.dueDate}
+              value={toDateInputValue(draft.dueDate)}
               onChange={(e) => setDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
             />
+            {dateRangeError && (
+              <p className="mt-1 text-[10px] text-rose-400">{dateRangeError}</p>
+            )}
           </div>
-
-          <div>
-            <label className="text-[11px] text-text-muted block mb-1">Planned Start</label>
-            <input
-              type="date"
-              value={draft.plannedStartDate}
-              onChange={(e) => setDraft((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
-              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="text-[11px] text-text-muted block mb-1">Duration (working days)</label>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={draft.plannedDurationWorkingDays}
-              onChange={(e) =>
-                setDraft((prev) => ({
-                  ...prev,
-                  plannedDurationWorkingDays: e.target.value,
-                }))
-              }
-              placeholder="e.g. 3"
-              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-[11px] text-text-muted">
-            <input
-              type="checkbox"
-              checked={draft.isSchedulePinned}
-              onChange={(e) =>
-                setDraft((prev) => ({ ...prev, isSchedulePinned: e.target.checked }))
-              }
-            />
-            Pin schedule against automatic moves
-          </label>
 
           {/* Estimated Hours */}
           <div>
@@ -758,7 +761,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                         <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
                         <span className="truncate">{child.title}</span>
                       </div>
-                      <StatusBadge status={child.status} size="sm" />
+                      <StatusBadge
+                        status={child.status}
+                        label={getStatusNameForTask(currentWorkflow, child)}
+                        color={findWorkflowStatus(currentWorkflow, child.status)?.color}
+                        size="sm"
+                      />
                     </div>
                   ))}
                 </div>
@@ -868,6 +876,17 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         <TaskAttachments
           attachments={task.attachments || []}
           onChange={(newAtts) => updateTask(task.id, { attachments: newAtts }, snapshotVersion)}
+          onFilesChange={async (files) => {
+            if (!files || files.length === 0) return;
+            if (isPersistedWorkItemId(task.id)) {
+              try {
+                const uploaded = await uploadTaskAttachments(task.id, files);
+                showToast(`Successfully uploaded ${uploaded.length} attachment(s)`, 'success');
+              } catch (err: any) {
+                showToast(toUserFriendlyErrorMessage(err, 'Failed to upload attachments to server'), 'error');
+              }
+            }
+          }}
         />
 
         {/* SLA & Escalation section */}
@@ -960,7 +979,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
 
               <div className="space-y-1.5">
                 {subtasksList.map((sub: any) => {
-                  const isDone = sub.status === 'Done' || sub.completed;
+                  const isDone = sub.status
+                    ? isWorkflowStatusComplete(currentWorkflow, sub.status)
+                    : sub.completed;
                   return (
                     <div
                       key={sub.id}
@@ -1033,7 +1054,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <WorkItemTypeBadge type={p.type} size="sm" showLabel={false} />
-                          <StatusBadge status={p.status} size="sm" />
+                          <StatusBadge
+                            status={p.status}
+                            label={getStatusNameForTask(currentWorkflow, p)}
+                            color={findWorkflowStatus(currentWorkflow, p.status)?.color}
+                            size="sm"
+                          />
                           <span className="font-medium text-text-primary truncate">
                             {p.title}
                           </span>
@@ -1066,7 +1092,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <WorkItemTypeBadge type={s.type} size="sm" showLabel={false} />
-                          <StatusBadge status={s.status} size="sm" />
+                          <StatusBadge
+                            status={s.status}
+                            label={getStatusNameForTask(currentWorkflow, s)}
+                            color={findWorkflowStatus(currentWorkflow, s.status)?.color}
+                            size="sm"
+                          />
                           <span className="font-medium text-text-primary truncate">
                             {s.title}
                           </span>
@@ -1399,6 +1430,31 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             }}
           >
             Discard & Close
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        isOpen={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        title="Delete Work Item"
+        description={`Are you sure you want to delete "${task.title}"? This action cannot be undone.`}
+        maxWidth="max-w-md"
+      >
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+          <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => {
+              setConfirmDeleteOpen(false);
+              deleteTask(task.id);
+              onClose();
+            }}
+          >
+            Delete
           </Button>
         </div>
       </Dialog>

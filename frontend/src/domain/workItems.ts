@@ -3,7 +3,7 @@
  * Exactly 5 unified types: Epic, Story, Task, Subtask, Bug.
  */
 
-import { WorkItemType, BugSeverity } from '../types';
+import { WorkItemType, BugSeverity, Task } from '../types';
 
 export const WORK_ITEM_TYPES = {
   EPIC: 'Epic' as const,
@@ -24,6 +24,13 @@ export const WORK_ITEM_TYPE_LIST: WorkItemType[] = [
 export const BUG_SEVERITIES: BugSeverity[] = ['Low', 'Medium', 'High', 'Critical'];
 
 export const DEFAULT_WORK_ITEM_TYPE: WorkItemType = WORK_ITEM_TYPES.TASK;
+
+export function getWorkItemVersion(task: Pick<Task, 'version'>): number | undefined {
+  const { version } = task;
+  return typeof version === 'number' && Number.isInteger(version) && version >= 1
+    ? version
+    : undefined;
+}
 
 /**
  * Strips stale type-specific properties when creating or editing a work item.

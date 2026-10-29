@@ -44,7 +44,7 @@ export type DefaultTaskStatus =
 
 export type TaskStatus = DefaultTaskStatus | string;
 
-export type Priority = 'Low' | 'Medium' | 'High';
+export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
 export type BugSeverity = 'Low' | 'Medium' | 'High' | 'Critical';
 
@@ -129,17 +129,14 @@ export interface Task {
   creatorId?: string;
   parentId?: string | null;
   startDate?: string | null;
-  plannedStartDate?: string | null;
-  dueDate?: string | null;
   plannedDurationWorkingDays?: number | null;
-  isSchedulePinned?: boolean;
+  dueDate?: string | null;
   estimatedHours?: number | null;
   estimateHours?: number | null;
   actualHours?: number;
   tags?: string[];
   order?: number;
   dependencies?: string[];
-  dependencyIds?: string[];
   subtasks?: EmbeddedSubtask[];
   comments?: TaskComment[];
   timeEntries?: TimeEntry[];
@@ -196,8 +193,8 @@ export interface Label {
 export interface WorkflowStatus {
   id: string;
   name: TaskStatus;
-  category?: 'backlog' | 'active' | 'done' | string;
-  color: string;
+  category?: string;
+  color?: string;
   allowedTransitions?: string[];
   roleRestrictions?: Record<string, string[]>;
 }
@@ -205,9 +202,9 @@ export interface WorkflowStatus {
 export interface Workflow {
   id: string;
   name: string;
+  projectId?: string;
   description?: string;
   statuses: WorkflowStatus[];
-  [key: string]: any;
 }
 
 export interface ProjectSection {
@@ -299,10 +296,11 @@ export interface AppContextValue {
   currentUser: User;
   currentCompany: Company | null;
   registerUser: (userData: { name: string; email: string }) => User;
+  register?: (params: { name: string; email: string; password: string; companyName?: string }) => Promise<boolean>;
   completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
   finishOnboarding: () => void;
   projects: Project[];
-  createProject: (projectData: Partial<Project>) => Project | null;
+  createProject: (projectData: Partial<Project>) => Promise<Project | null>;
   updateProject: (projectId: string, updates: Partial<Project>) => boolean;
   renameProject: (projectId: string, name: string) => boolean;
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
@@ -319,6 +317,8 @@ export interface AppContextValue {
   workflows: Workflow[];
   currentWorkflow?: Workflow;
   setWorkflows: (workflows: Workflow[] | ((prev: Workflow[]) => Workflow[])) => void;
+  currentWorkflowLoading?: boolean;
+  currentWorkflowError?: string | null;
   tasks: Task[];
   projectTasks: Task[];
   myTasks: Task[];
@@ -328,16 +328,17 @@ export interface AppContextValue {
     reason?: string;
   }>;
   uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
-  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string }> | { success: boolean; reason?: string };
+  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }>;
   deleteTask: (taskId: string) => void;
-  changeTaskStatus: (taskId: string, newStatus: string) => boolean;
+  changeTaskStatus: (taskId: string, newStatus: string) => Promise<boolean>;
   requestReschedule: (taskId: string, newDueDate: string) => void;
   confirmRescheduleImpact: () => void;
   addDependency: (predecessorId: string, successorId: string) => any;
   removeDependency: (predecessorId: string, successorId: string) => void;
-  addSubtask: (taskId: string, title: string) => void;
-  toggleSubtask: (taskId: string, subtaskId: string) => void;
-  deleteSubtask: (taskId: string, subtaskId: string) => void;
+  addSubtask: (taskId: string, title: string, assigneeId?: string | null) => Promise<boolean>;
+  toggleSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  loadCrossProjectTasks?: () => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
   pendingSignupPassword?: string;
   setPendingSignupPassword?: (pwd: string) => void;
@@ -379,5 +380,6 @@ export interface AppContextValue {
   isLoadingProjectData?: boolean;
   projectDataError?: string | null;
   reloadProjectData?: () => Promise<void>;
+  reloadWorkItem: (workItemId: string) => Promise<Task>;
   [key: string]: any;
 }

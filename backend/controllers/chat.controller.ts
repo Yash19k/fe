@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import Joi from "joi";
 import { ChatConversationType } from "../entities/chat-conversation.entity";
+import { AppError } from "../errors/app.error";
 import {
   addMember,
   createConversation,
@@ -33,7 +34,7 @@ const messageQuerySchema = Joi.object({
 });
 
 function actor(req: Request) {
-  if (!req.user) throw new Error("Authenticated user context is missing.");
+  if (!req.user) throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
   return req.user;
 }
 
@@ -64,7 +65,7 @@ export async function createConversationController(req: Request, res: Response) 
   const { error, value } = createSchema.validate(req.body, { abortEarly: false, stripUnknown: true });
   if (error) return validationError(res, error);
   const conversation = await createConversation(actor(req), value);
-  return res.status(200).json({ success: true, data: conversation });
+  return res.status(201).json({ success: true, data: conversation });
 }
 
 export async function listConversationsController(req: Request, res: Response) {

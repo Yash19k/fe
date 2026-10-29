@@ -4,6 +4,11 @@ import { useApp } from '../../hooks/useApp';
 import { StatusBadge, PriorityBadge, WorkItemTypeBadge } from '../ui/Badge';
 import { Avatar } from '../ui/Avatar';
 import { canUserAccessProject } from '../../domain/permissions';
+import {
+  findWorkflowStatus,
+  getStatusNameForTask,
+  getWorkflowForProject,
+} from '../../domain/workflow';
 
 export interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -11,7 +16,7 @@ export interface GlobalSearchModalProps {
 }
 
 export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
-  const { tasks, projects, allUsers, currentUser, openTaskDrawer, navigate } = useApp();
+  const { tasks, projects, workflows, allUsers, currentUser, openTaskDrawer, navigate } = useApp();
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -34,7 +39,7 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
 
   if (!isOpen) return null;
 
-  const accessibleProjects = projects.filter((p) => canUserAccessProject(p, currentUser.id));
+  const accessibleProjects = projects.filter((p) => canUserAccessProject(p, currentUser?.id, currentUser?.role));
   const accessibleProjectIds = new Set(accessibleProjects.map((p) => p.id));
   const accessibleTasks = tasks.filter((t) => accessibleProjectIds.has(t.projectId));
 
@@ -85,7 +90,7 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search tasks, projects, members, or tags... (Esc to close)"
-            className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+            className="global-search-input w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
           />
           {query && (
             <button
@@ -165,7 +170,12 @@ export function GlobalSearchModal({ isOpen, onClose }: GlobalSearchModalProps) {
                   >
                     <div className="flex items-center gap-2 min-w-0 pr-2">
                       <WorkItemTypeBadge type={t.type} size="sm" />
-                      <StatusBadge status={t.status} size="sm" />
+                      <StatusBadge
+                        status={t.status}
+                        label={getStatusNameForTask(getWorkflowForProject(workflows, t.projectId), t)}
+                        color={findWorkflowStatus(getWorkflowForProject(workflows, t.projectId), t.status)?.color}
+                        size="sm"
+                      />
                       <span className="text-sm font-medium text-text-primary truncate">
                         {t.title}
                       </span>

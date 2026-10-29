@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { canUserAccessProject } from '../../domain/permissions';
+import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
 
 interface NavItem {
   id: string;
@@ -47,10 +48,11 @@ export function WorkspaceSidebar({
     currentUser,
     activeRoute,
     myTasks,
+    workflows,
     navigate,
   } = useApp();
 
-  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser.id));
+  const visibleProjects = projects.filter((proj) => canUserAccessProject(proj, currentUser?.id, currentUser?.role));
 
   const navItems: NavItem[] = [
     { id: 'home', label: 'Workspace Home', icon: LayoutDashboard, route: '/' },
@@ -59,7 +61,12 @@ export function WorkspaceSidebar({
       label: 'My Tasks',
       icon: CheckSquare,
       route: '/my-tasks',
-      badge: myTasks.filter((t) => t.status !== 'Done').length,
+      badge: myTasks.filter((task) =>
+        !isWorkflowStatusComplete(
+          getWorkflowForProject(workflows, task.projectId),
+          task.status,
+        ),
+      ).length,
     },
     { id: 'projects', label: 'Projects', icon: FolderKanban, route: '/projects' },
     { id: 'chat', label: 'Chat', icon: MessageCircle, route: '/chat' },

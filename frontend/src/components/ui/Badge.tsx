@@ -100,10 +100,12 @@ export function WorkItemTypeBadge({
 
 export interface StatusBadgeProps {
   status?: TaskStatus | string;
+  label?: string;
+  color?: string;
   size?: 'sm' | 'md';
 }
 
-export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
+export function StatusBadge({ status, label, color, size = 'sm' }: StatusBadgeProps) {
   const configs: Record<
     string,
     { label: string; bg: string; text: string; border: string; icon: LucideIcon }
@@ -166,8 +168,21 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
     },
   };
 
-  const key = status || 'Backlog';
-  const c = configs[key] || configs['Backlog'];
+  const key = status || '';
+  const c = color ? {
+    label: label || status || 'Unknown status',
+    bg: 'bg-surface-elevated',
+    text: 'text-text-secondary',
+    border: 'border-border',
+    icon: Circle,
+  } : configs[key] || {
+    label: label || status || 'Unknown status',
+    bg: 'bg-surface-elevated',
+    text: 'text-text-secondary',
+    border: 'border-border',
+    icon: Circle,
+  };
+  const statusLabel = label || c.label;
   const Icon = c.icon;
   const isSm = size === 'sm';
 
@@ -176,9 +191,18 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
       className={`inline-flex items-center gap-1.5 font-medium border rounded-md whitespace-nowrap ${c.bg} ${c.text} ${c.border} ${
         isSm ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
       }`}
+      style={color ? { borderColor: color } : undefined}
     >
-      <Icon size={isSm ? 12 : 14} strokeWidth={2} />
-      <span>{c.label}</span>
+      {color ? (
+        <span
+          className="w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+          aria-hidden="true"
+        />
+      ) : (
+        <Icon size={isSm ? 12 : 14} strokeWidth={2} />
+      )}
+      <span>{statusLabel}</span>
     </span>
   );
 }
@@ -193,6 +217,13 @@ export function PriorityBadge({ priority, size = 'sm' }: PriorityBadgeProps) {
     string,
     { label: string; bg: string; text: string; border: string; icon: LucideIcon }
   > = {
+    'Urgent': {
+      label: 'Urgent',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger-border',
+      icon: AlertTriangle,
+    },
     'High': {
       label: 'High',
       bg: 'bg-status-danger-bg',

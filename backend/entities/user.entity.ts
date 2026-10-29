@@ -18,6 +18,7 @@ import { WorkItemAssignee } from "./work.item-assignee.entity";
 import { ProjectMember } from "./project.member.entity";
 import { UserSession } from "./user.session.entity";
 import { Sprint } from "./sprint.entities";
+import { PasswordResetToken } from "./password-reset-token.entity";
 
 export enum UserRole {
   ADMIN = "ADMIN",
@@ -109,4 +110,7 @@ export class User {
   sessions!: UserSession[];
   @OneToMany(() => Sprint, (sprint) => sprint.createdBy)
   createdSprints: Sprint[];
+
+  @OneToMany(() => PasswordResetToken, (token) => token.user)
+  passwordResetTokens!: PasswordResetToken[];
 }

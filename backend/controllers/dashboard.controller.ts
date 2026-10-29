@@ -99,24 +99,24 @@ export const getProjectDashboard = async (
       .createQueryBuilder("wi")
       .where("wi.projectId = :projectId", { projectId });
 
-  // Summary metrics.
-  const totalItems = await baseQuery().getCount();
+  // Summary metrics combined into a single query to eliminate N+1 roundtrips.
+  const summaryRaw = await baseQuery()
+    .select("COUNT(*)", "totalItems")
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status = :done)",
+      "completedItems"
+    )
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status != :done AND wi.dueDate IS NOT NULL AND wi.dueDate < NOW())",
+      "overdueItems"
+    )
+    .setParameter("done", WorkItemStatus.DONE)
+    .getRawOne();
 
-  const completedItems = await baseQuery()
-    .andWhere("wi.status = :status", {
-      status: WorkItemStatus.DONE,
-    })
-    .getCount();
-
+  const totalItems = Number(summaryRaw?.totalItems ?? 0);
+  const completedItems = Number(summaryRaw?.completedItems ?? 0);
   const incompleteItems = totalItems - completedItems;
-
-  const overdueItems = await baseQuery()
-    .andWhere("wi.status != :done", {
-      done: WorkItemStatus.DONE,
-    })
-    .andWhere("wi.dueDate IS NOT NULL")
-    .andWhere("wi.dueDate < NOW()")
-    .getCount();
+  const overdueItems = Number(summaryRaw?.overdueItems ?? 0);
 
   // Work-item type distribution.
   const typeRows = await baseQuery()
@@ -289,33 +289,41 @@ export const getPersonalDashboard = async (
       .innerJoin("wi.assignments", "assignee", "assignee.userId = :userId", { userId })
       .where("wi.organizationId = :organizationId", { organizationId });
 
-  const total = await userTasksQuery().getCount();
-
-  const completed = await userTasksQuery()
-    .andWhere("wi.status = :doneStatus", { doneStatus: WorkItemStatus.DONE })
-    .getCount();
-
-  const active = total - completed;
-
-  const overdue = await userTasksQuery()
-    .andWhere("wi.status != :doneStatus", { doneStatus: WorkItemStatus.DONE })
-    .andWhere("wi.dueDate IS NOT NULL")
-    .andWhere("wi.dueDate < NOW()")
-    .getCount();
-
   const fiveDaysFromNow = new Date();
   fiveDaysFromNow.setDate(fiveDaysFromNow.getDate() + 5);
 
-  const dueSoon = await userTasksQuery()
-    .andWhere("wi.status != :doneStatus", { doneStatus: WorkItemStatus.DONE })
-    .andWhere("wi.dueDate IS NOT NULL")
-    .andWhere("wi.dueDate >= NOW()")
-    .andWhere("wi.dueDate <= :fiveDays", { fiveDays: fiveDaysFromNow.toISOString() })
-    .getCount();
+  // Combine 5 separate count queries into a single query with conditional aggregation.
+  const summaryRaw = await userTasksQuery()
+    .select("COUNT(*)", "total")
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status = :doneStatus)",
+      "completed"
+    )
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status != :doneStatus AND wi.dueDate IS NOT NULL AND wi.dueDate < NOW())",
+      "overdue"
+    )
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status != :doneStatus AND wi.dueDate IS NOT NULL AND wi.dueDate >= NOW() AND wi.dueDate <= :fiveDays)",
+      "dueSoon"
+    )
+    .addSelect(
+      "COUNT(*) FILTER (WHERE wi.status = :blockedStatus)",
+      "blocked"
+    )
+    .setParameters({
+      doneStatus: WorkItemStatus.DONE,
+      blockedStatus: WorkItemStatus.BLOCKED,
+      fiveDays: fiveDaysFromNow.toISOString(),
+    })
+    .getRawOne();
 
-  const blocked = await userTasksQuery()
-    .andWhere("wi.status = :blockedStatus", { blockedStatus: WorkItemStatus.BLOCKED })
-    .getCount();
+  const total = Number(summaryRaw?.total ?? 0);
+  const completed = Number(summaryRaw?.completed ?? 0);
+  const active = total - completed;
+  const overdue = Number(summaryRaw?.overdue ?? 0);
+  const dueSoon = Number(summaryRaw?.dueSoon ?? 0);
+  const blocked = Number(summaryRaw?.blocked ?? 0);
 
   // Tasks requiring immediate attention (Overdue, Due Soon, or Blocked)
   const attentionItems = await userTasksQuery()
