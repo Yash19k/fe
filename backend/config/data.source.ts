@@ -7,6 +7,7 @@ import { AuditLog } from "../entities/audit.log.entity";
 import { ChatConversationMember } from "../entities/chat-conversation-member.entity";
 import { ChatConversation } from "../entities/chat-conversation.entity";
 import { ChatMessage } from "../entities/chat-message.entity";
+import { MemberInvitation } from "../entities/member-invitation.entity";
 import { Notification } from "../entities/notification.entity";
 import { Organization } from "../entities/organization.entity";
 import { OrganizationSla } from "../entities/organization.sla.entity";
@@ -34,6 +35,7 @@ const registeredEntities = [
   ChatConversationMember,
   ChatConversation,
   ChatMessage,
+  MemberInvitation,
   Notification,
   Organization,
   OrganizationSla,
@@ -76,7 +78,7 @@ export const AppDataSource = new DataSource({
 });
 
 export function assertRequiredEntityMetadata(): void {
-  const requiredEntities = [User, WorkItem, WorkItemRecurrence];
+  const requiredEntities = [User, WorkItem, WorkItemRecurrence, MemberInvitation];
   const missingEntities = requiredEntities.filter(
     (entity) => !AppDataSource.hasMetadata(entity),
   );
