@@ -62,6 +62,10 @@ __decorate([
     __metadata("design:type", Boolean)
 ], AuditLog.prototype, "isUndone", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "trusted_for_undo", type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], AuditLog.prototype, "trustedForUndo", void 0);
+__decorate([
     (0, typeorm_1.Column)({ name: "undone_at", type: "timestamptz", nullable: true }),
     __metadata("design:type", Object)
 ], AuditLog.prototype, "undoneAt", void 0);

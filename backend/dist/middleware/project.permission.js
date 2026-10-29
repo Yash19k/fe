@@ -5,6 +5,9 @@ const data_source_1 = require("../config/data.source");
 const project_entity_1 = require("../entities/project.entity");
 const user_entity_1 = require("../entities/user.entity");
 const work_item_entity_1 = require("../entities/work.item.entity");
+const whiteboard_entity_1 = require("../entities/whiteboard.entity");
+const audit_log_entity_1 = require("../entities/audit.log.entity");
+const sprint_entities_1 = require("../entities/sprint.entities");
 const project_member_entity_1 = require("../entities/project.member.entity");
 const app_error_1 = require("../errors/app.error");
 const permissions = {
@@ -83,31 +86,65 @@ const authorizeProjectPermission = async (req, action) => {
         }
         projectId = workItem.projectId;
     }
+    if (!projectId && req.params.whiteboardId) {
+        const whiteboard = await data_source_1.AppDataSource.getRepository(whiteboard_entity_1.Whiteboard).findOne({
+            where: { id: String(req.params.whiteboardId) },
+            select: { projectId: true },
+        });
+        if (!whiteboard) {
+            throw new app_error_1.AppError("Whiteboard not found.", 404, "WHITEBOARD_NOT_FOUND");
+        }
+        projectId = whiteboard.projectId;
+    }
+    if (!projectId && req.params.logId) {
+        const auditLog = await data_source_1.AppDataSource.getRepository(audit_log_entity_1.AuditLog).findOne({
+            where: { id: String(req.params.logId) },
+            select: { projectId: true },
+        });
+        if (auditLog?.projectId) {
+            projectId = auditLog.projectId;
+        }
+    }
+    if (!projectId && req.params.sprintId) {
+        const sprint = await data_source_1.AppDataSource.getRepository(sprint_entities_1.Sprint).findOne({
+            where: { id: String(req.params.sprintId) },
+            select: { projectId: true },
+        });
+        if (!sprint) {
+            throw new app_error_1.AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+        }
+        projectId = sprint.projectId;
+    }
     if (!userId) {
         throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
     }
     if (!projectId) {
         throw new app_error_1.AppError("Project ID is required.", 400, "PROJECT_ID_REQUIRED");
     }
-    const userRepo = data_source_1.AppDataSource.getRepository(user_entity_1.User);
-    const user = await userRepo.findOne({
-        where: { id: userId },
-        select: {
-            id: true,
-            organizationId: true,
-            role: true,
-        },
-    });
-    if (!user) {
-        throw new app_error_1.AppError("Authenticated user not found.", 401, "USER_NOT_FOUND");
+    let userRole = req.user?.role;
+    let organizationId = req.user?.organizationId;
+    if (!userRole || !organizationId) {
+        const user = await data_source_1.AppDataSource.getRepository(user_entity_1.User).findOne({
+            where: { id: userId },
+            select: {
+                id: true,
+                organizationId: true,
+                role: true,
+            },
+        });
+        if (!user) {
+            throw new app_error_1.AppError("Authenticated user not found.", 401, "USER_NOT_FOUND");
+        }
+        userRole = user.role;
+        organizationId = user.organizationId ?? undefined;
     }
-    if (!user.organizationId) {
+    if (!organizationId) {
         throw new app_error_1.AppError("User is not associated with an organization.", 403, "ORGANIZATION_NOT_FOUND");
     }
     const project = await data_source_1.AppDataSource.getRepository(project_entity_1.Project).findOne({
         where: {
             id: projectId,
-            organizationId: user.organizationId,
+            organizationId,
         },
         select: {
             id: true,
@@ -123,11 +160,11 @@ const authorizeProjectPermission = async (req, action) => {
         .findOne({
         where: {
             projectId: project.id,
-            userId: user.id,
+            userId,
         },
     });
     // Organization ADMINs have full management over projects in their organization
-    if (user.role === user_entity_1.UserRole.ADMIN) {
+    if (userRole === user_entity_1.UserRole.ADMIN) {
         return;
     }
     // Public projects may be viewed without membership.
@@ -152,14 +189,8 @@ const authorizeProjectPermission = async (req, action) => {
 };
 exports.authorizeProjectPermission = authorizeProjectPermission;
 const requireProjectPermission = (action) => {
-    return async (req, _res, next) => {
-        try {
-            await (0, exports.authorizeProjectPermission)(req, action);
-            next();
-        }
-        catch (error) {
-            next(error);
-        }
+    return (req, _res, next) => {
+        (0, exports.authorizeProjectPermission)(req, action).then(() => next(), next);
     };
 };
 exports.requireProjectPermission = requireProjectPermission;

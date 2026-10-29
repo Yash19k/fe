@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.loginSchema = exports.onboardingSchema = exports.invitedMembersSchema = exports.signupSchema = void 0;
+exports.authResetPasswordSchema = exports.authForgotPasswordSchema = exports.loginSchema = exports.onboardingSchema = exports.invitedMembersSchema = exports.signupSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const user_entity_1 = require("../entities/user.entity");
 // const Joi = require("joi");
@@ -46,14 +46,14 @@ exports.signupSchema = joi_1.default.object({
 exports.invitedMembersSchema = joi_1.default.alternatives().try(joi_1.default.array().items(joi_1.default.object({
     email: joi_1.default.string().email().required(),
     role: joi_1.default.string()
-        .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+        .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE)
         .default(user_entity_1.UserRole.TEAMMATE),
 })), joi_1.default.object({
     members: joi_1.default.array()
         .items(joi_1.default.object({
         email: joi_1.default.string().email().required(),
         role: joi_1.default.string()
-            .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE, user_entity_1.UserRole.ADMIN)
+            .valid(user_entity_1.UserRole.MANAGER, user_entity_1.UserRole.TEAMMATE)
             .default(user_entity_1.UserRole.TEAMMATE),
     }))
         .required(),
@@ -71,4 +71,24 @@ exports.onboardingSchema = joi_1.default.object({
 exports.loginSchema = joi_1.default.object({
     email: joi_1.default.string().trim().lowercase().email().max(255).required(),
     password: passwordSchema,
+});
+exports.authForgotPasswordSchema = joi_1.default.object({
+    email: joi_1.default.string().trim().lowercase().email().max(255).required().messages({
+        "string.email": "Please provide a valid email address",
+        "string.empty": "Email is required",
+        "any.required": "Email is required",
+    }),
+});
+exports.authResetPasswordSchema = joi_1.default.object({
+    token: joi_1.default.string().trim().min(32).max(512).required().messages({
+        "string.min": "Reset token is invalid",
+        "string.empty": "Reset token is required",
+        "any.required": "Reset token is required",
+    }),
+    newPassword: passwordSchema,
+    confirmPassword: joi_1.default.string().valid(joi_1.default.ref("newPassword")).required().messages({
+        "any.only": "Passwords do not match",
+        "string.empty": "Confirm password is required",
+        "any.required": "Confirm password is required",
+    }),
 });

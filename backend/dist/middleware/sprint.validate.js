@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateCreateSprint = void 0;
+exports.validateUpdateSprint = exports.validateCreateSprint = void 0;
 const sprint_validations_1 = require("../validations/sprint.validations");
 const validateCreateSprint = (req, res, next) => {
     const { error, value } = sprint_validations_1.createSprintSchema.validate(req.body, {
@@ -24,3 +24,25 @@ const validateCreateSprint = (req, res, next) => {
     next();
 };
 exports.validateCreateSprint = validateCreateSprint;
+const validateUpdateSprint = (req, res, next) => {
+    const { error, value } = sprint_validations_1.updateSprintSchema.validate(req.body, {
+        abortEarly: false,
+        convert: true,
+        stripUnknown: false,
+    });
+    if (error) {
+        res.status(400).json({
+            success: false,
+            message: "Validation failed.",
+            code: "VALIDATION_ERROR",
+            errors: error.details.map((detail) => ({
+                field: detail.path.join("."),
+                message: detail.message,
+            })),
+        });
+        return;
+    }
+    req.body = value;
+    next();
+};
+exports.validateUpdateSprint = validateUpdateSprint;

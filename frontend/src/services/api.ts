@@ -276,10 +276,18 @@ export async function inviteOrganizationMembersApi(
   });
 }
 
-export async function acceptInvitationApi(token: string, payload: any): Promise<any> {
-  return request<any>(`/api/users/accept-invitation?token=${encodeURIComponent(token)}`, {
+export interface AcceptInvitationApiPayload {
+  fullName: string;
+  password: string;
+}
+
+export async function acceptInvitationApi(
+  token: string,
+  payload: AcceptInvitationApiPayload
+): Promise<any> {
+  return request<any>('/api/users/accept-invitation', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, token }),
   });
 }
 

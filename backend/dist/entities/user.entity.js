@@ -18,6 +18,7 @@ const work_item_assignee_entity_1 = require("./work.item-assignee.entity");
 const project_member_entity_1 = require("./project.member.entity");
 const user_session_entity_1 = require("./user.session.entity");
 const sprint_entities_1 = require("./sprint.entities");
+const password_reset_token_entity_1 = require("./password-reset-token.entity");
 var UserRole;
 (function (UserRole) {
     UserRole["ADMIN"] = "ADMIN";
@@ -56,7 +57,7 @@ __decorate([
         length: 255,
         nullable: true,
     }),
-    __metadata("design:type", String)
+    __metadata("design:type", Object)
 ], User.prototype, "passwordHash", void 0);
 __decorate([
     (0, typeorm_1.Column)({
@@ -132,6 +133,10 @@ __decorate([
     (0, typeorm_1.OneToMany)(() => sprint_entities_1.Sprint, (sprint) => sprint.createdBy),
     __metadata("design:type", Array)
 ], User.prototype, "createdSprints", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => password_reset_token_entity_1.PasswordResetToken, (token) => token.user),
+    __metadata("design:type", Array)
+], User.prototype, "passwordResetTokens", void 0);
 exports.User = User = __decorate([
     (0, typeorm_1.Entity)({ name: "users" }),
     (0, typeorm_1.Index)("IDX_users_organization_id", ["organizationId"])

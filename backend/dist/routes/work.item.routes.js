@@ -19,10 +19,10 @@ router.post("/:workItemId/escalate/resolve", is_loggedin_1.isLoggedIn, work_item
 router.delete("/:workItemId", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:delete"), (0, async_handler_1.asyncHandler)(task_controller_1.deleteWorkItem));
 router.get("/project/:projectId", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:read"), work_item_validations_1.validateViewProjectWorkItems, (0, async_handler_1.asyncHandler)(task_controller_1.getProjectWorkItems));
 // Comments
-router.post("/:workItemId/comments", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:read"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.addWorkItemComment));
+router.post("/:workItemId/comments", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:update"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.addWorkItemComment));
 router.get("/:workItemId/comments", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:read"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.getWorkItemComments));
 // Time Entries
-router.post("/:workItemId/time-entries", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:read"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.addWorkItemTimeEntry));
+router.post("/:workItemId/time-entries", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:update"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.addWorkItemTimeEntry));
 router.get("/:workItemId/time-entries", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:read"), (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.getWorkItemTimeEntries));
 // Dependencies
 router.post("/:workItemId/dependencies", is_loggedin_1.isLoggedIn, work_item_validations_1.validateWorkItemId, (0, project_permission_1.requireProjectPermission)("task:update"), work_item_validations_1.validateWorkItemDependencyBody, (0, async_handler_1.asyncHandler)(work_item_collaboration_controller_1.addWorkItemDependency));

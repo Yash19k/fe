@@ -37,4 +37,9 @@ const work_item_attachment_upload_middleware_1 = require("../middleware/work.ite
         strict_1.default.equal((0, work_item_attachment_upload_middleware_1.isSupportedAttachmentType)("image/png", "image.jpg"), false);
         strict_1.default.equal((0, work_item_attachment_upload_middleware_1.isSupportedAttachmentType)("application/pdf", "document.exe"), false);
     });
+    (0, node_test_1.test)("validates file signatures instead of trusting the declared MIME type", () => {
+        strict_1.default.equal((0, work_item_attachment_upload_middleware_1.isSupportedAttachmentContent)("image/png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true);
+        strict_1.default.equal((0, work_item_attachment_upload_middleware_1.isSupportedAttachmentContent)("image/png", Buffer.from("%PDF-1.7")), false);
+        strict_1.default.equal((0, work_item_attachment_upload_middleware_1.isSupportedAttachmentContent)("text/plain", Buffer.from([0x00, 0x01])), false);
+    });
 });

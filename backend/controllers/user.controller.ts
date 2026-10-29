@@ -1,7 +1,6 @@
 
 import { Request, Response } from "express";
 import * as bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import { createHash, randomBytes } from "crypto";
 
 import { AppDataSource } from "../config/data.source";
@@ -11,22 +10,20 @@ import { OrganizationSla } from "../entities/organization.sla.entity";
 import { UserSession } from "../entities/user.session.entity";
 import { loginSchema, onboardingSchema } from "../validations/user.validator";
 import { AppError } from "../errors/app.error";
-import { config } from "../config/config";
+import {
+  clearAuthCookies,
+  createAccessToken,
+  createAuthSession,
+  setAccessCookie,
+  setAuthCookies,
+  setRefreshCookie,
+} from "../services/auth-session.service";
 
 const userRepository = AppDataSource.getRepository(User);
 const organizationRepository = AppDataSource.getRepository(Organization);
 const sessionRepository = AppDataSource.getRepository(UserSession);
 
-const ACCESS_TOKEN_TTL = "15m";
-const ACCESS_TOKEN_MAX_AGE = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-const cookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
-  path: "/",
-};
 
 export interface InvitedMember {
   email: string;
@@ -43,71 +40,6 @@ export interface RegisterOrganizationPayload {
 
 function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-function createAccessToken(user: {
-  id: string;
-  role: UserRole;
-  organizationId: string;
-}): string {
-  return jwt.sign(
-    {
-      userId: user.id,
-      role: user.role,
-      organizationId: user.organizationId,
-      type: "ACCESS",
-    },
-    config.accessTokenSecret,
-    {
-      algorithm: "HS256",
-      expiresIn: ACCESS_TOKEN_TTL,
-    },
-  );
-}
-
-function setAccessCookie(res: Response, token: string): void {
-  res.cookie("token", token, {
-    ...cookieOptions,
-    maxAge: ACCESS_TOKEN_MAX_AGE,
-  });
-}
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie("refreshToken", token, {
-    ...cookieOptions,
-    maxAge: REFRESH_TOKEN_TTL_MS,
-  });
-}
-
-function clearAuthCookies(res: Response): void {
-  res.clearCookie("token", cookieOptions);
-  res.clearCookie("refreshToken", cookieOptions);
-}
-
-async function createAuthSession(
-  user: {
-    id: string;
-    role: UserRole;
-    organizationId: string;
-  },
-  res: Response,
-): Promise<string> {
-  const accessToken = createAccessToken(user);
-  const refreshToken = randomBytes(32).toString("hex");
-
-  await sessionRepository.save(
-    sessionRepository.create({
-      userId: user.id,
-      tokenHash: hashRefreshToken(refreshToken),
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
-      revokedAt: null,
-      lastUsedAt: new Date(),
-    }),
-  );
-
-  setAccessCookie(res, accessToken);
-  setRefreshCookie(res, refreshToken);
-  return accessToken;
 }
 
 export async function registerOrganization(req: Request, res: Response) {
@@ -179,14 +111,13 @@ export async function registerOrganization(req: Request, res: Response) {
     return { org, newUser };
   });
 
-  const token = await createAuthSession(
-    {
-      id: result.newUser.id,
-      role: result.newUser.role,
-      organizationId: result.org.id,
-    },
-    res,
-  );
+  const session = await createAuthSession(AppDataSource.manager, {
+    id: result.newUser.id,
+    role: result.newUser.role,
+    organizationId: result.org.id,
+  });
+  setAuthCookies(res, session);
+  const token = session.accessToken;
 
   return res.status(201).json({
     success: true,
@@ -238,7 +169,7 @@ export async function login(req: Request, res: Response) {
 
   if (
     !user ||
-    (user.status !== UserStatus.ACTIVE && user.status !== UserStatus.PENDING) ||
+    user.status !== UserStatus.ACTIVE ||
     !user.passwordHash ||
     !(await bcrypt.compare(value.password, user.passwordHash))
   ) {
@@ -247,13 +178,6 @@ export async function login(req: Request, res: Response) {
       401,
       "INVALID_CREDENTIALS",
     );
-  }
-
-  if (user.status === UserStatus.PENDING) {
-    user.status = UserStatus.ACTIVE;
-    user.inviteTokenHash = null;
-    user.inviteExpiresAt = null;
-    await userRepository.save(user);
   }
 
   if (!user.organizationId) {
@@ -276,14 +200,13 @@ export async function login(req: Request, res: Response) {
     );
   }
 
-  const token = await createAuthSession(
-    {
-      id: user.id,
-      role: user.role,
-      organizationId: user.organizationId,
-    },
-    res,
-  );
+  const session = await createAuthSession(AppDataSource.manager, {
+    id: user.id,
+    role: user.role,
+    organizationId: user.organizationId,
+  });
+  setAuthCookies(res, session);
+  const token = session.accessToken;
 
   return res.json({
     success: true,

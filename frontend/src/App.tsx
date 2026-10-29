@@ -20,6 +20,7 @@ import { canUserAccessProject } from './domain/permissions';
 import { HomeView } from './features/home/HomeView';
 import { AuthView } from './features/auth/AuthView';
 import { PasswordRecoveryView } from './features/auth/PasswordRecoveryView';
+import { InvitationAcceptanceView } from './features/auth/InvitationAcceptanceView';
 import type { SettingsSection } from './features/project/ProjectSettingsView';
 
 const MyTasksView = React.lazy(() => import('./features/my-tasks/MyTasksView').then((m) => ({ default: m.MyTasksView })));
@@ -140,7 +141,7 @@ function MainAppShell() {
     if (
       !isInitializingAuth &&
       !isAuthenticated &&
-      !['/login', '/signup', '/forgot-password'].includes(activeRoute.split('?')[0]) &&
+      !['/login', '/signup', '/forgot-password', '/accept-invitation'].includes(activeRoute.split('?')[0]) &&
       !activeRoute.startsWith('/reset-password')
     ) {
       navigate('/login');
@@ -159,6 +160,9 @@ function MainAppShell() {
   }
   if (activeRoute.startsWith('/reset-password')) {
     return <PasswordRecoveryView mode="reset" />;
+  }
+  if (activeRoute.startsWith('/accept-invitation')) {
+    return <InvitationAcceptanceView />;
   }
 
   // Loading state while verifying authentication session

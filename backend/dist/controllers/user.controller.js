@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerOrganization = registerOrganization;
 exports.login = login;
@@ -43,7 +40,6 @@ exports.currentUser = currentUser;
 exports.logout = logout;
 exports.getOrganizationUsers = getOrganizationUsers;
 const bcrypt = __importStar(require("bcrypt"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const crypto_1 = require("crypto");
 const data_source_1 = require("../config/data.source");
 const user_entity_1 = require("../entities/user.entity");
@@ -52,62 +48,13 @@ const organization_sla_entity_1 = require("../entities/organization.sla.entity")
 const user_session_entity_1 = require("../entities/user.session.entity");
 const user_validator_1 = require("../validations/user.validator");
 const app_error_1 = require("../errors/app.error");
-const config_1 = require("../config/config");
+const auth_session_service_1 = require("../services/auth-session.service");
 const userRepository = data_source_1.AppDataSource.getRepository(user_entity_1.User);
 const organizationRepository = data_source_1.AppDataSource.getRepository(organization_entity_1.Organization);
 const sessionRepository = data_source_1.AppDataSource.getRepository(user_session_entity_1.UserSession);
-const ACCESS_TOKEN_TTL = "15m";
-const ACCESS_TOKEN_MAX_AGE = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const cookieOptions = {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-};
 function hashRefreshToken(token) {
     return (0, crypto_1.createHash)("sha256").update(token).digest("hex");
-}
-function createAccessToken(user) {
-    return jsonwebtoken_1.default.sign({
-        userId: user.id,
-        role: user.role,
-        organizationId: user.organizationId,
-        type: "ACCESS",
-    }, config_1.config.accessTokenSecret, {
-        algorithm: "HS256",
-        expiresIn: ACCESS_TOKEN_TTL,
-    });
-}
-function setAccessCookie(res, token) {
-    res.cookie("token", token, {
-        ...cookieOptions,
-        maxAge: ACCESS_TOKEN_MAX_AGE,
-    });
-}
-function setRefreshCookie(res, token) {
-    res.cookie("refreshToken", token, {
-        ...cookieOptions,
-        maxAge: REFRESH_TOKEN_TTL_MS,
-    });
-}
-function clearAuthCookies(res) {
-    res.clearCookie("token", cookieOptions);
-    res.clearCookie("refreshToken", cookieOptions);
-}
-async function createAuthSession(user, res) {
-    const accessToken = createAccessToken(user);
-    const refreshToken = (0, crypto_1.randomBytes)(32).toString("hex");
-    await sessionRepository.save(sessionRepository.create({
-        userId: user.id,
-        tokenHash: hashRefreshToken(refreshToken),
-        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
-        revokedAt: null,
-        lastUsedAt: new Date(),
-    }));
-    setAccessCookie(res, accessToken);
-    setRefreshCookie(res, refreshToken);
-    return accessToken;
 }
 async function registerOrganization(req, res) {
     let payload = req.body;
@@ -160,11 +107,13 @@ async function registerOrganization(req, res) {
         });
         return { org, newUser };
     });
-    const token = await createAuthSession({
+    const session = await (0, auth_session_service_1.createAuthSession)(data_source_1.AppDataSource.manager, {
         id: result.newUser.id,
         role: result.newUser.role,
         organizationId: result.org.id,
-    }, res);
+    });
+    (0, auth_session_service_1.setAuthCookies)(res, session);
+    const token = session.accessToken;
     return res.status(201).json({
         success: true,
         token,
@@ -206,16 +155,10 @@ async function login(req, res) {
         where: { email: value.email.toLowerCase() },
     });
     if (!user ||
-        (user.status !== user_entity_1.UserStatus.ACTIVE && user.status !== user_entity_1.UserStatus.PENDING) ||
+        user.status !== user_entity_1.UserStatus.ACTIVE ||
         !user.passwordHash ||
         !(await bcrypt.compare(value.password, user.passwordHash))) {
         throw new app_error_1.AppError("Invalid email or password.", 401, "INVALID_CREDENTIALS");
-    }
-    if (user.status === user_entity_1.UserStatus.PENDING) {
-        user.status = user_entity_1.UserStatus.ACTIVE;
-        user.inviteTokenHash = null;
-        user.inviteExpiresAt = null;
-        await userRepository.save(user);
     }
     if (!user.organizationId) {
         throw new app_error_1.AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
@@ -226,11 +169,13 @@ async function login(req, res) {
     if (!organization) {
         throw new app_error_1.AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
     }
-    const token = await createAuthSession({
+    const session = await (0, auth_session_service_1.createAuthSession)(data_source_1.AppDataSource.manager, {
         id: user.id,
         role: user.role,
         organizationId: user.organizationId,
-    }, res);
+    });
+    (0, auth_session_service_1.setAuthCookies)(res, session);
+    const token = session.accessToken;
     return res.json({
         success: true,
         token,
@@ -259,54 +204,65 @@ async function login(req, res) {
 async function refreshAccessToken(req, res) {
     const refreshToken = req.cookies?.refreshToken;
     if (typeof refreshToken !== "string" || !refreshToken) {
-        clearAuthCookies(res);
+        (0, auth_session_service_1.clearAuthCookies)(res);
         throw new app_error_1.AppError("Refresh token is missing. Please log in again.", 401, "REFRESH_TOKEN_MISSING");
     }
-    const session = await sessionRepository.findOne({
-        where: {
-            tokenHash: hashRefreshToken(refreshToken),
-        },
-    });
-    if (!session ||
-        session.revokedAt ||
-        session.expiresAt.getTime() <= Date.now()) {
-        clearAuthCookies(res);
-        throw new app_error_1.AppError("Refresh session is invalid or expired. Please log in again.", 401, "INVALID_REFRESH_TOKEN");
-    }
-    const user = await userRepository.findOne({
-        where: { id: session.userId },
-    });
-    if (!user ||
-        user.status !== user_entity_1.UserStatus.ACTIVE ||
-        !user.organizationId) {
-        session.revokedAt = new Date();
-        await sessionRepository.save(session);
-        clearAuthCookies(res);
-        throw new app_error_1.AppError("Your account is unavailable. Please log in again.", 401, "INVALID_SESSION_USER");
-    }
-    const organization = await organizationRepository.findOne({
-        where: { id: user.organizationId },
-    });
-    if (!organization) {
-        session.revokedAt = new Date();
-        await sessionRepository.save(session);
-        clearAuthCookies(res);
-        throw new app_error_1.AppError("Organization not found.", 401, "INVALID_SESSION_ORGANIZATION");
-    }
-    // Rotate the refresh token: the previous token stops matching
-    // the stored hash after this update.
     const newRefreshToken = (0, crypto_1.randomBytes)(32).toString("hex");
-    session.tokenHash = hashRefreshToken(newRefreshToken);
-    session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
-    session.lastUsedAt = new Date();
-    await sessionRepository.save(session);
-    const accessToken = createAccessToken({
-        id: user.id,
-        role: user.role,
-        organizationId: user.organizationId,
+    const result = await data_source_1.AppDataSource.transaction(async (manager) => {
+        const sessions = manager.getRepository(user_session_entity_1.UserSession);
+        const session = await sessions
+            .createQueryBuilder("session")
+            .setLock("pessimistic_write")
+            .where("session.tokenHash = :tokenHash", {
+            tokenHash: hashRefreshToken(refreshToken),
+        })
+            .getOne();
+        if (!session ||
+            session.revokedAt ||
+            session.expiresAt.getTime() <= Date.now()) {
+            return {
+                error: new app_error_1.AppError("Refresh session is invalid or expired. Please log in again.", 401, "INVALID_REFRESH_TOKEN"),
+            };
+        }
+        const user = await manager.getRepository(user_entity_1.User).findOne({
+            where: { id: session.userId },
+        });
+        if (!user || user.status !== user_entity_1.UserStatus.ACTIVE || !user.organizationId) {
+            session.revokedAt = new Date();
+            await sessions.save(session);
+            return {
+                error: new app_error_1.AppError("Your account is unavailable. Please log in again.", 401, "INVALID_SESSION_USER"),
+            };
+        }
+        const organization = await manager
+            .getRepository(organization_entity_1.Organization)
+            .findOne({ where: { id: user.organizationId } });
+        if (!organization) {
+            session.revokedAt = new Date();
+            await sessions.save(session);
+            return {
+                error: new app_error_1.AppError("Organization not found.", 401, "INVALID_SESSION_ORGANIZATION"),
+            };
+        }
+        session.tokenHash = hashRefreshToken(newRefreshToken);
+        session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+        session.lastUsedAt = new Date();
+        await sessions.save(session);
+        return {
+            accessToken: (0, auth_session_service_1.createAccessToken)({
+                id: user.id,
+                role: user.role,
+                organizationId: user.organizationId,
+            }),
+        };
     });
-    setAccessCookie(res, accessToken);
-    setRefreshCookie(res, newRefreshToken);
+    if ("error" in result) {
+        (0, auth_session_service_1.clearAuthCookies)(res);
+        throw result.error;
+    }
+    const accessToken = result.accessToken;
+    (0, auth_session_service_1.setAccessCookie)(res, accessToken);
+    (0, auth_session_service_1.setRefreshCookie)(res, newRefreshToken);
     return res.status(200).json({
         success: true,
         message: "Access token refreshed successfully.",
@@ -360,7 +316,7 @@ async function logout(req, res) {
             await sessionRepository.save(session);
         }
     }
-    clearAuthCookies(res);
+    (0, auth_session_service_1.clearAuthCookies)(res);
     return res.json({ success: true });
 }
 async function getOrganizationUsers(req, res) {

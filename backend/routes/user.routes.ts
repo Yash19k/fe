@@ -28,8 +28,8 @@ router.get("/me", isLoggedIn, asyncHandler(currentUser));
 router.get("/me/audit-logs", isLoggedIn, asyncHandler(getMyAuditLogs));
 router.post("/logout", asyncHandler(logout));
 router.post("/refresh", refreshAccessToken);
-router.post("/invite", isLoggedIn, inviteMembersController);
-router.post("/accept-invitation", acceptInvitationController);
+router.post("/invite", isLoggedIn, asyncHandler(inviteMembersController));
+router.post("/accept-invitation", asyncHandler(acceptInvitationController));
 
 
 export default router;

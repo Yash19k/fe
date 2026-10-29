@@ -209,10 +209,10 @@ export async function refreshSlaStatuses(
   const now = new Date();
   const priorityRiskHours = `
     CASE
-      WHEN workItem.priority = 'URGENT' THEN 0.8
-      WHEN workItem.priority = 'HIGH' THEN 1.6
-      WHEN workItem.priority = 'MEDIUM' THEN 4.8
-      WHEN workItem.priority = 'LOW' THEN 14.4
+      WHEN "workItem"."priority" = 'URGENT' THEN 0.8
+      WHEN "workItem"."priority" = 'HIGH' THEN 1.6
+      WHEN "workItem"."priority" = 'MEDIUM' THEN 4.8
+      WHEN "workItem"."priority" = 'LOW' THEN 14.4
       ELSE 0
     END
   `;

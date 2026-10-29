@@ -35,12 +35,68 @@ member endpoint does not create a second user or move a user to another
 organization. Resending an invitation is limited to a pending account already
 associated with the same organization.
 
-Invited accounts remain pending until the one-time token from the invitation
-email is accepted through `POST /api/users/accept-invitation` (or the legacy
-`POST /api/organizations/accept` route). Acceptance sets the permanent password
-and consumes the token atomically; pending accounts cannot log in with
-credentials from an older invitation email. Reissue invitations to pending
-users who do not have a usable token.
+## Secure member invitations
+
+The existing organization-admin-only invitation routes are:
+
+- `POST /api/users/invite`
+- `POST /api/organizations/members/invite`
+
+Both accept the existing `{ "invitations": [{ "email": "...", "role": "TEAMMATE" }] }`
+body shape (the `members` wrapper and array form are also accepted). An
+invitation to an already-pending user in that organization replaces and
+invalidates the previous outstanding link. The response includes invited
+email/role and `emailSent`; it never includes the token. If SMTP submission
+fails, the request fails and the newly persisted invitation is compensated;
+a newly-created pending user is removed.
+
+`INVITATION_LIFETIME_HOURS` configures expiry and defaults to `24`. Set
+`FRONTEND_URL` to the frontend origin; it defaults to
+`http://localhost:5173` for local development and must be an absolute HTTP(S)
+URL without credentials, a query, or a fragment. Invitation links use its
+`/#/accept-invitation?token=...` route. In production, `FRONTEND_URL` must use
+HTTPS.
+
+For local development, start the frontend on the configured URL (the default
+Vite URL is `http://localhost:5173`). A `localhost` link works only on the
+device where the development server is running; a recipient opening the email
+on another device needs a reachable frontend and backend API, with `FRONTEND_URL`
+and the frontend's `VITE_API_URL` configured to those reachable addresses, and
+the frontend origin included in backend `CORS_ORIGINS`. Use a secured tunnel or
+deployed development environment for that scenario; do not expose a local
+backend publicly without deliberately securing it.
+
+Email delivery also requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+and `SMTP_FROM`. Set `SMTP_SECURE=true` for implicit TLS (commonly port 465);
+port 587 commonly uses STARTTLS with `SMTP_SECURE=false`. These are existing
+mail-service settings and should be configured in the backend environment
+without committing credentials. See `.env.example` for the expected variable
+names.
+
+The frontend acceptance page must not consume or accept the invitation on GET.
+It captures the token from the URL fragment for the password setup form, then
+immediately removes it from browser history with `history.replaceState`. Do
+not send the token to analytics, third-party scripts, or logs. Submit the
+user-entered name and password with the token in the request body:
+
+```http
+POST /api/users/accept-invitation
+Content-Type: application/json
+
+{
+  "token": "<64-character hex token>",
+  "fullName": "Invited User",
+  "password": "<new password>"
+}
+```
+
+The legacy `POST /api/organizations/accept` route uses the same body contract.
+Successful acceptance atomically activates the intended pending user, stores
+the new password hash, consumes the invitation, and creates the normal
+authenticated session. The response sets the existing HTTP-only `token` and
+`refreshToken` cookies and returns the usual access token/user summary.
+Invalid, expired, revoked, consumed, and mismatched invitations are rejected;
+pending users cannot log in before completing acceptance.
 
 ## SLA and escalation
 

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createSprintSchema = void 0;
+exports.updateSprintSchema = exports.createSprintSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const isRealDate = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -52,4 +52,30 @@ exports.createSprintSchema = joi_1.default.object({
     .messages({
     "sprint.dateRange": "Sprint endDate must be on or after startDate.",
     "object.unknown": "Unknown field: {{#label}}.",
+});
+exports.updateSprintSchema = joi_1.default.object({
+    name: joi_1.default.string().trim().min(1).max(100).optional(),
+    goal: joi_1.default.string().trim().max(1000).allow("", null).optional(),
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    status: joi_1.default.string()
+        .valid("PLANNED", "ACTIVE", "COMPLETED", "CANCELLED")
+        .optional(),
+})
+    .min(1)
+    .unknown(false)
+    .custom((payload, helpers) => {
+    if (payload.startDate &&
+        payload.endDate &&
+        isRealDate(payload.startDate) &&
+        isRealDate(payload.endDate) &&
+        payload.startDate > payload.endDate) {
+        return helpers.error("sprint.dateRange");
+    }
+    return payload;
+})
+    .messages({
+    "sprint.dateRange": "Sprint endDate must be on or after startDate.",
+    "object.unknown": "Unknown field: {{#label}}.",
+    "object.min": "At least one field must be provided for update.",
 });

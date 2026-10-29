@@ -29,9 +29,9 @@ router.get("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, project_permiss
 router.post("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:update"), project_validations_1.validateProjectId, (0, async_handler_1.asyncHandler)(project_settings_controller_1.saveProjectWorkflow));
 router.put("/:projectId/workflow", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:update"), project_validations_1.validateProjectId, (0, async_handler_1.asyncHandler)(project_settings_controller_1.saveProjectWorkflow));
 // Audit Logs
-router.post("/audit-logs", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(auditlog_controller_1.createAuditLog));
+router.post("/audit-logs", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("task:update"), (0, async_handler_1.asyncHandler)(auditlog_controller_1.createAuditLog));
 router.get("/:projectId/audit-logs", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:view"), (0, async_handler_1.asyncHandler)(auditlog_controller_1.getProjectAuditLogs));
 router.post("/:projectId/audit-logs", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:update"), (0, async_handler_1.asyncHandler)(auditlog_controller_1.createAuditLog));
 router.post("/:projectId/audit-logs/:logId/undo", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:update"), (0, async_handler_1.asyncHandler)(auditlog_controller_1.undoAuditLog));
-router.post("/audit-logs/:logId/undo", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(auditlog_controller_1.undoAuditLog));
+router.post("/audit-logs/:logId/undo", is_loggedin_1.isLoggedIn, (0, project_permission_1.requireProjectPermission)("project:update"), (0, async_handler_1.asyncHandler)(auditlog_controller_1.undoAuditLog));
 exports.default = router;

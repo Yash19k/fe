@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "seed": "ts-node seed.ts",
-    "dev": "nodemon --exec \"ts-node --files server.ts\""
+    "dev": "nodemon --ext ts,json --exec \"ts-node --files server.ts\""
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

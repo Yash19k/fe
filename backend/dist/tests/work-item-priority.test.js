@@ -26,4 +26,21 @@ const validWorkItem = {
         strict_1.default.equal(result.error, undefined);
         strict_1.default.equal(result.value.priority, null);
     });
+    (0, node_test_1.test)("accepts only one label for the single-label persistence contract", () => {
+        const oneLabel = "1b65ef76-4f4a-4daf-a1e9-ae8a51a58fd6";
+        const twoLabels = [
+            oneLabel,
+            "2875dc65-2d50-41b1-bb88-6c8c42b457bb",
+        ];
+        strict_1.default.equal(work_item_validations_1.createWorkItemSchema.validate({ ...validWorkItem, labels: [oneLabel] })
+            .error, undefined);
+        strict_1.default.ok(work_item_validations_1.createWorkItemSchema.validate({ ...validWorkItem, labels: twoLabels })
+            .error);
+        strict_1.default.ok(work_item_validations_1.updateWorkItemSchema.validate({ labels: twoLabels }).error);
+        strict_1.default.ok(work_item_validations_1.createWorkItemSchema.validate({
+            ...validWorkItem,
+            labelId: oneLabel,
+            labels: ["2875dc65-2d50-41b1-bb88-6c8c42b457bb"],
+        }).error);
+    });
 });
