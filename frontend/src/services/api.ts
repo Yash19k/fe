@@ -1136,6 +1136,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
   if (!item) return {} as Task;
 
   const entity = item.workItem || item;
+  const version = entity.version ?? item.version;
   const assignments = item.assignments || entity.assignments;
   const rawAssignees = item.assignees || entity.assignees;
 
@@ -1260,7 +1261,9 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
     recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
     sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
-    version: Number(entity.version ?? item.version ?? 1),
+    version: typeof version === 'number' && Number.isInteger(version) && version >= 1
+      ? version
+      : undefined,
     createdAt: entity.createdAt || item.createdAt || new Date().toISOString(),
     updatedAt: entity.updatedAt || item.updatedAt || new Date().toISOString(),
     attachments: Array.isArray(entity.attachments || item.attachments)
