@@ -6,12 +6,14 @@ import { Dialog } from '../../components/ui/Dialog';
 import { Plus, Trash2, Search, ShieldAlert } from 'lucide-react';
 import { AddProjectMemberDialog } from '../../components/modals/AddProjectMemberDialog';
 import type { User, Task, Role } from '../../types';
+import { isWorkflowStatusComplete } from '../../domain/workflow';
 
 export function ProjectMembersView() {
   const {
     currentProject,
     allUsers,
     projectTasks,
+    currentWorkflow,
     currentUser,
     addProjectMember,
     removeProjectMember,
@@ -152,7 +154,9 @@ export function ProjectMembersView() {
                 if (Array.isArray(t.assignees) && t.assignees.some((a: any) => a.id === member.id || a.userId === member.id)) return true;
                 return false;
               });
-              const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
+              const doneTasks = memberTasks.filter((task: Task) =>
+                isWorkflowStatusComplete(currentWorkflow, task.status),
+              );
               const activeCount = memberTasks.length - doneTasks.length;
               const isOwner = member.id === currentProject.ownerId;
               const isSelf = Boolean(

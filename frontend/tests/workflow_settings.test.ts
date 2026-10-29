@@ -260,37 +260,7 @@ describe('Workflow, Settings, and Task Editing Tests (Sections 11, 12, 13, 15, 1
     });
   });
 
-  describe('TaskFlow Pro — Final Statuses Default Workflow Requirements', () => {
-    it('verifies exact default workflow name and 7 statuses in exact order', async () => {
-      const { DEFAULT_STANDARD_WORKFLOW } = await import('../src/state/storage.ts');
-
-      assert.equal(DEFAULT_STANDARD_WORKFLOW.name, 'TaskFlow Pro — Final Statuses');
-      assert.equal(DEFAULT_STANDARD_WORKFLOW.statuses.length, 7);
-
-      const expectedOrder = [
-        'Backlog',
-        'In Progress',
-        'In Review',
-        'Testing / QA',
-        'Blocked',
-        'On Hold',
-        'Done',
-      ];
-
-      const actualOrder = DEFAULT_STANDARD_WORKFLOW.statuses.map((s) => s.name);
-      assert.deepEqual(actualOrder, expectedOrder);
-
-      // Verify recovery transitions
-      const blockedStatus = DEFAULT_STANDARD_WORKFLOW.statuses.find((s) => s.name === 'Blocked');
-      assert.ok(blockedStatus);
-      assert.ok(blockedStatus.allowedTransitions?.includes('In Progress'));
-      assert.ok(blockedStatus.allowedTransitions?.includes('Backlog'));
-
-      const onHoldStatus = DEFAULT_STANDARD_WORKFLOW.statuses.find((s) => s.name === 'On Hold');
-      assert.ok(onHoldStatus);
-      assert.ok(onHoldStatus.allowedTransitions?.includes('In Progress'));
-    });
-
+  describe('Backend-provided workflow configuration', () => {
     it('verifies legacy /dashboard, /workflow, and /dependencies URL routing normalization', () => {
       function resolveProjectTabFromRoute(hash: string): { projectId?: string; projectTab?: string } {
         const clean = hash.replace(/^#/, '');

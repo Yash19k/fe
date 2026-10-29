@@ -33,6 +33,7 @@ import { WorkflowBuilderView } from './WorkflowBuilderView';
 import { DependenciesView } from './DependenciesView';
 import { AuditEventDetailsDialog } from '../../components/activity/AuditEventDetailsDialog';
 import { AddProjectMemberDialog } from '../../components/modals/AddProjectMemberDialog';
+import { isWorkflowStatusComplete } from '../../domain/workflow';
 
 export type SettingsSection = 'general' | 'members' | 'workflow' | 'dependencies' | 'labels' | 'activity' | 'danger';
 
@@ -1141,7 +1142,9 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                       const memberTasks = projectTasks.filter(
                         (t: Task) => t.assigneeId === member.id || t.assigneeIds?.includes(member.id)
                       );
-                      const doneTasks = memberTasks.filter((t: Task) => t.status === 'Done');
+                      const doneTasks = memberTasks.filter((task: Task) =>
+                        isWorkflowStatusComplete(currentWorkflow, task.status),
+                      );
                       const activeCount = memberTasks.length - doneTasks.length;
                       const isOwner = member.id === currentProject.ownerId;
                       const isSelf = Boolean(

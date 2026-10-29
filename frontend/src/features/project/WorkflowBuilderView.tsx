@@ -1,22 +1,36 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../hooks/useApp';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Plus, Trash2, ArrowRight, Shield, GripVertical, Info, RotateCcw, Save } from 'lucide-react';
 import type { WorkflowStatus, Workflow, Task } from '../../types';
-import { saveProjectWorkflowApi } from '../../services/api';
+import { isPersistedWorkItemId, saveProjectWorkflowApi } from '../../services/api';
+import { findWorkflowStatus } from '../../domain/workflow';
 
 export interface WorkflowBuilderViewProps {
   isEmbedded?: boolean;
 }
 
 export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewProps) {
-  const { currentProject, currentWorkflow, setWorkflows, projectTasks, showToast, currentUser } = useApp();
+  const {
+    currentProject,
+    currentWorkflow,
+    currentWorkflowLoading,
+    currentWorkflowError,
+    setWorkflows,
+    projectTasks,
+    showToast,
+    currentUser,
+    reloadProjectData,
+  } = useApp();
 
   // Local draft state for workflow customization
   const [draftStatuses, setDraftStatuses] = useState<WorkflowStatus[]>(() =>
     currentWorkflow?.statuses ? JSON.parse(JSON.stringify(currentWorkflow.statuses)) : []
   );
+  const savedStatusesRef = useRef(JSON.stringify(currentWorkflow?.statuses || []));
+  const savedWorkflowIdRef = useRef(currentWorkflow?.id);
+  const savedProjectIdRef = useRef(currentProject?.id);
   const [isSaving, setIsSaving] = useState(false);
   const [newStatusName, setNewStatusName] = useState('');
   const [newStatusColor, setNewStatusColor] = useState('#6366F1');
@@ -29,10 +43,37 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
   const [grabbedIdx, setGrabbedIdx] = useState<number | null>(null);
   const [liveAnnouncement, setLiveAnnouncement] = useState<string>('');
 
-  if (!currentWorkflow) return null;
-
-  const originalStatuses = currentWorkflow.statuses || [];
+  const originalStatuses = currentWorkflow?.statuses || [];
   const isDirty = JSON.stringify(draftStatuses) !== JSON.stringify(originalStatuses);
+
+  useEffect(() => {
+    const nextStatuses = currentWorkflow?.statuses || [];
+    const draftIsClean = JSON.stringify(draftStatuses) === savedStatusesRef.current;
+    const workflowChanged =
+      savedProjectIdRef.current !== currentProject?.id ||
+      savedWorkflowIdRef.current !== currentWorkflow?.id;
+    if (workflowChanged || draftIsClean) {
+      setDraftStatuses(JSON.parse(JSON.stringify(nextStatuses)));
+    }
+    savedStatusesRef.current = JSON.stringify(nextStatuses);
+    savedWorkflowIdRef.current = currentWorkflow?.id;
+    savedProjectIdRef.current = currentProject?.id;
+  }, [currentProject?.id, currentWorkflow?.id, currentWorkflow?.statuses, draftStatuses]);
+
+  if (!currentWorkflow) {
+    return (
+      <div className="p-6 rounded-xl bg-surface border border-border text-center space-y-3" role={currentWorkflowError ? 'alert' : 'status'}>
+        <p className={currentWorkflowError ? 'text-xs text-rose-300' : 'text-xs text-text-muted'}>
+          {currentWorkflowError || (currentWorkflowLoading ? 'Loading project workflow...' : 'Project workflow is unavailable.')}
+        </p>
+        {currentWorkflowError && (
+          <Button variant="secondary" size="sm" onClick={() => { void reloadProjectData?.(); }}>
+            Retry
+          </Button>
+        )}
+      </div>
+    );
+  }
 
   function handleAddStatus(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +99,9 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
 
   function handleDeleteStatus(statusObj: WorkflowStatus) {
     // Check if any existing tasks currently occupy this status (Orphaning prevention per Section 12.3)
-    const tasksInStatus = projectTasks.filter((t: Task) => t.status === statusObj.name);
+    const tasksInStatus = projectTasks.filter(
+      (task: Task) => findWorkflowStatus(currentWorkflow, task.status)?.id === statusObj.id,
+    );
     if (tasksInStatus.length > 0) {
       showToast(
         `Cannot remove "${statusObj.name}": ${tasksInStatus.length} work items in this project currently occupy this status. Reassign them first.`,
@@ -244,29 +287,39 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
     }
 
     setIsSaving(true);
-    const workflowName =
-      currentWorkflow.name && !currentWorkflow.name.endsWith(' Workflow') && !/^[0-9a-fA-F-]{20,}/.test(currentWorkflow.name)
-        ? currentWorkflow.name
-        : 'TaskFlow Pro — Final Statuses';
+    const workflowName = currentWorkflow.name;
 
     try {
-      if (currentProject.id && currentProject.id.includes('-')) {
+      let savedWorkflow: Workflow = {
+        ...currentWorkflow,
+        projectId: currentProject.id,
+        name: workflowName,
+        statuses: draftStatuses,
+      };
+      if (isPersistedWorkItemId(currentProject.id)) {
         const res = await saveProjectWorkflowApi(currentProject.id, {
           name: workflowName,
           stages: draftStatuses,
         });
-        if (!res?.success) {
+        const responseWorkflow = res?.data;
+        const savedStatuses = responseWorkflow?.statuses ?? responseWorkflow?.stages;
+        if (!res?.success || !responseWorkflow || !Array.isArray(savedStatuses)) {
           throw new Error('Failed to save workflow configuration.');
         }
+        savedWorkflow = {
+          ...responseWorkflow,
+          projectId: currentProject.id,
+          name: responseWorkflow.name,
+          statuses: savedStatuses,
+        };
       }
 
-      setWorkflows((prev: Workflow[]) =>
-        prev.map((w: Workflow) =>
-          w.id === currentWorkflow.id || w.projectId === currentProject.id
-            ? { ...w, name: workflowName, statuses: draftStatuses }
-            : w
-        )
-      );
+      setWorkflows((previous: Workflow[]) => [
+        ...previous.filter((workflow) => workflow.projectId !== currentProject.id),
+        savedWorkflow,
+      ]);
+      setDraftStatuses(JSON.parse(JSON.stringify(savedWorkflow.statuses)));
+      savedStatusesRef.current = JSON.stringify(savedWorkflow.statuses);
       showToast('Workflow configuration saved and published successfully', 'success');
     } catch (err: any) {
       console.error('TaskFlow: Failed to persist workflow to backend:', err);
@@ -279,12 +332,26 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
   function handleCancelChanges() {
     if (currentWorkflow?.statuses) {
       setDraftStatuses(JSON.parse(JSON.stringify(currentWorkflow.statuses)));
+      savedStatusesRef.current = JSON.stringify(currentWorkflow.statuses);
     }
     showToast('Workflow changes reverted to saved state', 'info');
   }
 
   return (
     <div className={isEmbedded ? 'space-y-6' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6'}>
+      {currentWorkflowError && (
+        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200" role="alert">
+          The latest workflow refresh failed. Showing the last successfully loaded configuration.
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-3"
+            onClick={() => { void reloadProjectData?.(); }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       {/* Unsaved Changes Banner */}
       {isDirty && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -321,7 +388,7 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
               Active Workflow:
             </span>
             <span className="text-xs font-bold text-text-primary">
-              {currentWorkflow.name || 'TaskFlow Pro — Final Statuses'}
+              {currentWorkflow.name || 'Project workflow'}
             </span>
           </div>
           {isDirty ? (

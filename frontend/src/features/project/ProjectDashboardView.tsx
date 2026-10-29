@@ -6,6 +6,11 @@ import { WorkItemTypeBadge } from '../../components/ui/Badge';
 import { WORK_ITEM_TYPES } from '../../domain/workItems';
 import { getProjectDashboardApi, backendTypeToFrontend } from '../../services/api';
 import type { Task, WorkItemType } from '../../types';
+import {
+  findWorkflowStatus,
+  getStatusCounts,
+  isWorkflowStatusComplete,
+} from '../../domain/workflow';
 
 export function ProjectDashboardView() {
   const { currentProject, projectTasks, allUsers, currentWorkflow } = useApp();
@@ -53,14 +58,20 @@ export function ProjectDashboardView() {
     // Fallback to local project tasks when offline or pending
     const deliverableTasks = projectTasks.filter((t: Task) => t.type !== WORK_ITEM_TYPES.SUBTASK);
     const deliverableTotal = deliverableTasks.length;
-    const deliverableCompleted = deliverableTasks.filter((t: Task) => t.status === 'Done').length;
+    const deliverableCompleted = deliverableTasks.filter(
+      (task: Task) => isWorkflowStatusComplete(currentWorkflow, task.status),
+    ).length;
     const deliverableProgress = deliverableTotal > 0 ? Math.round((deliverableCompleted / deliverableTotal) * 100) : 0;
 
     const total = projectTasks.length;
-    const completed = projectTasks.filter((t: Task) => t.status === 'Done').length;
+    const completed = projectTasks.filter(
+      (task: Task) => isWorkflowStatusComplete(currentWorkflow, task.status),
+    ).length;
     const incomplete = total - completed;
     const overdue = projectTasks.filter(
-      (t: Task) => t.status !== 'Done' && getRelativeDateLabel(t.dueDate).isOverdue
+      (task: Task) =>
+        !isWorkflowStatusComplete(currentWorkflow, task.status) &&
+        getRelativeDateLabel(task.dueDate).isOverdue,
     ).length;
 
     return {
@@ -72,7 +83,7 @@ export function ProjectDashboardView() {
       deliverableCompleted,
       deliverableProgress,
     };
-  }, [backendDashboard, projectTasks]);
+  }, [backendDashboard, projectTasks, currentWorkflow]);
 
   // Work-Item Type Breakdown
   const tasksByType = useMemo<Array<{ type: WorkItemType; count: number }>>(() => {
@@ -110,36 +121,35 @@ export function ProjectDashboardView() {
     const sections = currentProject?.sections || [];
     return sections.map((sec) => {
       const count = projectTasks.filter(
-        (t: Task) => t.sectionId === sec.id && t.status !== 'Done'
+        (task: Task) =>
+          task.sectionId === sec.id &&
+          !isWorkflowStatusComplete(currentWorkflow, task.status),
       ).length;
       return { name: sec.name, count };
     });
-  }, [currentProject, projectTasks]);
+  }, [currentProject, projectTasks, currentWorkflow]);
 
   // Chart 2: Tasks by Status
   const tasksByStatus = useMemo(() => {
-    const counts: Record<string, number> = {};
-    projectTasks.forEach((t: Task) => {
-      counts[t.status] = (counts[t.status] || 0) + 1;
+    const result = getStatusCounts(currentWorkflow, projectTasks).map((status) => ({
+      status: status.name,
+      color: status.color || '#94A3B8',
+      count: status.count,
+    }));
+    const unknownCounts = new Map<string, number>();
+    projectTasks.forEach((task) => {
+      if (findWorkflowStatus(currentWorkflow, task.status)) return;
+      unknownCounts.set(task.status, (unknownCounts.get(task.status) || 0) + 1);
     });
-    const defaultStatuses = [
-      'Backlog',
-      'In Progress',
-      'In Review',
-      'Testing / QA',
-      'Blocked',
-      'On Hold',
-      'Done',
-    ];
-    const configuredStatuses = currentWorkflow?.statuses && currentWorkflow.statuses.length > 0
-      ? currentWorkflow.statuses.map((s) => s.name)
-      : (currentProject?.workflow?.statuses?.map((s) => s.name) || defaultStatuses);
-    const projectWorkflowStatuses = configuredStatuses;
-    const allStatuses = Array.from(new Set([...projectWorkflowStatuses, ...Object.keys(counts)]));
-    return allStatuses
-      .map((status) => ({ status, count: counts[status] || 0 }))
-      .filter((s) => s.count > 0 || projectWorkflowStatuses.includes(s.status));
-  }, [projectTasks, currentProject, currentWorkflow]);
+    unknownCounts.forEach((count, status) =>
+      result.push({
+        status: `${status || 'Unknown status'} (not in workflow)`,
+        color: '#737987',
+        count,
+      }),
+    );
+    return result;
+  }, [projectTasks, currentWorkflow]);
 
   // Chart 3: Tasks by Assignee
   const tasksByAssignee = useMemo(() => {
@@ -151,18 +161,6 @@ export function ProjectDashboardView() {
     });
     return Object.entries(counts).map(([name, count]) => ({ name, count }));
   }, [projectTasks, allUsers]);
-
-  // Status Colors map for the 7 approved default statuses
-  const statusColors: Record<string, string> = {
-    'Done': '#22C55E',
-    'In Progress': '#3B82F6',
-    'In Review': '#A855F7',
-    'Testing / QA': '#06B6D4',
-    'Blocked': '#EF4444',
-    'On Hold': '#F59E0B',
-    'Backlog': '#71717A',
-    'To Do': '#71717A',
-  };
 
   const maxSectionCount = Math.max(1, ...tasksBySection.map((s) => s.count));
   const maxAssigneeCount = Math.max(1, ...tasksByAssignee.map((a) => a.count));
@@ -284,7 +282,7 @@ export function ProjectDashboardView() {
 
           <div className="space-y-3 pt-2">
             {tasksByStatus.map((st) => {
-              const color = statusColors[st.status] || '#94A3B8';
+              const color = st.color;
               const pct = metrics.total > 0 ? Math.round((st.count / metrics.total) * 100) : 0;
 
               return (

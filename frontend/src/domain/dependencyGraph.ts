@@ -8,10 +8,11 @@
  * - A is the Predecessor.
  * - B is the Successor.
  * - Directed Edge: A → B (Work flows from A to B).
- * - B cannot proceed until A is completed (status === 'Done').
+ * - B cannot proceed until A reaches a completed status in its project workflow.
  */
 
-import { Task } from '../types';
+import type { Task, Workflow } from '../types';
+import { getWorkflowForProject, isWorkflowStatusComplete } from './workflow';
 
 export interface AdjacencyList {
   forwardAdj: Map<string, Set<string>>;
@@ -149,26 +150,41 @@ export function validateNewDependency(
 /**
  * Checks whether a task is currently blocked by incomplete predecessors.
  */
-export function isTaskBlocked(task: Task, allTasks: Task[]): boolean {
+function isTaskComplete(task: Task, workflows?: Workflow | Workflow[]): boolean {
+  const workflow = Array.isArray(workflows)
+    ? getWorkflowForProject(workflows, task.projectId)
+    : workflows;
+  return isWorkflowStatusComplete(workflow, task.status);
+}
+
+export function isTaskBlocked(
+  task: Task,
+  allTasks: Task[],
+  workflows?: Workflow | Workflow[],
+): boolean {
   const taskMap = new Map<string, Task>(allTasks.map((t) => [t.id, t]));
   const predIds = (task.dependencyIds || task.dependencies || []) as string[];
   if (predIds.length === 0) return false;
 
   return predIds.some((pId) => {
     const pred = taskMap.get(pId);
-    return pred && pred.status !== 'Done';
+    return pred && !isTaskComplete(pred, workflows);
   });
 }
 
 /**
  * Returns the list of uncompleted predecessor tasks blocking this task.
  */
-export function getBlockingTasks(task: Task, allTasks: Task[]): Task[] {
+export function getBlockingTasks(
+  task: Task,
+  allTasks: Task[],
+  workflows?: Workflow | Workflow[],
+): Task[] {
   const taskMap = new Map<string, Task>(allTasks.map((t) => [t.id, t]));
   const predIds = (task.dependencyIds || task.dependencies || []) as string[];
   return predIds
     .map((pId) => taskMap.get(pId))
-    .filter((p): p is Task => Boolean(p && p.status !== 'Done'));
+    .filter((p): p is Task => Boolean(p && !isTaskComplete(p, workflows)));
 }
 
 /**

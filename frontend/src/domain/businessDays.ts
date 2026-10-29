@@ -4,6 +4,8 @@
  * Avoids timezone drift by working strictly with YYYY-MM-DD strings and local dates.
  */
 
+import { parseDateValue } from '../utils/dateUtils';
+
 export function parseLocalDate(dateStr?: string | Date | null): Date {
   if (!dateStr) return new Date();
   if (dateStr instanceof Date) return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
@@ -75,14 +77,14 @@ export function diffBusinessDays(startStr?: string | null, endStr?: string | nul
 }
 
 export function formatShortDate(dateStr?: string | null): string {
-  if (!dateStr) return 'No date';
-  const d = parseLocalDate(dateStr);
+  const d = parseDateValue(dateStr);
+  if (!d) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export function formatFullDate(dateStr?: string | null): string {
-  if (!dateStr) return 'No date';
-  const d = parseLocalDate(dateStr);
+  const d = parseDateValue(dateStr);
+  if (!d) return '-';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -93,9 +95,11 @@ export interface RelativeDateLabel {
 }
 
 export function getRelativeDateLabel(dateStr?: string | null): RelativeDateLabel {
-  if (!dateStr) return { label: 'No date', isOverdue: false, isDueSoon: false };
-  const today = parseLocalDate(formatLocalDate(new Date()));
-  const target = parseLocalDate(dateStr);
+  const target = parseDateValue(dateStr);
+  if (!target) return { label: '-', isOverdue: false, isDueSoon: false };
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const diffTime = target.getTime() - today.getTime();
   const diffDays = Math.round(diffTime / (1000 * 3600 * 24));
 
@@ -107,10 +111,10 @@ export function getRelativeDateLabel(dateStr?: string | null): RelativeDateLabel
     };
   }
   if (diffDays === 0) {
-    return { label: 'Today', isOverdue: false, isDueSoon: true };
+    return { label: `Today (${formatShortDate(dateStr)})`, isOverdue: false, isDueSoon: true };
   }
   if (diffDays === 1) {
-    return { label: 'Tomorrow', isOverdue: false, isDueSoon: true };
+    return { label: `Tomorrow (${formatShortDate(dateStr)})`, isOverdue: false, isDueSoon: true };
   }
   if (diffDays <= 5) {
     return { label: `${diffDays}d left (${formatShortDate(dateStr)})`, isOverdue: false, isDueSoon: true };

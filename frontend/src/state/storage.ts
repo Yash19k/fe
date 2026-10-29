@@ -1,7 +1,6 @@
 /**
  * LocalStorage Persistence Layer for TaskFlow Pro.
- * Provides safe serialization, fallbacks to realistic seed data,
- * and non-destructive schema migration.
+ * Provides safe serialization for session identity and non-destructive schema migration.
  */
 
 
@@ -10,7 +9,6 @@ import {
   Project,
   Task,
   Workflow,
-  WorkflowStatus,
   Notification,
   AuditLogEntry,
   Company,
@@ -53,7 +51,7 @@ export function migrateTasks(rawTasks: any[]): Task[] {
     const normalizedType = t.type || 'Task';
 
     // 2. Map legacy 'To Do' status to 'Backlog'
-    const normalizedStatus = t.status === 'To Do' ? 'Backlog' : (t.status || 'Backlog');
+    const normalizedStatus = t.status === 'To Do' ? 'Backlog' : (t.status || '');
 
     // 3. Parent ID normalization
     const parentId = normalizedType === 'Epic' ? null : (t.parentId || null);
@@ -120,116 +118,6 @@ export function migrateProjects(rawProjects: any[]): Project[] {
       visibility: p.visibility || 'global',
       projectKey: p.projectKey || defaultKey,
       memberIds: Array.isArray(p.memberIds) ? p.memberIds : (p.ownerId ? [p.ownerId] : []),
-    };
-  });
-}
-
-export const DEFAULT_STANDARD_WORKFLOW: Workflow = {
-  id: 'wf-1',
-  name: 'TaskFlow Pro — Final Statuses',
-  statuses: [
-    { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280', allowedTransitions: ['In Progress'] },
-    { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Testing / QA', 'Blocked', 'On Hold'] },
-    { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7', allowedTransitions: ['Testing / QA', 'In Progress', 'Blocked', 'On Hold'] },
-    { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4', allowedTransitions: ['Done', 'In Progress', 'Blocked', 'On Hold'], roleRestrictions: { Done: ['Manager', 'Admin'] } },
-    { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
-    { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
-    { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
-  ],
-};
-
-/**
- * Migrates workflows from localStorage safely:
- * - Maps legacy 'To Do' status to 'Backlog'
- * - Ensures the 7 approved default statuses are present in default workflow wf-1 in exact required order
- * - Preserves custom workflows and user statuses
- */
-export function migrateWorkflows(rawWorkflows: any[]): Workflow[] {
-  if (!Array.isArray(rawWorkflows)) return [DEFAULT_STANDARD_WORKFLOW];
-
-  return rawWorkflows.map((wf) => {
-    if (!wf || !Array.isArray(wf.statuses)) return wf;
-
-    let updatedStatuses: WorkflowStatus[] = wf.statuses.map((st: any) => {
-      if (st.name === 'To Do') {
-        return {
-          ...st,
-          id: st.id === 'st-todo' ? 'st-backlog' : st.id,
-          name: 'Backlog',
-          allowedTransitions: (st.allowedTransitions || []).map((t: string) => (t === 'To Do' ? 'Backlog' : t)),
-        };
-      }
-      return {
-        ...st,
-        allowedTransitions: (st.allowedTransitions || []).map((t: string) => (t === 'To Do' ? 'Backlog' : t)),
-      };
-    });
-
-    const isDefaultWf =
-      wf.id === 'wf-1' ||
-      !wf.name ||
-      wf.name === 'Standard Engineering Flow' ||
-      wf.name === 'Custom Engineering Flow' ||
-      wf.name.endsWith(' Workflow') ||
-      /^[0-9a-fA-F-]{20,}/.test(wf.name);
-
-    if (isDefaultWf) {
-      const statusNames = new Set(updatedStatuses.map((s) => s.name));
-      const approvedSeven: WorkflowStatus[] = [
-        { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280', allowedTransitions: ['In Progress'] },
-        { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6', allowedTransitions: ['In Review', 'Testing / QA', 'Blocked', 'On Hold'] },
-        { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7', allowedTransitions: ['Testing / QA', 'In Progress', 'Blocked', 'On Hold'] },
-        { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4', allowedTransitions: ['Done', 'In Progress', 'Blocked', 'On Hold'], roleRestrictions: { Done: ['Manager', 'Admin'] } },
-        { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
-        { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316', allowedTransitions: ['Backlog', 'In Progress', 'In Review', 'Testing / QA'] },
-        { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E', allowedTransitions: ['In Progress'] },
-      ];
-
-      for (const st of approvedSeven) {
-        if (!statusNames.has(st.name)) {
-          updatedStatuses.push(st);
-          statusNames.add(st.name);
-        }
-      }
-
-      updatedStatuses = updatedStatuses.map((s) => {
-        const defaultMatch = approvedSeven.find((d) => d.name === s.name);
-        if (defaultMatch) {
-          const merged = Array.from(new Set([...(s.allowedTransitions || []), ...(defaultMatch.allowedTransitions || [])]));
-          return {
-            ...s,
-            allowedTransitions: merged.filter((m) => m !== 'To Do'),
-            color: defaultMatch.color,
-          };
-        }
-        return s;
-      });
-
-      // Sort according to exact standard default order:
-      // 1. Backlog, 2. In Progress, 3. In Review, 4. Testing / QA, 5. Blocked, 6. On Hold, 7. Done
-      const standardOrder = [
-        'Backlog',
-        'In Progress',
-        'In Review',
-        'Testing / QA',
-        'Blocked',
-        'On Hold',
-        'Done',
-      ];
-      updatedStatuses.sort((a, b) => {
-        const idxA = standardOrder.indexOf(a.name);
-        const idxB = standardOrder.indexOf(b.name);
-        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-        if (idxA !== -1) return -1;
-        if (idxB !== -1) return 1;
-        return 0;
-      });
-    }
-
-    return {
-      ...wf,
-      name: isDefaultWf ? 'TaskFlow Pro — Final Statuses' : wf.name,
-      statuses: updatedStatuses,
     };
   });
 }
@@ -307,7 +195,7 @@ export function loadInitialState(): InitialAppState {
       currentCompany: initialCompany,
       projects: [],
       tasks: [],
-      workflows: [DEFAULT_STANDARD_WORKFLOW],
+      workflows: [],
       notifications: [],
       auditLog: [],
       sprints: [],
@@ -320,7 +208,7 @@ export function loadInitialState(): InitialAppState {
       currentCompany: null,
       projects: [],
       tasks: [],
-      workflows: [DEFAULT_STANDARD_WORKFLOW],
+      workflows: [],
       notifications: [],
       auditLog: [],
       sprints: [],
@@ -347,4 +235,3 @@ export function saveStateToStorage(key: StorageKeyName, data: any): void {
     console.warn(`TaskFlow: Failed to save ${key} to localStorage:`, err);
   }
 }
-

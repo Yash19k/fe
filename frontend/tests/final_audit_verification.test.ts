@@ -41,7 +41,7 @@ describe('Final Audit Verification Tests (F-08, F-09, F-10, F-11)', () => {
       assert.equal(hasPermission('MEMBER' as any, PERMISSIONS.MANAGE_MEMBERS), false);
     });
 
-    test('canTransitionStatus allows uppercase ADMIN without restriction', () => {
+    test('canTransitionStatus allows uppercase ADMIN for explicitly configured transitions', () => {
       const workflow: Workflow = {
         id: 'wf-test',
         name: 'Strict Pipeline',
@@ -52,12 +52,12 @@ describe('Final Audit Verification Tests (F-08, F-09, F-10, F-11)', () => {
             category: 'todo',
             color: '#3B82F6',
             order: 0,
-            allowedTransitions: ['In Progress'],
+            allowedTransitions: ['Done'],
           },
           {
             id: 's-done',
             name: 'Done',
-            category: 'done',
+            category: 'completed',
             color: '#22C55E',
             order: 1,
             allowedTransitions: [],
@@ -85,17 +85,18 @@ describe('Final Audit Verification Tests (F-08, F-09, F-10, F-11)', () => {
           {
             id: 's-done',
             name: 'Done',
-            category: 'done',
+            category: 'completed',
             color: '#22C55E',
             order: 1,
             allowedTransitions: [],
           },
         ],
       };
+      workflow.statuses[0].roleRestrictions = { Done: ['Admin', 'Manager'] };
 
       const teammateDirectDone = canTransitionStatus('TEAMMATE' as any, 'In Progress', 'Done', workflow);
       assert.equal(teammateDirectDone.allowed, false);
-      assert.match(teammateDirectDone.reason || '', /Teammates must submit tasks for "In Review"/);
+      assert.match(teammateDirectDone.reason || '', /Only Admin\/Manager can move tasks into "Done"/);
     });
   });
 

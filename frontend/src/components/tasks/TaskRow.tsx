@@ -8,6 +8,14 @@ import { evaluateTaskSla } from '../../domain/sla';
 import { Check, Network, ListTodo, CornerDownRight } from 'lucide-react';
 import { WORK_ITEM_TYPES } from '../../domain/workItems';
 import { Task } from '../../types';
+import {
+  getCompletedWorkflowStatus,
+  getInitialWorkflowStatus,
+  findWorkflowStatus,
+  getWorkflowForProject,
+  getStatusNameForTask,
+  isWorkflowStatusComplete,
+} from '../../domain/workflow';
 
 export interface TaskRowProps {
   task: Task;
@@ -16,24 +24,47 @@ export interface TaskRowProps {
 }
 
 export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProps) {
-  const { openTaskDrawer, changeTaskStatus, allUsers, tasks } = useApp();
+  const {
+    openTaskDrawer,
+    changeTaskStatus,
+    allUsers,
+    tasks,
+    workflows,
+    currentProject,
+    currentWorkflow,
+    showToast,
+  } = useApp();
+  const workflow =
+    getWorkflowForProject(workflows, task.projectId) ||
+    (currentProject?.id === task.projectId ? currentWorkflow : undefined);
 
-  const isDone = task.status === 'Done';
-  const isBlocked = isTaskBlocked(task, tasks);
-  const slaInfo = evaluateTaskSla(task);
+  const isDone = isWorkflowStatusComplete(workflow, task.status);
+  const isBlocked = isTaskBlocked(task, tasks, workflow);
+  const slaInfo = evaluateTaskSla(task, undefined, workflow);
   const dateInfo = getRelativeDateLabel(task.dueDate);
 
   // Subtasks list
   const childSubtasks = tasks.filter((t) => t.parentId === task.id && t.type === WORK_ITEM_TYPES.SUBTASK);
   const subtasks = childSubtasks.length > 0 ? childSubtasks : (task.subtasks || []);
-  const completedSubtasks = subtasks.filter((s: any) => s.status === 'Done' || s.completed).length;
+  const completedSubtasks = subtasks.filter(
+    (subtask: any) =>
+      (subtask.status && isWorkflowStatusComplete(workflow, subtask.status)) ||
+      (!subtask.status && subtask.completed),
+  ).length;
 
   // Parent work item reference
   const parentTask = task.parentId ? tasks.find((t) => t.id === task.parentId) : null;
 
   function handleToggleDone(e: React.MouseEvent) {
     e.stopPropagation();
-    changeTaskStatus(task.id, isDone ? 'Backlog' : 'Done');
+    const targetStatus = isDone
+      ? getInitialWorkflowStatus(workflow)
+      : getCompletedWorkflowStatus(workflow);
+    if (!targetStatus) {
+      showToast('The project workflow does not define a target status for this action.', 'error');
+      return;
+    }
+    void changeTaskStatus(task.id, targetStatus.name);
   }
 
   const defaultGrid = 'grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px]';
@@ -120,26 +151,29 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
 
       {/* 3. Due Date */}
       <div className="flex items-center min-w-0 overflow-hidden" title={task.dueDate ? dateInfo.label : 'No due date'}>
-        {task.dueDate ? (
-          <span
-            className={`truncate text-xs ${
-              dateInfo.isOverdue
+        <span
+          className={`truncate text-xs ${
+            !task.dueDate || dateInfo.label === '-'
+              ? 'text-text-muted/40 font-mono'
+              : dateInfo.isOverdue
                 ? 'text-rose-400 font-semibold'
                 : dateInfo.isDueSoon
                   ? 'text-amber-400 font-medium'
                   : 'text-text-secondary'
-            }`}
-          >
-            {dateInfo.label}
-          </span>
-        ) : (
-          <span className="text-[11px] text-text-muted/40 font-mono">-</span>
-        )}
+          }`}
+        >
+          {dateInfo.label}
+        </span>
       </div>
 
       {/* 4. Status Badge */}
       <div className="flex items-center justify-center min-w-0">
-        <StatusBadge status={task.status} size="sm" />
+        <StatusBadge
+          status={task.status}
+          label={getStatusNameForTask(workflow, task)}
+          color={findWorkflowStatus(workflow, task.status)?.color}
+          size="sm"
+        />
       </div>
 
       {/* 5. Priority Badge */}

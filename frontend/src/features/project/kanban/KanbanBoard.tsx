@@ -100,7 +100,7 @@ export interface KanbanBoardProps {
   onOpenCreateTask?: () => void;
   title?: string;
   projectKey?: string;
-  /** Column whose tasks count as complete in the progress meter. Defaults to the last column. */
+  /** Configured workflow column whose tasks count as complete in the progress meter. */
   doneColumnId?: string;
   defaultView?: KanbanView;
   isLoading?: boolean;
@@ -219,8 +219,9 @@ export function KanbanBoard({
     return counts;
   }, [model.containers, items]);
 
-  const doneId = doneColumnId ?? columns[columns.length - 1]?.id ?? 'Done';
-  const doneCount = tasks.filter((t) => t.columnId === doneId).length;
+  const doneCount = doneColumnId
+    ? tasks.filter((t) => t.columnId === doneColumnId).length
+    : 0;
   const activeTask = activeId ? tasksById.get(activeId) : undefined;
 
   const sensors = useSensors(
@@ -356,6 +357,14 @@ export function KanbanBoard({
               </div>
             ))}
           </div>
+        </div>
+      );
+    }
+
+    if (columns.length === 0) {
+      return (
+        <div className="kb-state" role="status">
+          No workflow statuses are configured for this project.
         </div>
       );
     }
