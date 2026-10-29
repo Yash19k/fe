@@ -495,9 +495,20 @@ export interface CreateWorkItemApiInput {
   projectId: string;
   sprintId?: string | null;
   parentWorkItemId?: string | null;
+  plannedStartDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
   type: string;
   title: string;
   description?: string | null;
+  businessGoal?: string | null;
+  successCriteria?: string | null;
+  acceptanceCriteria?: string | null;
+  severity?: string | null;
+  stepsToReproduce?: string | null;
+  expectedBehavior?: string | null;
+  actualBehavior?: string | null;
+  environment?: string | null;
+  estimatedHours?: number | null;
   priority?: string | null;
   status?: string;
   dueDate?: string | null;
@@ -523,6 +534,12 @@ export async function createWorkItemApi(payload: CreateWorkItemApiInput): Promis
   return request<any>('/api/work-items', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getWorkItemApi(workItemId: string): Promise<any> {
+  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}`, {
+    method: 'GET',
   });
 }
 
@@ -565,7 +582,10 @@ export async function uploadWorkItemAttachmentsApi(
   return response.json();
 }
 
-export async function updateWorkItemApi(workItemId: string, updates: any): Promise<any> {
+export async function updateWorkItemApi(
+  workItemId: string,
+  updates: { version: number; [key: string]: any }
+): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
@@ -659,21 +679,23 @@ export async function getWorkItemDependenciesApi(workItemId: string): Promise<an
 
 export async function addWorkItemDependencyApi(
   workItemId: string,
-  dependsOnWorkItemId: string
+  dependsOnWorkItemId: string,
+  version: number
 ): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/dependencies`, {
     method: 'POST',
-    body: JSON.stringify({ dependsOnWorkItemId }),
+    body: JSON.stringify({ dependsOnWorkItemId, version }),
   });
 }
 
 export async function deleteWorkItemDependencyApi(
   workItemId: string,
-  dependsOnWorkItemId: string
+  dependsOnWorkItemId: string,
+  version: number
 ): Promise<any> {
   return request<any>(
     `/api/work-items/${encodeURIComponent(workItemId)}/dependencies/${encodeURIComponent(dependsOnWorkItemId)}`,
-    { method: 'DELETE' }
+    { method: 'DELETE', body: JSON.stringify({ version }) }
   );
 }
 
@@ -1016,6 +1038,23 @@ export function frontendTypeToBackend(type: WorkItemType | string): string {
   }
 }
 
+function backendDueDateToDateOnly(value: string | Date | null | undefined): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 export function backendTypeToFrontend(type?: string | null): WorkItemType {
   switch (type?.toUpperCase()) {
     case 'EPIC': return 'Epic';
@@ -1028,14 +1067,14 @@ export function backendTypeToFrontend(type?: string | null): WorkItemType {
   }
 }
 
-export function backendPriorityToFrontend(priority?: string | null): Priority {
+export function backendPriorityToFrontend(priority?: string | null): Priority | null {
+  if (priority == null) return null;
   switch (priority?.toUpperCase()) {
     case 'URGENT': return 'Urgent';
     case 'HIGH': return 'High';
     case 'LOW': return 'Low';
-    case 'MEDIUM':
-    default:
-      return 'Medium';
+    case 'MEDIUM': return 'Medium';
+    default: return null;
   }
 }
 
@@ -1164,6 +1203,8 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     if (labelName) labels = [labelName];
   }
 
+  const rawSubtasks = entity.subtasks || item.subtasks || entity.children || item.children;
+
   return {
     id: entity.id || item.id,
     projectId: entity.projectId || item.projectId || fallbackProjectId || '',
@@ -1178,20 +1219,43 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
     assigneeIds,
     assignees,
     creatorId: entity.createdById || entity.creatorId || item.createdById || item.creatorId || '',
-    startDate: entity.startDate || item.startDate || null,
-    dueDate: entity.dueDate || item.dueDate || null,
-    estimateHours: (entity.estimateHours ?? item.estimateHours) ? Number(entity.estimateHours ?? item.estimateHours) : null,
+    startDate: entity.plannedStartDate || entity.startDate || item.plannedStartDate || item.startDate || null,
+    dueDate: backendDueDateToDateOnly(entity.dueDate ?? item.dueDate),
+    plannedDurationWorkingDays: entity.plannedDurationWorkingDays ?? item.plannedDurationWorkingDays ?? null,
+    estimateHours:
+      (entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours) == null
+        ? null
+        : Number(entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours),
     actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
     dependencyIds: Array.isArray(entity.dependencies || item.dependencies)
       ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
     labels,
-    subtasks: Array.isArray(entity.subtasks || item.subtasks) ? (entity.subtasks || item.subtasks) : [],
+    businessGoal: entity.businessGoal ?? item.businessGoal ?? '',
+    successCriteria: entity.successCriteria ?? item.successCriteria ?? '',
+    acceptanceCriteria: entity.acceptanceCriteria ?? item.acceptanceCriteria ?? '',
+    severity: entity.severity ?? item.severity ?? undefined,
+    stepsToReproduce: entity.stepsToReproduce ?? item.stepsToReproduce ?? '',
+    expectedBehavior: entity.expectedBehavior ?? item.expectedBehavior ?? '',
+    actualBehavior: entity.actualBehavior ?? item.actualBehavior ?? '',
+    environment: entity.environment ?? item.environment ?? '',
+    subtasks: Array.isArray(rawSubtasks)
+      ? rawSubtasks.map((subtask: any) => ({
+          ...subtask,
+          id: subtask.id,
+          title: subtask.title,
+          status: backendStatusToFrontend(subtask.status),
+          completed: subtask.status
+            ? backendStatusToFrontend(subtask.status) === 'Done'
+            : Boolean(subtask.completed),
+          assigneeId: subtask.assigneeId || subtask.assigneeIds?.[0] || null,
+        }))
+      : [],
     comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
     timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
     recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
     sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
-    version: entity.version ? Number(entity.version) : 1,
+    version: Number(entity.version ?? item.version ?? 1),
     createdAt: entity.createdAt || item.createdAt || new Date().toISOString(),
     updatedAt: entity.updatedAt || item.updatedAt || new Date().toISOString(),
     attachments: Array.isArray(entity.attachments || item.attachments)

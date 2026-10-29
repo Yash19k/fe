@@ -12,6 +12,7 @@ import { WorkItemComment } from "../entities/work.item.comment.entity";
 import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
 import { WorkItemAttachment } from "../entities/work.item.attachment.entity";
 import { WorkItemDependency } from "../entities/work.item.dependency.entity";
+import { ProjectLabel } from "../entities/project.label.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { uploadAndPersistWorkItemAttachments } from "../services/work.item.attachment.service";
 import { AppError } from "../errors/app.error";
@@ -119,6 +120,40 @@ export const updateWorkItem = async (
     success: true,
     message: "Work item updated successfully",
     data: result,
+  });
+};
+
+export const getWorkItemById = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const actor = await getActiveActor(requireUserId(req));
+  const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
+  const [assignments, label] = await Promise.all([
+    AppDataSource.getRepository(WorkItemAssignee).find({
+      where: { workItemId: workItem.id },
+      relations: { user: true },
+    }),
+    workItem.labelId
+      ? AppDataSource.getRepository(ProjectLabel).findOne({
+          where: { id: workItem.labelId, projectId: workItem.projectId },
+        })
+      : Promise.resolve(null),
+  ]);
+  const assigneeIds = assignments.map((assignment) => assignment.userId);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      ...workItem,
+      label,
+      labels: label ? [label] : [],
+      assignments,
+      assigneeIds,
+      assigneeId: assigneeIds[0] || null,
+      assignees: assignments.map((assignment) => assignment.user).filter(Boolean),
+      sla: getSlaSnapshot(workItem),
+    },
   });
 };
 

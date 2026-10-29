@@ -66,7 +66,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     showToast,
   } = useApp();
 
-  const [snapshotVersion] = useState<number>(task.version || 1);
+  const [snapshotVersion, setSnapshotVersion] = useState<number>(task.version || 1);
   const [activeTab, setActiveTab] = useState<string>(
     task.type === WORK_ITEM_TYPES.SUBTASK ? 'dependencies' : 'subtasks'
   );
@@ -97,6 +97,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       ? [...task.assigneeIds]
       : (task.assigneeId ? [task.assigneeId] : []),
     labels: task.labels ? [...task.labels] : [],
+    startDate: toDateInputValue(task.startDate),
     dueDate: toDateInputValue(task.dueDate),
     estimateHours: task.estimateHours !== null && task.estimateHours !== undefined ? task.estimateHours : '',
     parentId: task.parentId || '',
@@ -111,10 +112,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }), [task]);
 
   const [draft, setDraft] = useState(initialDraft);
-
-  useEffect(() => {
-    setDraft(initialDraft);
-  }, [initialDraft]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
@@ -164,6 +161,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       draft.type !== initialDraft.type ||
       draft.status !== initialDraft.status ||
       draft.priority !== initialDraft.priority ||
+      draft.startDate !== initialDraft.startDate ||
       draft.dueDate !== initialDraft.dueDate ||
       String(draft.estimateHours) !== String(initialDraft.estimateHours) ||
       draft.parentId !== initialDraft.parentId ||
@@ -179,6 +177,20 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       draft.environment !== initialDraft.environment
     );
   }, [draft, initialDraft]);
+
+  useEffect(() => {
+    if (!isDirty) {
+      setDraft(initialDraft);
+      setSnapshotVersion(task.version || 1);
+    }
+  }, [initialDraft, isDirty, task.version]);
+
+  const dateRangeError =
+    draft.startDate &&
+    draft.dueDate &&
+    draft.dueDate <= draft.startDate
+      ? 'Due date must be later than start date.'
+      : null;
 
   // Live timer tick
   useEffect(() => {
@@ -243,9 +255,18 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   function handleToggleLabel(labelName: string) {
     setDraft((prev) => ({
       ...prev,
-      labels: prev.labels.includes(labelName)
-        ? prev.labels.filter((l) => l !== labelName)
-        : [...prev.labels, labelName],
+      labels: prev.labels.includes(labelName) ? [] : [labelName],
+    }));
+  }
+
+  function handleDraftTypeChange(value: string) {
+    const nextType = value as WorkItemType;
+    const keepsParent = getEligibleParents(nextType, task.id, tasks, task.projectId)
+      .some((parent) => parent.id === draft.parentId);
+    setDraft((prev) => ({
+      ...prev,
+      type: nextType,
+      parentId: keepsParent ? prev.parentId : '',
     }));
   }
 
@@ -271,6 +292,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       }
     }
 
+    if (dateRangeError) {
+      showToast(dateRangeError, 'error');
+      return;
+    }
+
     setIsSaving(true);
     try {
       const allAssignees = draft.assigneeIds.length > 0
@@ -288,22 +314,30 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         assigneeId: allAssignees[0] || null,
         assigneeIds: allAssignees,
         labels: draft.labels,
+        startDate: draft.startDate || null,
         dueDate: draft.dueDate || null,
         estimateHours: draft.estimateHours !== '' ? Number(draft.estimateHours) : null,
         parentId: draft.parentId || null,
-        businessGoal: draft.businessGoal,
-        successCriteria: draft.successCriteria,
-        acceptanceCriteria: draft.acceptanceCriteria,
-        severity: draft.severity,
-        stepsToReproduce: draft.stepsToReproduce,
-        expectedBehavior: draft.expectedBehavior,
-        actualBehavior: draft.actualBehavior,
-        environment: draft.environment,
       };
+      if (draft.type === WORK_ITEM_TYPES.EPIC) {
+        updates.businessGoal = draft.businessGoal;
+        updates.successCriteria = draft.successCriteria;
+      } else if (draft.type === WORK_ITEM_TYPES.STORY) {
+        updates.acceptanceCriteria = draft.acceptanceCriteria;
+      } else if (draft.type === WORK_ITEM_TYPES.BUG) {
+        updates.severity = draft.severity;
+        updates.stepsToReproduce = draft.stepsToReproduce;
+        updates.expectedBehavior = draft.expectedBehavior;
+        updates.actualBehavior = draft.actualBehavior;
+        updates.environment = draft.environment;
+      }
 
       const result = await updateTask(task.id, updates, snapshotVersion);
+      if (result?.conflict) return;
       if (result && !result.success && result.reason) {
         showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
+      } else if (result?.success && result.task?.version) {
+        setSnapshotVersion(result.task.version);
       }
     } catch (err: any) {
       showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
@@ -325,11 +359,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     }
   }
 
-  function handleAddSubtaskSubmit(e: React.FormEvent) {
+  async function handleAddSubtaskSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newSubtaskTitle.trim()) return;
-    addSubtask(task.id, newSubtaskTitle.trim());
-    setNewSubtaskTitle('');
+    if (await addSubtask(task.id, newSubtaskTitle.trim())) {
+      setNewSubtaskTitle('');
+    }
   }
 
   async function handleAddCommentSubmit(e: React.FormEvent) {
@@ -497,7 +532,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <label className="text-[11px] text-text-muted block mb-1">Type</label>
             <select
               value={draft.type}
-              onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value as WorkItemType }))}
+              onChange={(e) => handleDraftTypeChange(e.target.value)}
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               {WORK_ITEM_TYPE_LIST.map((t) => (
@@ -540,6 +575,17 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             </select>
           </div>
 
+          {/* Start Date */}
+          <div>
+            <label className="text-[11px] text-text-muted block mb-1">Start Date</label>
+            <input
+              type="date"
+              value={toDateInputValue(draft.startDate)}
+              onChange={(e) => setDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+              className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
+            />
+          </div>
+
           {/* Due Date */}
           <div>
             <label className="text-[11px] text-text-muted block mb-1">Due Date</label>
@@ -549,6 +595,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               onChange={(e) => setDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
             />
+            {dateRangeError && (
+              <p className="mt-1 text-[10px] text-rose-400">{dateRangeError}</p>
+            )}
           </div>
 
           {/* Estimated Hours */}

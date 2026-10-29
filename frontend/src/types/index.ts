@@ -129,6 +129,7 @@ export interface Task {
   creatorId?: string;
   parentId?: string | null;
   startDate?: string | null;
+  plannedDurationWorkingDays?: number | null;
   dueDate?: string | null;
   estimatedHours?: number | null;
   estimateHours?: number | null;
@@ -325,14 +326,14 @@ export interface AppContextValue {
     reason?: string;
   }>;
   uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
-  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string }> | { success: boolean; reason?: string };
+  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }>;
   deleteTask: (taskId: string) => void;
   changeTaskStatus: (taskId: string, newStatus: string) => boolean;
   requestReschedule: (taskId: string, newDueDate: string) => void;
   confirmRescheduleImpact: () => void;
   addDependency: (predecessorId: string, successorId: string) => any;
   removeDependency: (predecessorId: string, successorId: string) => void;
-  addSubtask: (taskId: string, title: string, assigneeId?: string | null) => Promise<void> | void;
+  addSubtask: (taskId: string, title: string, assigneeId?: string | null) => Promise<boolean>;
   toggleSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
   deleteSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
   loadCrossProjectTasks?: () => Promise<void>;
@@ -377,5 +378,6 @@ export interface AppContextValue {
   isLoadingProjectData?: boolean;
   projectDataError?: string | null;
   reloadProjectData?: () => Promise<void>;
+  reloadWorkItem: (workItemId: string) => Promise<Task>;
   [key: string]: any;
 }

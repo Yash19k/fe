@@ -94,6 +94,48 @@ __decorate([
     __metadata("design:type", Object)
 ], WorkItem.prototype, "description", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "business_goal", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "businessGoal", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "success_criteria", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "successCriteria", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "acceptance_criteria", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "acceptanceCriteria", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "bug_severity", type: "varchar", length: 20, nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "severity", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "steps_to_reproduce", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "stepsToReproduce", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "expected_behavior", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "expectedBehavior", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "actual_behavior", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "actualBehavior", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "environment", type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "environment", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: "estimated_hours",
+        type: "numeric",
+        precision: 8,
+        scale: 2,
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "estimatedHours", void 0);
+__decorate([
     (0, typeorm_1.Column)({
         type: "enum",
         enum: WorkItemStatus,
@@ -185,6 +227,10 @@ __decorate([
     (0, typeorm_1.UpdateDateColumn)({ name: "updated_at", type: "timestamptz" }),
     __metadata("design:type", Date)
 ], WorkItem.prototype, "updatedAt", void 0);
+__decorate([
+    (0, typeorm_1.VersionColumn)({ type: "integer", default: 1 }),
+    __metadata("design:type", Number)
+], WorkItem.prototype, "version", void 0);
 __decorate([
     (0, typeorm_1.ManyToOne)(() => project_entity_1.Project, (project) => project.workItems, {
         nullable: false,

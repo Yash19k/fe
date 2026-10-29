@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getWorkItemSlaAudit = exports.getWorkItemSla = exports.resolveWorkItemEscalation = exports.escalateWorkItem = exports.deleteWorkItem = exports.uploadAttachmentsToWorkItem = exports.getProjectWorkItems = exports.updateWorkItem = exports.createWorkItem = void 0;
+exports.getWorkItemSlaAudit = exports.getWorkItemSla = exports.resolveWorkItemEscalation = exports.escalateWorkItem = exports.deleteWorkItem = exports.uploadAttachmentsToWorkItem = exports.getProjectWorkItems = exports.getWorkItemById = exports.updateWorkItem = exports.createWorkItem = void 0;
 const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data.source");
 const work_item_entity_1 = require("../entities/work.item.entity");
@@ -9,6 +9,7 @@ const work_item_comment_entity_1 = require("../entities/work.item.comment.entity
 const work_item_time_entry_entity_1 = require("../entities/work.item.time.entry.entity");
 const work_item_attachment_entity_1 = require("../entities/work.item.attachment.entity");
 const work_item_dependency_entity_1 = require("../entities/work.item.dependency.entity");
+const project_label_entity_1 = require("../entities/project.label.entity");
 const audit_log_entity_1 = require("../entities/audit.log.entity");
 const work_item_attachment_service_1 = require("../services/work.item.attachment.service");
 const app_error_1 = require("../errors/app.error");
@@ -78,6 +79,36 @@ const updateWorkItem = async (req, res) => {
     });
 };
 exports.updateWorkItem = updateWorkItem;
+const getWorkItemById = async (req, res) => {
+    const actor = await (0, work_item_service_1.getActiveActor)(requireUserId(req));
+    const workItem = await (0, work_item_service_1.getAccessibleWorkItem)(requireWorkItemId(req), actor);
+    const [assignments, label] = await Promise.all([
+        data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
+            where: { workItemId: workItem.id },
+            relations: { user: true },
+        }),
+        workItem.labelId
+            ? data_source_1.AppDataSource.getRepository(project_label_entity_1.ProjectLabel).findOne({
+                where: { id: workItem.labelId, projectId: workItem.projectId },
+            })
+            : Promise.resolve(null),
+    ]);
+    const assigneeIds = assignments.map((assignment) => assignment.userId);
+    res.status(200).json({
+        success: true,
+        data: {
+            ...workItem,
+            label,
+            labels: label ? [label] : [],
+            assignments,
+            assigneeIds,
+            assigneeId: assigneeIds[0] || null,
+            assignees: assignments.map((assignment) => assignment.user).filter(Boolean),
+            sla: (0, sla_service_1.getSlaSnapshot)(workItem),
+        },
+    });
+};
+exports.getWorkItemById = getWorkItemById;
 // ==========================================
 // LIST PROJECT WORK ITEMS
 // ==========================================

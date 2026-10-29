@@ -3,12 +3,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateWorkItemDependencyBody = exports.validateWorkItemDependencyParams = exports.validateWorkItemId = exports.updateWorkItemSchema = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
+exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateWorkItemDependencyVersion = exports.validateWorkItemDependencyBody = exports.validateWorkItemDependencyParams = exports.validateWorkItemId = exports.workItemDependencyBodySchema = exports.workItemDependencyVersionBodySchema = exports.updateWorkItemSchema = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
 const app_error_1 = require("../errors/app.error");
 const recurrence_service_1 = require("../services/recurrence.service");
+const work_item_dependency_service_1 = require("../services/work-item-dependency.service");
 const assigneeSchema = joi_1.default.object({
     userId: joi_1.default.string().guid({ version: ["uuidv4"] }).required(),
     startDate: joi_1.default.string()
@@ -95,6 +96,15 @@ exports.createWorkItemSchema = joi_1.default.object({
     description: joi_1.default.string()
         .allow("", null)
         .optional(),
+    businessGoal: joi_1.default.string().allow("", null).optional(),
+    successCriteria: joi_1.default.string().allow("", null).optional(),
+    acceptanceCriteria: joi_1.default.string().allow("", null).optional(),
+    severity: joi_1.default.string().valid("Low", "Medium", "High", "Critical").allow(null).optional(),
+    stepsToReproduce: joi_1.default.string().allow("", null).optional(),
+    expectedBehavior: joi_1.default.string().allow("", null).optional(),
+    actualBehavior: joi_1.default.string().allow("", null).optional(),
+    environment: joi_1.default.string().allow("", null).optional(),
+    estimatedHours: joi_1.default.number().min(0).precision(2).allow(null).optional(),
     priority: joi_1.default.string()
         .valid(...Object.values(work_item_entity_1.WorkItemPriority))
         .allow(null)
@@ -136,12 +146,29 @@ exports.createWorkItemSchema = joi_1.default.object({
     .custom((value, helpers) => {
     const hasStart = value.plannedStartDate != null;
     const hasDuration = value.plannedDurationWorkingDays != null;
-    if (hasStart !== hasDuration) {
+    if (hasDuration && !hasStart) {
         return helpers.error("any.invalid", {
-            message: "Planned start date and working-day duration must be provided together.",
+            message: "A planned start date is required when a working-day duration is provided.",
         });
     }
     return value;
+})
+    .custom((value, helpers) => {
+    if (value.plannedStartDate && value.dueDate) {
+        const parsedDueDate = value.dueDate instanceof Date
+            ? value.dueDate
+            : new Date(value.dueDate);
+        if (Number.isNaN(parsedDueDate.getTime()))
+            return value;
+        const dueDate = (0, work_item_dependency_service_1.getProjectDate)(parsedDueDate);
+        if (dueDate <= value.plannedStartDate) {
+            return helpers.error("date.order");
+        }
+    }
+    return value;
+})
+    .messages({
+    "date.order": "dueDate must be greater than plannedStartDate.",
 })
     .unknown(false);
 const validateCreateWorkItem = (req, res, next) => {
@@ -167,9 +194,19 @@ exports.updateWorkItemSchema = joi_1.default.object({
         .optional(),
     title: joi_1.default.string().trim().min(1).max(255).optional(),
     description: joi_1.default.string().allow("", null).optional(),
+    businessGoal: joi_1.default.string().allow("", null).optional(),
+    successCriteria: joi_1.default.string().allow("", null).optional(),
+    acceptanceCriteria: joi_1.default.string().allow("", null).optional(),
+    severity: joi_1.default.string().valid("Low", "Medium", "High", "Critical").allow(null).optional(),
+    stepsToReproduce: joi_1.default.string().allow("", null).optional(),
+    expectedBehavior: joi_1.default.string().allow("", null).optional(),
+    actualBehavior: joi_1.default.string().allow("", null).optional(),
+    environment: joi_1.default.string().allow("", null).optional(),
+    estimatedHours: joi_1.default.number().min(0).precision(2).allow(null).optional(),
     type: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemType)).optional(),
-    priority: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemPriority)).optional(),
+    priority: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemPriority)).allow(null).optional(),
     status: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemStatus)).optional(),
+    version: joi_1.default.number().integer().min(1).required(),
     dueDate: joi_1.default.date().iso().allow(null).optional(),
     plannedStartDate: dateOnlySchema.allow(null).optional(),
     plannedDurationWorkingDays: joi_1.default.number().integer().min(1).allow(null).optional(),
@@ -198,6 +235,15 @@ const dependencyParamsSchema = joi_1.default.object({
         .guid({ version: ["uuidv4"] })
         .required(),
 }).unknown(false);
+exports.workItemDependencyVersionBodySchema = joi_1.default.object({
+    version: joi_1.default.number().integer().min(1).required(),
+}).unknown(false);
+exports.workItemDependencyBodySchema = joi_1.default.object({
+    dependsOnWorkItemId: joi_1.default.string()
+        .guid({ version: ["uuidv4"] })
+        .required(),
+    version: joi_1.default.number().integer().min(1).required(),
+}).unknown(false);
 const validateParams = (schema, req, next) => {
     const { error, value } = schema.validate(req.params, {
         abortEarly: false,
@@ -214,11 +260,7 @@ exports.validateWorkItemId = validateWorkItemId;
 const validateWorkItemDependencyParams = (req, _res, next) => validateParams(dependencyParamsSchema, req, next);
 exports.validateWorkItemDependencyParams = validateWorkItemDependencyParams;
 const validateWorkItemDependencyBody = (req, _res, next) => {
-    const { error, value } = joi_1.default.object({
-        dependsOnWorkItemId: joi_1.default.string()
-            .guid({ version: ["uuidv4"] })
-            .required(),
-    }).unknown(false).validate(req.body, {
+    const { error, value } = exports.workItemDependencyBodySchema.validate(req.body, {
         abortEarly: false,
         convert: true,
     });
@@ -229,6 +271,18 @@ const validateWorkItemDependencyBody = (req, _res, next) => {
     next();
 };
 exports.validateWorkItemDependencyBody = validateWorkItemDependencyBody;
+const validateWorkItemDependencyVersion = (req, _res, next) => {
+    const { error, value } = exports.workItemDependencyVersionBodySchema.validate(req.body, {
+        abortEarly: false,
+        convert: true,
+    });
+    if (error) {
+        throw new app_error_1.AppError(error.details.map((detail) => detail.message).join(", "), 400, "VALIDATION_ERROR");
+    }
+    req.body = value;
+    next();
+};
+exports.validateWorkItemDependencyVersion = validateWorkItemDependencyVersion;
 const validateUpdateWorkItem = (req, _res, next) => {
     const { error, value } = exports.updateWorkItemSchema.validate(req.body, {
         abortEarly: false,

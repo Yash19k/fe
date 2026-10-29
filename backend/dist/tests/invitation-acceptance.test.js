@@ -163,7 +163,6 @@ const validPayload = {
             strict_1.default.match(html, /expires after 24 hours/);
             strict_1.default.match(html, /can only be used once/);
             strict_1.default.doesNotMatch(html, /one-time invitation token/i);
-            strict_1.default.doesNotMatch(html, new RegExp(`<p[^>]*>\\s*${new URLSearchParams(new URL(invitationUrl).hash.split("?")[1]).get("token")}\\s*</p>`));
             strict_1.default.match(html, new RegExp(`href="${invitationUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
             strict_1.default.equal(String(submittedEmail.text).includes(invitationUrl), true);
             const invitationPage = new URL(invitationUrl);
@@ -171,6 +170,7 @@ const validPayload = {
             strict_1.default.equal(invitationPage.hash.split("?")[0], "#/accept-invitation");
             const rawToken = new URLSearchParams(invitationPage.hash.split("?")[1]).get("token");
             strict_1.default.ok(rawToken);
+            strict_1.default.doesNotMatch(html, new RegExp(`<p[^>]*>\\s*${rawToken}\\s*</p>`));
             strict_1.default.equal(savedTokenHash, (0, crypto_1.createHash)("sha256").update(rawToken).digest("hex"));
         }
         finally {

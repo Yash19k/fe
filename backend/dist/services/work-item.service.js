@@ -27,6 +27,66 @@ const notification_service_1 = require("./notification.service");
 const sla_service_1 = require("./sla.service");
 const work_item_workflow_service_1 = require("./work-item-workflow.service");
 const work_item_dependency_service_1 = require("./work-item-dependency.service");
+function dateOnly(value) {
+    if (value == null)
+        return null;
+    return (0, work_item_dependency_service_1.getProjectDate)(value);
+}
+function assertWorkItemDateRange(plannedStartDate, dueDate) {
+    const dueDateOnly = dateOnly(dueDate);
+    if (plannedStartDate && dueDateOnly && dueDateOnly <= plannedStartDate) {
+        throw new app_error_1.AppError("Due date must be later than planned start date.", 400, "INVALID_WORK_ITEM_DATE_RANGE");
+    }
+}
+async function validateWorkItemParent(manager, input) {
+    const { type, parentWorkItemId, projectId, organizationId, workItemId } = input;
+    if (type === work_item_entity_1.WorkItemType.EPIC && parentWorkItemId) {
+        throw new app_error_1.AppError("An Epic cannot have a parent work item.", 400, "INVALID_PARENT_WORK_ITEM");
+    }
+    if (type === work_item_entity_1.WorkItemType.SUBTASK && !parentWorkItemId) {
+        throw new app_error_1.AppError("A Subtask must have a parent work item (Story, Task, or Bug).", 400, "INVALID_PARENT_WORK_ITEM");
+    }
+    if (!parentWorkItemId)
+        return;
+    if (parentWorkItemId === workItemId) {
+        throw new app_error_1.AppError("A work item cannot be its own parent.", 400, "INVALID_PARENT_WORK_ITEM");
+    }
+    const repository = manager.getRepository(work_item_entity_1.WorkItem);
+    const parent = await repository.findOne({
+        where: { id: parentWorkItemId, projectId, organizationId },
+        select: { id: true, type: true, parentWorkItemId: true },
+    });
+    if (!parent) {
+        throw new app_error_1.AppError("Parent work item not found in this project", 404, "PARENT_WORK_ITEM_NOT_FOUND");
+    }
+    const parentTypeIsValid = type === work_item_entity_1.WorkItemType.SUBTASK
+        ? [work_item_entity_1.WorkItemType.STORY, work_item_entity_1.WorkItemType.TASK, work_item_entity_1.WorkItemType.BUG].includes(parent.type)
+        : parent.type === work_item_entity_1.WorkItemType.EPIC;
+    if (!parentTypeIsValid) {
+        throw new app_error_1.AppError(type === work_item_entity_1.WorkItemType.SUBTASK
+            ? "A Subtask parent must be a Story, Task, or Bug."
+            : "A Story, Task, or Bug can only belong to an Epic.", 400, "INVALID_PARENT_WORK_ITEM");
+    }
+    let ancestorId = parent.parentWorkItemId;
+    const visited = new Set([parent.id]);
+    while (ancestorId) {
+        if (ancestorId === workItemId) {
+            throw new app_error_1.AppError("Parent assignment would create a hierarchy cycle.", 400, "INVALID_PARENT_WORK_ITEM");
+        }
+        if (visited.has(ancestorId)) {
+            throw new app_error_1.AppError("The existing work item hierarchy contains a cycle.", 400, "INVALID_PARENT_WORK_ITEM");
+        }
+        visited.add(ancestorId);
+        const ancestor = await repository.findOne({
+            where: { id: ancestorId, projectId, organizationId },
+            select: { id: true, parentWorkItemId: true },
+        });
+        if (!ancestor) {
+            throw new app_error_1.AppError("Parent work item not found in this project", 404, "PARENT_WORK_ITEM_NOT_FOUND");
+        }
+        ancestorId = ancestor.parentWorkItemId;
+    }
+}
 const isAdmin = (actor) => actor.role === "ADMIN";
 exports.isAdmin = isAdmin;
 function clearSlaState(workItem) {
@@ -150,25 +210,19 @@ async function validateAssignees(assignees, projectId, organizationId, manager) 
     }
 }
 async function createWorkItemOrchestration(actor, input) {
-    const { projectId, sprintId, parentWorkItemId, labelId, labels, type, title, description, priority, status = work_item_entity_1.WorkItemStatus.BACKLOG, dueDate, plannedStartDate, plannedDurationWorkingDays, assignees = [], recurrence, slaDeadline, } = input;
+    const { projectId, sprintId, parentWorkItemId, labelId, labels, type, title, description, businessGoal, successCriteria, acceptanceCriteria, severity, stepsToReproduce, expectedBehavior, actualBehavior, environment, estimatedHours, priority, status = work_item_entity_1.WorkItemStatus.BACKLOG, dueDate, plannedStartDate, plannedDurationWorkingDays, assignees = [], recurrence, slaDeadline, } = input;
+    assertWorkItemDateRange(plannedStartDate, dueDate);
     if (recurrence) {
         (0, recurrence_service_1.validateRecurrence)(recurrence, type);
     }
     const result = await data_source_1.AppDataSource.transaction(async (manager) => {
         const project = await assertAccessibleProject(projectId, actor, manager);
-        if (parentWorkItemId) {
-            const parent = await manager.getRepository(work_item_entity_1.WorkItem).findOne({
-                where: {
-                    id: parentWorkItemId,
-                    projectId: project.id,
-                    organizationId: actor.organizationId,
-                },
-                select: { id: true },
-            });
-            if (!parent) {
-                throw new app_error_1.AppError("Parent work item not found in this project", 404, "PARENT_WORK_ITEM_NOT_FOUND");
-            }
-        }
+        await validateWorkItemParent(manager, {
+            type,
+            parentWorkItemId: parentWorkItemId ?? null,
+            projectId: project.id,
+            organizationId: actor.organizationId,
+        });
         if (sprintId) {
             const sprint = await manager.getRepository(sprint_entities_1.Sprint).findOne({
                 where: {
@@ -203,9 +257,20 @@ async function createWorkItemOrchestration(actor, input) {
             type,
             title: title.trim(),
             description: description?.trim() || null,
+            businessGoal: businessGoal ?? null,
+            successCriteria: successCriteria ?? null,
+            acceptanceCriteria: acceptanceCriteria ?? null,
+            severity: severity ?? null,
+            stepsToReproduce: stepsToReproduce ?? null,
+            expectedBehavior: expectedBehavior ?? null,
+            actualBehavior: actualBehavior ?? null,
+            environment: environment ?? null,
+            estimatedHours: estimatedHours == null ? null : String(estimatedHours),
             priority: priority ?? null,
             status,
             dueDate: dueDate == null ? null : new Date(dueDate),
+            plannedStartDate: plannedStartDate ?? null,
+            plannedDurationWorkingDays: plannedDurationWorkingDays ?? null,
         });
         const savedWorkItem = await workItemRepository.save(workItem);
         if (slaDeadline && !savedWorkItem.priority) {
@@ -256,6 +321,15 @@ async function createWorkItemOrchestration(actor, input) {
             newState: {
                 title: savedWorkItem.title,
                 description: savedWorkItem.description,
+                businessGoal: savedWorkItem.businessGoal,
+                successCriteria: savedWorkItem.successCriteria,
+                acceptanceCriteria: savedWorkItem.acceptanceCriteria,
+                severity: savedWorkItem.severity,
+                stepsToReproduce: savedWorkItem.stepsToReproduce,
+                expectedBehavior: savedWorkItem.expectedBehavior,
+                actualBehavior: savedWorkItem.actualBehavior,
+                environment: savedWorkItem.environment,
+                estimatedHours: savedWorkItem.estimatedHours,
                 status: savedWorkItem.status,
                 priority: savedWorkItem.priority,
                 type: savedWorkItem.type,
@@ -364,9 +438,24 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
             throw new app_error_1.AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
         }
         const project = await assertAccessibleProject(workItem.projectId, actor, manager);
+        if (workItem.version !== body.version) {
+            throw new app_error_1.AppError("This work item was updated by another user. Refresh the latest version and review your changes before saving again.", 409, "WORK_ITEM_VERSION_CONFLICT", undefined, { currentVersion: workItem.version, updatedAt: workItem.updatedAt });
+        }
+        assertWorkItemDateRange(body.plannedStartDate !== undefined
+            ? body.plannedStartDate
+            : workItem.plannedStartDate, body.dueDate !== undefined ? body.dueDate : workItem.dueDate);
         const previousTaskState = {
             title: workItem.title,
             description: workItem.description,
+            businessGoal: workItem.businessGoal,
+            successCriteria: workItem.successCriteria,
+            acceptanceCriteria: workItem.acceptanceCriteria,
+            severity: workItem.severity,
+            stepsToReproduce: workItem.stepsToReproduce,
+            expectedBehavior: workItem.expectedBehavior,
+            actualBehavior: workItem.actualBehavior,
+            environment: workItem.environment,
+            estimatedHours: workItem.estimatedHours,
             status: workItem.status,
             priority: workItem.priority,
             type: workItem.type,
@@ -403,27 +492,18 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
                 workItem.sprintId = null;
             }
         }
-        if (body.parentWorkItemId !== undefined) {
-            if (body.parentWorkItemId !== null) {
-                if (body.parentWorkItemId === workItem.id) {
-                    throw new app_error_1.AppError("Work item cannot be its own parent", 400, "INVALID_PARENT_WORK_ITEM");
-                }
-                const parent = await manager.getRepository(work_item_entity_1.WorkItem).findOne({
-                    where: {
-                        id: body.parentWorkItemId,
-                        projectId: project.id,
-                        organizationId: actor.organizationId,
-                    },
-                    select: { id: true },
-                });
-                if (!parent) {
-                    throw new app_error_1.AppError("Parent work item not found in this project", 404, "PARENT_WORK_ITEM_NOT_FOUND");
-                }
-                workItem.parentWorkItemId = body.parentWorkItemId;
-            }
-            else {
-                workItem.parentWorkItemId = null;
-            }
+        if (body.parentWorkItemId !== undefined || body.type !== undefined) {
+            const parentWorkItemId = body.parentWorkItemId !== undefined
+                ? body.parentWorkItemId
+                : workItem.parentWorkItemId;
+            await validateWorkItemParent(manager, {
+                type: body.type ?? workItem.type,
+                parentWorkItemId,
+                projectId: project.id,
+                organizationId: actor.organizationId,
+                workItemId: workItem.id,
+            });
+            workItem.parentWorkItemId = parentWorkItemId;
         }
         const targetLabelId = body.labelId !== undefined
             ? body.labelId
@@ -450,6 +530,25 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
             workItem.title = body.title.trim();
         if (body.description !== undefined) {
             workItem.description = body.description?.trim() || null;
+        }
+        if (body.businessGoal !== undefined)
+            workItem.businessGoal = body.businessGoal;
+        if (body.successCriteria !== undefined)
+            workItem.successCriteria = body.successCriteria;
+        if (body.acceptanceCriteria !== undefined)
+            workItem.acceptanceCriteria = body.acceptanceCriteria;
+        if (body.severity !== undefined)
+            workItem.severity = body.severity;
+        if (body.stepsToReproduce !== undefined)
+            workItem.stepsToReproduce = body.stepsToReproduce;
+        if (body.expectedBehavior !== undefined)
+            workItem.expectedBehavior = body.expectedBehavior;
+        if (body.actualBehavior !== undefined)
+            workItem.actualBehavior = body.actualBehavior;
+        if (body.environment !== undefined)
+            workItem.environment = body.environment;
+        if (body.estimatedHours !== undefined) {
+            workItem.estimatedHours = body.estimatedHours == null ? null : String(body.estimatedHours);
         }
         if (body.type !== undefined)
             workItem.type = body.type;
@@ -581,6 +680,15 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
             newState: {
                 title: savedWorkItem.title,
                 description: savedWorkItem.description,
+                businessGoal: savedWorkItem.businessGoal,
+                successCriteria: savedWorkItem.successCriteria,
+                acceptanceCriteria: savedWorkItem.acceptanceCriteria,
+                severity: savedWorkItem.severity,
+                stepsToReproduce: savedWorkItem.stepsToReproduce,
+                expectedBehavior: savedWorkItem.expectedBehavior,
+                actualBehavior: savedWorkItem.actualBehavior,
+                environment: savedWorkItem.environment,
+                estimatedHours: savedWorkItem.estimatedHours,
                 status: savedWorkItem.status,
                 priority: savedWorkItem.priority,
                 type: savedWorkItem.type,

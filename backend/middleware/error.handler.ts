@@ -59,5 +59,8 @@ export const errorHandler: ErrorRequestHandler = (
       statusCode >= 500
         ? "Internal Server Error"
         : err.message || "Request failed",
+    ...(err.code === "WORK_ITEM_VERSION_CONFLICT" && err.details
+      ? { data: err.details }
+      : {}),
   });
 };

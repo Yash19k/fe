@@ -3,23 +3,39 @@ import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { useApp } from '../../hooks/useApp';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { toUserFriendlyErrorMessage } from '../../services/api';
 
 export function ConflictModal() {
-  const { conflictModalData, setConflictModalData, updateTask, openTaskDrawer } = useApp();
+  const {
+    conflictModalData,
+    setConflictModalData,
+    openTaskDrawer,
+    reloadWorkItem,
+    showToast,
+  } = useApp();
 
   if (!conflictModalData) return null;
 
-  const { taskId, snapshotVersion, latestTask, pendingUpdates } = conflictModalData;
+  const { taskId, snapshotVersion, latestTask } = conflictModalData;
 
-  function handleReloadLatest() {
-    setConflictModalData(null);
-    openTaskDrawer(taskId);
-  }
+  async function handleReloadLatest() {
+    const confirmed = window.confirm(
+      'Reloading the latest work item will discard your unsaved changes. Continue?',
+    );
+    if (!confirmed) return;
 
-  function handleForceOverwrite() {
-    // Force save by not passing snapshotVersion
-    updateTask(taskId, pendingUpdates, null);
-    setConflictModalData(null);
+    openTaskDrawer(null);
+    try {
+      await reloadWorkItem(taskId);
+      setConflictModalData(null);
+      openTaskDrawer(taskId);
+    } catch (error) {
+      showToast(
+        toUserFriendlyErrorMessage(error, 'Could not load the latest work item.'),
+        'error',
+      );
+      openTaskDrawer(taskId);
+    }
   }
 
   return (
@@ -27,7 +43,7 @@ export function ConflictModal() {
       isOpen={Boolean(conflictModalData)}
       onClose={() => setConflictModalData(null)}
       title="Concurrent Edit Collision Detected"
-      description="Another teammate or browser session updated this task while your editor was open."
+      description="This work item was updated by another user. Refresh the latest version and review your changes before saving again."
       maxWidth="max-w-md"
     >
       <div className="space-y-4">
@@ -64,13 +80,10 @@ export function ConflictModal() {
 
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
           <Button variant="secondary" size="sm" onClick={() => setConflictModalData(null)}>
-            Cancel Edit
+            Keep Editing
           </Button>
-          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={handleReloadLatest}>
+          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => void handleReloadLatest()}>
             Reload Latest
-          </Button>
-          <Button variant="danger" size="sm" onClick={handleForceOverwrite}>
-            Overwrite with My Changes
           </Button>
         </div>
       </div>

@@ -119,9 +119,14 @@ export function CreateTaskModal({
 
   function handleToggleLabel(labelName: string) {
     setSelectedLabels((prev) =>
-      prev.includes(labelName) ? prev.filter((l) => l !== labelName) : [...prev, labelName]
+      prev.includes(labelName) ? [] : [labelName]
     );
   }
+
+  const dateRangeError =
+    startDate && dueDate && dueDate <= startDate
+      ? 'Due date must be later than start date.'
+      : undefined;
 
   function validateForm() {
     const errs: Record<string, string> = {};
@@ -142,6 +147,10 @@ export function CreateTaskModal({
       if (!stepsToReproduce.trim()) {
         errs.stepsToReproduce = 'Steps to reproduce are required for Bugs.';
       }
+    }
+
+    if (dateRangeError) {
+      errs.dueDate = dateRangeError;
     }
 
     setErrors(errs);
@@ -604,6 +613,7 @@ export function CreateTaskModal({
             type="date"
             value={toDateInputValue(dueDate)}
             onChange={(e) => setDueDate(e.target.value)}
+            error={errors.dueDate || dateRangeError}
             disabled={isSubmitting}
           />
         </div>

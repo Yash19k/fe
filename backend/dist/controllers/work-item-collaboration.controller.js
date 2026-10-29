@@ -182,12 +182,13 @@ async function addWorkItemDependency(req, res) {
         throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
     }
     const actor = await (0, work_item_service_1.getActiveActor)(userId);
-    const result = await (0, work_item_dependency_service_1.addWorkItemDependency)(actor, workItemId, dependsOnWorkItemId);
+    const result = await (0, work_item_dependency_service_1.addWorkItemDependency)(actor, workItemId, dependsOnWorkItemId, req.body.version);
     return res.status(201).json({
         success: true,
         data: result.dependency,
         dependencies: result.dependencies,
         rescheduledTasks: result.rescheduledTasks,
+        workItem: result.workItem,
     });
 }
 async function getWorkItemDependencies(req, res) {
@@ -223,11 +224,12 @@ async function deleteWorkItemDependency(req, res) {
         throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
     }
     const actor = await (0, work_item_service_1.getActiveActor)(userId);
-    const result = await (0, work_item_dependency_service_1.removeWorkItemDependency)(actor, workItemId, depId);
+    const result = await (0, work_item_dependency_service_1.removeWorkItemDependency)(actor, workItemId, depId, req.body.version);
     return res.json({
         success: true,
         data: result.dependency,
         dependencies: result.dependencies,
         rescheduledTasks: result.rescheduledTasks,
+        workItem: result.workItem,
     });
 }
