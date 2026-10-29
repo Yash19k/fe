@@ -3,7 +3,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.acceptInvitationSchema = void 0;
 exports.inviteMembersController = inviteMembersController;
 exports.acceptInvitationController = acceptInvitationController;
 const joi_1 = __importDefault(require("joi"));
@@ -21,16 +20,10 @@ const invitedMembersSchema = joi_1.default.alternatives().try(joi_1.default.arra
 }), joi_1.default.object({
     invitations: joi_1.default.array().items(singleMemberSchema).required(),
 }));
-exports.acceptInvitationSchema = joi_1.default.object({
-    token: joi_1.default.string().hex().length(64).required(),
+const acceptInvitationSchema = joi_1.default.object({
+    token: joi_1.default.string().required(),
     fullName: joi_1.default.string().trim().min(1).max(100).required(),
-    password: joi_1.default.string()
-        .min(8)
-        .max(72)
-        .custom((value, helpers) => Buffer.byteLength(value, "utf8") > 72
-        ? helpers.error("string.max")
-        : value)
-        .required(),
+    password: joi_1.default.string().min(6).max(100).required(),
 });
 async function inviteMembersController(req, res, next) {
     try {
@@ -69,7 +62,7 @@ async function inviteMembersController(req, res, next) {
                     message: error.message,
                 });
             }
-            if (error.message.startsWith("These email addresses already exist")) {
+            if (error.message.startsWith("These email addresses already exist:")) {
                 return res.status(409).json({
                     success: false,
                     message: error.message,
@@ -85,7 +78,7 @@ async function acceptInvitationController(req, res, next) {
             ...req.body,
             token: req.body?.token || req.query?.token,
         };
-        const { error, value } = exports.acceptInvitationSchema.validate(payload, {
+        const { error, value } = acceptInvitationSchema.validate(payload, {
             abortEarly: false,
             stripUnknown: true,
         });

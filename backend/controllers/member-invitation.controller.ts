@@ -134,7 +134,7 @@ export async function acceptInvitationController(
 
     if (error) {
       throw new AppError(
-        error.details.map((detail) => detail.message).join(", "),
+        error.details.map((detail: any) => detail.message).join(", "),
         400,
         "VALIDATION_ERROR",
       );

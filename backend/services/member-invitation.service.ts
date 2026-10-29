@@ -60,6 +60,12 @@ export async function inviteOrganizationMembers(
     );
   }
 
+  const pendingUserMap = new Map(
+    existingUsers
+      .filter((u) => u.status === UserStatus.PENDING)
+      .map((u) => [u.email.toLowerCase(), u]),
+  );
+
   const invitations = await Promise.all(
     normalizedMembers.map(async (member) => {
       const inviteToken = randomBytes(32).toString("hex");

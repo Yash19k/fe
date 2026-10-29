@@ -238,7 +238,7 @@ export async function login(req: Request, res: Response) {
 
   if (
     !user ||
-    user.status !== UserStatus.ACTIVE ||
+    (user.status !== UserStatus.ACTIVE && user.status !== UserStatus.PENDING) ||
     !user.passwordHash ||
     !(await bcrypt.compare(value.password, user.passwordHash))
   ) {
@@ -247,6 +247,13 @@ export async function login(req: Request, res: Response) {
       401,
       "INVALID_CREDENTIALS",
     );
+  }
+
+  if (user.status === UserStatus.PENDING) {
+    user.status = UserStatus.ACTIVE;
+    user.inviteTokenHash = null;
+    user.inviteExpiresAt = null;
+    await userRepository.save(user);
   }
 
   if (!user.organizationId) {

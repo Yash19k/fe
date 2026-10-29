@@ -4,6 +4,9 @@ import { AppDataSource } from "../config/data.source";
 import { Project } from "../entities/project.entity";
 import { User, UserRole } from "../entities/user.entity";
 import { WorkItem } from "../entities/work.item.entity";
+import { Whiteboard } from "../entities/whiteboard.entity";
+import { AuditLog } from "../entities/audit.log.entity";
+import { Sprint } from "../entities/sprint.entities";
 import {
   ProjectMember,
   ProjectRole,
@@ -125,6 +128,42 @@ export const authorizeProjectPermission = async (
       projectId = workItem.projectId;
     }
 
+    if (!projectId && req.params.whiteboardId) {
+      const whiteboard = await AppDataSource.getRepository(Whiteboard).findOne({
+        where: { id: String(req.params.whiteboardId) },
+        select: { projectId: true },
+      });
+      if (!whiteboard) {
+        throw new AppError(
+          "Whiteboard not found.",
+          404,
+          "WHITEBOARD_NOT_FOUND",
+        );
+      }
+      projectId = whiteboard.projectId;
+    }
+
+    if (!projectId && req.params.logId) {
+      const auditLog = await AppDataSource.getRepository(AuditLog).findOne({
+        where: { id: String(req.params.logId) },
+        select: { projectId: true },
+      });
+      if (auditLog?.projectId) {
+        projectId = auditLog.projectId;
+      }
+    }
+
+    if (!projectId && req.params.sprintId) {
+      const sprint = await AppDataSource.getRepository(Sprint).findOne({
+        where: { id: String(req.params.sprintId) },
+        select: { projectId: true },
+      });
+      if (!sprint) {
+        throw new AppError("Sprint not found.", 404, "SPRINT_NOT_FOUND");
+      }
+      projectId = sprint.projectId;
+    }
+
     if (!userId) {
       throw new AppError(
         "Authentication required.",
@@ -141,26 +180,32 @@ export const authorizeProjectPermission = async (
       );
     }
 
-    const userRepo = AppDataSource.getRepository(User);
+    let userRole = req.user?.role;
+    let organizationId = req.user?.organizationId;
 
-    const user = await userRepo.findOne({
-      where: { id: userId },
-      select: {
-        id: true,
-        organizationId: true,
-        role: true,
-      },
-    });
+    if (!userRole || !organizationId) {
+      const user = await AppDataSource.getRepository(User).findOne({
+        where: { id: userId },
+        select: {
+          id: true,
+          organizationId: true,
+          role: true,
+        },
+      });
 
-    if (!user) {
-      throw new AppError(
-        "Authenticated user not found.",
-        401,
-        "USER_NOT_FOUND",
-      );
+      if (!user) {
+        throw new AppError(
+          "Authenticated user not found.",
+          401,
+          "USER_NOT_FOUND",
+        );
+      }
+
+      userRole = user.role;
+      organizationId = user.organizationId ?? undefined;
     }
 
-    if (!user.organizationId) {
+    if (!organizationId) {
       throw new AppError(
         "User is not associated with an organization.",
         403,
@@ -171,7 +216,7 @@ export const authorizeProjectPermission = async (
     const project = await AppDataSource.getRepository(Project).findOne({
       where: {
         id: projectId,
-        organizationId: user.organizationId,
+        organizationId,
       },
       select: {
         id: true,
@@ -193,12 +238,12 @@ export const authorizeProjectPermission = async (
       .findOne({
         where: {
           projectId: project.id,
-          userId: user.id,
+          userId,
         },
       });
 
     // Organization ADMINs have full management over projects in their organization
-    if (user.role === UserRole.ADMIN) {
+    if (userRole === UserRole.ADMIN) {
       return;
     }
 
@@ -244,16 +289,11 @@ export const authorizeProjectPermission = async (
 };
 
 export const requireProjectPermission = (action: ProjectAction) => {
-  return async (
+  return (
     req: Request,
     _res: Response,
     next: NextFunction,
-  ): Promise<void> => {
-    try {
-      await authorizeProjectPermission(req, action);
-      next();
-    } catch (error) {
-      next(error);
-    }
+  ): void => {
+    authorizeProjectPermission(req, action).then(() => next(), next);
   };
 };

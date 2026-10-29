@@ -452,6 +452,7 @@ function validateProjectEdges(
         "INVALID_DEPENDENCY",
       );
     }
+    validateDependencyEndpoints(predecessor, successor);
   }
 }
 
@@ -783,11 +784,6 @@ export async function rescheduleAfterTaskEdit(
     (edge) =>
       edge.workItemId === task.id || edge.dependsOnWorkItemId === task.id,
   );
-  for (const edge of relatedEdges) {
-    const successor = byId.get(edge.workItemId)!;
-    const predecessor = byId.get(edge.dependsOnWorkItemId)!;
-    validateDependencyEndpoints(predecessor, successor);
-  }
 
   if (task.dueDate === null && relatedEdges.length > 0) {
     throw new AppError(

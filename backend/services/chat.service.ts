@@ -37,14 +37,20 @@ async function assertProjectAccess(actor: ChatActor, projectId: string): Promise
   return project;
 }
 
+async function hasProjectAccess(actor: ChatActor, projectId: string): Promise<boolean> {
+  const project = await AppDataSource.getRepository(Project).findOne({ where: { id: projectId } });
+  if (!project || project.organizationId !== actor.organizationId) return false;
+  if (actor.role === UserRole.ADMIN || actor.role === UserRole.MANAGER) return true;
+  if (project.visibility === "PUBLIC") return true;
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({ where: { projectId, userId: actor.id } });
+  return Boolean(membership);
+}
+
 export async function canAccessConversation(actor: ChatActor, conversationId: string) {
   const conversation = await conversations().findOne({ where: { id: conversationId } });
   if (!conversation || conversation.organizationId !== actor.organizationId) return false;
-  if (conversation.projectId) {
-    try { await assertProjectAccess(actor, conversation.projectId); } catch (error) {
-      if (error instanceof AppError) return false;
-      throw error;
-    }
+  if (conversation.projectId && !(await hasProjectAccess(actor, conversation.projectId))) {
+    return false;
   }
   return Boolean(await members().findOne({ where: { conversationId, userId: actor.id } }));
 }
@@ -81,27 +87,42 @@ export async function createConversation(actor: ChatActor, input: CreateConversa
     });
     if (existing) return getConversationForActor(actor, existing.id);
   }
-  try {
-    const conversation = await AppDataSource.transaction(async (manager) => {
-      const created = await manager.save(ChatConversation, {
-        organizationId: actor.organizationId,
-        projectId: input.projectId ?? null,
-        directPairKey,
-        type: input.type,
-        name: input.name ?? null,
-      });
-      await manager.save(ChatConversationMember, memberIds.map((userId) => ({ conversationId: created.id, userId })));
-      return created;
+  return AppDataSource.transaction(async (manager) => {
+    const created = await manager.save(ChatConversation, {
+      organizationId: actor.organizationId,
+      projectId: input.projectId ?? null,
+      directPairKey,
+      type: input.type,
+      name: input.name ?? null,
     });
-    return getConversationForActor(actor, conversation.id);
-  } catch (error) {
-    const driverError = error instanceof QueryFailedError ? (error as QueryFailedError & { driverError?: { code?: string } }).driverError : undefined;
-    if (driverError?.code === "23505" && directPairKey) {
-      const existing = await conversations().findOne({ where: { organizationId: actor.organizationId, directPairKey, type: ChatConversationType.DIRECT } });
-      if (existing) return getConversationForActor(actor, existing.id);
-    }
-    throw error;
-  }
+    await manager.save(
+      ChatConversationMember,
+      memberIds.map((userId) => ({ conversationId: created.id, userId })),
+    );
+    return created;
+  })
+    .then((created) => getConversationForActor(actor, created.id))
+    .catch(async (error) => {
+      const driverError =
+        error instanceof QueryFailedError
+          ? (
+              error as QueryFailedError & {
+                driverError?: { code?: string };
+              }
+            ).driverError
+          : undefined;
+      if (driverError?.code === "23505" && directPairKey) {
+        const existing = await conversations().findOne({
+          where: {
+            organizationId: actor.organizationId,
+            directPairKey,
+            type: ChatConversationType.DIRECT,
+          },
+        });
+        if (existing) return getConversationForActor(actor, existing.id);
+      }
+      throw error;
+    });
 }
 
 export async function listMembers(actor: ChatActor) {
@@ -236,19 +257,19 @@ export async function addMember(actor: ChatActor, conversationId: string, userId
   return members().findOne({ where: { conversationId, userId }, relations: { user: true } });
 }
 
+export type RoomEvictor = (conversationId: string, userId: string) => void;
+let roomEvictor: RoomEvictor | null = null;
+export function registerRoomEvictor(evictor: RoomEvictor): void {
+  roomEvictor = evictor;
+}
+
 export async function removeMember(actor: ChatActor, conversationId: string, userId: string) {
   const conversation = await assertConversationManager(actor, conversationId);
   if (conversation.type === ChatConversationType.DIRECT) throw new AppError("Direct conversations must keep both participants.", 400, "DIRECT_CONVERSATION_MEMBERS_LOCKED");
   await members().delete({ conversationId, userId });
 
-  // Evict removed user from any live WebSocket room subscriptions
-  try {
-    const { evictUserFromConversationRoom } = require("../websocket/chat.gateway");
-    if (typeof evictUserFromConversationRoom === "function") {
-      evictUserFromConversationRoom(conversationId, userId);
-    }
-  } catch {
-    // Ignore if websocket gateway not loaded
+  if (roomEvictor) {
+    roomEvictor(conversationId, userId);
   }
 }
 

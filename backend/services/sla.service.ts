@@ -216,6 +216,7 @@ export async function refreshSlaStatuses(
       ELSE 0
     END
   `;
+  // Select items that are unfinished, prioritized by items requiring immediate attention or oldest updated
   const candidates = await manager
     .getRepository(WorkItem)
     .createQueryBuilder("workItem")
@@ -255,7 +256,7 @@ export async function refreshSlaStatuses(
                   (
                     SELECT policy.escalate_hours
                     FROM organization_sla policy
-                    WHERE policy.organization_id = workItem.organization_id
+                    WHERE policy.organization_id = "workItem"."organization_id"
                   ),
                   ${priorityRiskHours}
                 ) * INTERVAL '1 hour'
@@ -264,7 +265,7 @@ export async function refreshSlaStatuses(
             OR workItem.updatedAt < (
               SELECT policy.updated_at
               FROM organization_sla policy
-              WHERE policy.organization_id = workItem.organization_id
+              WHERE policy.organization_id = "workItem"."organization_id"
             )
           )
         )
@@ -272,6 +273,7 @@ export async function refreshSlaStatuses(
       { now, atRisk: SlaStatus.AT_RISK },
     )
     .orderBy("COALESCE(workItem.slaDeadline, workItem.createdAt)", "ASC")
+    .addOrderBy("COALESCE(workItem.updatedAt, workItem.createdAt)", "ASC")
     .addOrderBy("workItem.id", "ASC")
     .take(500)
     .setLock("pessimistic_write")

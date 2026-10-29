@@ -7,7 +7,6 @@ import {
   WorkItemType,
   SlaStatus,
 } from "../entities/work.item.entity";
-import { OrganizationSla } from "../entities/organization.sla.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
 import { WorkItemComment } from "../entities/work.item.comment.entity";
 import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
@@ -250,12 +249,6 @@ export const getProjectWorkItems = async (
     }
   }
 
-  const slaPolicy = workItems.some((workItem) => workItem.priority)
-    ? await AppDataSource.getRepository(OrganizationSla).findOne({
-        where: { organizationId: actor.organizationId },
-      })
-    : null;
-
   for (const workItem of workItems) {
     if (!workItem.priority) {
       clearSlaState(workItem);
@@ -266,11 +259,10 @@ export const getProjectWorkItems = async (
       workItem.slaDeadline = calculateSlaDeadline(
         workItem.createdAt,
         workItem.priority,
-        slaPolicy,
       );
       workItem.slaDeadlineIsCustom = false;
     }
-    applySlaState(workItem, new Date(), slaPolicy);
+    applySlaState(workItem);
   }
 
   res.status(200).json({
@@ -384,6 +376,9 @@ export const deleteWorkItem = async (
     );
     await manager.getRepository(WorkItem).remove(workItem);
   });
+  const workItem = await getAccessibleWorkItem(workItemId, actor);
+
+  await AppDataSource.getRepository(WorkItem).remove(workItem);
 
   res.status(200).json({
     success: true,

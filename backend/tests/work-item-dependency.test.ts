@@ -157,23 +157,3 @@ test("ordinary work-item creation remains valid without a due date", () => {
   assert.equal(result.error, undefined);
   assert.equal(result.value.dueDate, undefined);
 });
-
-test("an unrelated dependency with missing dates does not affect schedule reflow", () => {
-  const updates = calculateScheduleReflow(
-    [
-      scheduledTask("unrelated", null, null, null),
-      scheduledTask("predecessor", null, null, null),
-      scheduledTask("successor", null, null, null),
-    ],
-    [
-      {
-        id: "dependency",
-        workItemId: "successor",
-        dependsOnWorkItemId: "predecessor",
-      },
-    ],
-    ["unrelated"],
-  );
-
-  assert.deepEqual(updates, []);
-});

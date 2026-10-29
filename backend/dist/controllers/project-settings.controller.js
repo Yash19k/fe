@@ -13,10 +13,6 @@ const project_entity_1 = require("../entities/project.entity");
 const project_member_entity_1 = require("../entities/project.member.entity");
 const user_entity_1 = require("../entities/user.entity");
 const app_error_1 = require("../errors/app.error");
-const work_item_workflow_service_1 = require("../services/work-item-workflow.service");
-var work_item_workflow_service_2 = require("../services/work-item-workflow.service");
-Object.defineProperty(exports, "DEFAULT_WORKFLOW_NAME", { enumerable: true, get: function () { return work_item_workflow_service_2.DEFAULT_WORKFLOW_NAME; } });
-Object.defineProperty(exports, "DEFAULT_WORKFLOW_STATUSES", { enumerable: true, get: function () { return work_item_workflow_service_2.DEFAULT_WORKFLOW_STATUSES; } });
 /**
  * Validates that the project exists in the user's organization and
  * verifies user permissions for project-level settings operations.
@@ -103,6 +99,16 @@ async function deleteProjectLabel(req, res) {
 // ==========================================
 // Workflows
 // ==========================================
+exports.DEFAULT_WORKFLOW_NAME = "TaskFlow Pro — Final Statuses";
+exports.DEFAULT_WORKFLOW_STATUSES = [
+    { id: "st-backlog", name: "Backlog", category: "unstarted", color: "#6B7280", allowedTransitions: ["In Progress"] },
+    { id: "st-inprogress", name: "In Progress", category: "active", color: "#3B82F6", allowedTransitions: ["In Review", "Testing / QA", "Blocked", "On Hold"] },
+    { id: "st-inreview", name: "In Review", category: "active", color: "#A855F7", allowedTransitions: ["Testing / QA", "In Progress", "Blocked", "On Hold"] },
+    { id: "st-testingqa", name: "Testing / QA", category: "active", color: "#06B6D4", allowedTransitions: ["Done", "In Progress", "Blocked", "On Hold"], roleRestrictions: { Done: ["Manager", "Admin"] } },
+    { id: "st-blocked", name: "Blocked", category: "impediment", color: "#EF4444", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+    { id: "st-onhold", name: "On Hold", category: "impediment", color: "#F97316", allowedTransitions: ["Backlog", "In Progress", "In Review", "Testing / QA"] },
+    { id: "st-done", name: "Done", category: "completed", color: "#22C55E", allowedTransitions: ["In Progress"] },
+];
 async function getProjectWorkflow(req, res) {
     const projectId = String(req.params.projectId);
     await assertProjectSettingsAccess(projectId, req, false);
@@ -115,9 +121,9 @@ async function getProjectWorkflow(req, res) {
             data: {
                 id: `default-${projectId}`,
                 projectId,
-                name: work_item_workflow_service_1.DEFAULT_WORKFLOW_NAME,
-                statuses: work_item_workflow_service_1.DEFAULT_WORKFLOW_STATUSES,
-                stages: work_item_workflow_service_1.DEFAULT_WORKFLOW_STATUSES,
+                name: exports.DEFAULT_WORKFLOW_NAME,
+                statuses: exports.DEFAULT_WORKFLOW_STATUSES,
+                stages: exports.DEFAULT_WORKFLOW_STATUSES,
                 isDefault: true,
             },
         });
@@ -127,7 +133,7 @@ async function getProjectWorkflow(req, res) {
         workflow.name === "Custom Engineering Flow" ||
         workflow.name.endsWith(" Workflow") ||
         /^[0-9a-fA-F-]{20,}/.test(workflow.name);
-    const resolvedName = isGenericName ? work_item_workflow_service_1.DEFAULT_WORKFLOW_NAME : workflow.name;
+    const resolvedName = isGenericName ? exports.DEFAULT_WORKFLOW_NAME : workflow.name;
     return res.json({
         success: true,
         data: {
@@ -143,7 +149,7 @@ async function saveProjectWorkflow(req, res) {
     const rawName = req.body.name ? String(req.body.name).trim() : "";
     const name = rawName && rawName !== "Custom Engineering Flow" && !rawName.endsWith(" Workflow")
         ? rawName
-        : work_item_workflow_service_1.DEFAULT_WORKFLOW_NAME;
+        : exports.DEFAULT_WORKFLOW_NAME;
     if (!stages || !Array.isArray(stages) || stages.length === 0) {
         throw new app_error_1.AppError("Workflow stages or statuses array is required and must not be empty.", 400, "VALIDATION_ERROR");
     }

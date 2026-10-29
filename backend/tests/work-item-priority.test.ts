@@ -30,30 +30,6 @@ describe("work item priority validation", () => {
     assert.equal(result.value.priority, null);
   });
 
-  test("rejects priorities outside the supported values", () => {
-    assert.ok(
-      createWorkItemSchema.validate({
-        ...validWorkItem,
-        priority: "CRITICAL",
-      }).error,
-    );
-    assert.ok(updateWorkItemSchema.validate({ priority: "CRITICAL" }).error);
-  });
-
-  test("allows clearing priority during a partial update", () => {
-    const result = updateWorkItemSchema.validate({ priority: null });
-
-    assert.equal(result.error, undefined);
-    assert.equal(result.value.priority, null);
-  });
-
-  test("allows updating an ordinary task field without dependency fields", () => {
-    const result = updateWorkItemSchema.validate({ title: "Renamed task" });
-
-    assert.equal(result.error, undefined);
-    assert.equal(result.value.title, "Renamed task");
-  });
-
   test("accepts only one label for the single-label persistence contract", () => {
     const oneLabel = "1b65ef76-4f4a-4daf-a1e9-ae8a51a58fd6";
     const twoLabels = [

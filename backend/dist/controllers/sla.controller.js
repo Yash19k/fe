@@ -72,11 +72,8 @@ async function updateOrganizationSla(req, res) {
         { name: "escalateHours", val: escalate },
     ];
     for (const field of fieldsToCheck) {
-        if (field.val !== undefined &&
-            (!Number.isSafeInteger(field.val) ||
-                field.val < 1 ||
-                field.val > 2147483647)) {
-            throw new app_error_1.AppError(`${field.name} must be a positive whole number of hours.`, 400, "VALIDATION_ERROR");
+        if (field.val !== undefined && (!Number.isFinite(field.val) || field.val <= 0)) {
+            throw new app_error_1.AppError(`${field.name} must be a positive number greater than 0.`, 400, "VALIDATION_ERROR");
         }
     }
     const repo = data_source_1.AppDataSource.getRepository(organization_sla_entity_1.OrganizationSla);
@@ -90,15 +87,15 @@ async function updateOrganizationSla(req, res) {
         });
     }
     if (urgent !== undefined)
-        slaPolicy.urgentHours = urgent;
+        slaPolicy.urgentHours = Math.round(urgent);
     if (high !== undefined)
-        slaPolicy.highHours = high;
+        slaPolicy.highHours = Math.round(high);
     if (medium !== undefined)
-        slaPolicy.mediumHours = medium;
+        slaPolicy.mediumHours = Math.round(medium);
     if (low !== undefined)
-        slaPolicy.lowHours = low;
+        slaPolicy.lowHours = Math.round(low);
     if (escalate !== undefined)
-        slaPolicy.escalateHours = escalate;
+        slaPolicy.escalateHours = Math.round(escalate);
     const saved = await repo.save(slaPolicy);
     return res.json({
         success: true,

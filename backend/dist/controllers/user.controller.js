@@ -206,10 +206,16 @@ async function login(req, res) {
         where: { email: value.email.toLowerCase() },
     });
     if (!user ||
-        user.status !== user_entity_1.UserStatus.ACTIVE ||
+        (user.status !== user_entity_1.UserStatus.ACTIVE && user.status !== user_entity_1.UserStatus.PENDING) ||
         !user.passwordHash ||
         !(await bcrypt.compare(value.password, user.passwordHash))) {
         throw new app_error_1.AppError("Invalid email or password.", 401, "INVALID_CREDENTIALS");
+    }
+    if (user.status === user_entity_1.UserStatus.PENDING) {
+        user.status = user_entity_1.UserStatus.ACTIVE;
+        user.inviteTokenHash = null;
+        user.inviteExpiresAt = null;
+        await userRepository.save(user);
     }
     if (!user.organizationId) {
         throw new app_error_1.AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
@@ -256,60 +262,49 @@ async function refreshAccessToken(req, res) {
         clearAuthCookies(res);
         throw new app_error_1.AppError("Refresh token is missing. Please log in again.", 401, "REFRESH_TOKEN_MISSING");
     }
-    const newRefreshToken = (0, crypto_1.randomBytes)(32).toString("hex");
-    const result = await data_source_1.AppDataSource.transaction(async (manager) => {
-        const sessions = manager.getRepository(user_session_entity_1.UserSession);
-        const session = await sessions
-            .createQueryBuilder("session")
-            .setLock("pessimistic_write")
-            .where("session.tokenHash = :tokenHash", {
+    const session = await sessionRepository.findOne({
+        where: {
             tokenHash: hashRefreshToken(refreshToken),
-        })
-            .getOne();
-        if (!session ||
-            session.revokedAt ||
-            session.expiresAt.getTime() <= Date.now()) {
-            return {
-                error: new app_error_1.AppError("Refresh session is invalid or expired. Please log in again.", 401, "INVALID_REFRESH_TOKEN"),
-            };
-        }
-        const user = await manager.getRepository(user_entity_1.User).findOne({
-            where: { id: session.userId },
-        });
-        if (!user || user.status !== user_entity_1.UserStatus.ACTIVE || !user.organizationId) {
-            session.revokedAt = new Date();
-            await sessions.save(session);
-            return {
-                error: new app_error_1.AppError("Your account is unavailable. Please log in again.", 401, "INVALID_SESSION_USER"),
-            };
-        }
-        const organization = await manager
-            .getRepository(organization_entity_1.Organization)
-            .findOne({ where: { id: user.organizationId } });
-        if (!organization) {
-            session.revokedAt = new Date();
-            await sessions.save(session);
-            return {
-                error: new app_error_1.AppError("Organization not found.", 401, "INVALID_SESSION_ORGANIZATION"),
-            };
-        }
-        session.tokenHash = hashRefreshToken(newRefreshToken);
-        session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
-        session.lastUsedAt = new Date();
-        await sessions.save(session);
-        return {
-            accessToken: createAccessToken({
-                id: user.id,
-                role: user.role,
-                organizationId: user.organizationId,
-            }),
-        };
+        },
     });
-    if ("error" in result) {
+    if (!session ||
+        session.revokedAt ||
+        session.expiresAt.getTime() <= Date.now()) {
         clearAuthCookies(res);
-        throw result.error;
+        throw new app_error_1.AppError("Refresh session is invalid or expired. Please log in again.", 401, "INVALID_REFRESH_TOKEN");
     }
-    const accessToken = result.accessToken;
+    const user = await userRepository.findOne({
+        where: { id: session.userId },
+    });
+    if (!user ||
+        user.status !== user_entity_1.UserStatus.ACTIVE ||
+        !user.organizationId) {
+        session.revokedAt = new Date();
+        await sessionRepository.save(session);
+        clearAuthCookies(res);
+        throw new app_error_1.AppError("Your account is unavailable. Please log in again.", 401, "INVALID_SESSION_USER");
+    }
+    const organization = await organizationRepository.findOne({
+        where: { id: user.organizationId },
+    });
+    if (!organization) {
+        session.revokedAt = new Date();
+        await sessionRepository.save(session);
+        clearAuthCookies(res);
+        throw new app_error_1.AppError("Organization not found.", 401, "INVALID_SESSION_ORGANIZATION");
+    }
+    // Rotate the refresh token: the previous token stops matching
+    // the stored hash after this update.
+    const newRefreshToken = (0, crypto_1.randomBytes)(32).toString("hex");
+    session.tokenHash = hashRefreshToken(newRefreshToken);
+    session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+    session.lastUsedAt = new Date();
+    await sessionRepository.save(session);
+    const accessToken = createAccessToken({
+        id: user.id,
+        role: user.role,
+        organizationId: user.organizationId,
+    });
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, newRefreshToken);
     return res.status(200).json({

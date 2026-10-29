@@ -66,3 +66,34 @@ export const createSprintSchema = Joi.object({
       "Sprint endDate must be on or after startDate.",
     "object.unknown": "Unknown field: {{#label}}.",
   });
+
+export const updateSprintSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(100).optional(),
+  goal: Joi.string().trim().max(1000).allow("", null).optional(),
+  startDate: dateSchema.optional(),
+  endDate: dateSchema.optional(),
+  status: Joi.string()
+    .valid("PLANNED", "ACTIVE", "COMPLETED", "CANCELLED")
+    .optional(),
+})
+  .min(1)
+  .unknown(false)
+  .custom((payload, helpers) => {
+    if (
+      payload.startDate &&
+      payload.endDate &&
+      isRealDate(payload.startDate) &&
+      isRealDate(payload.endDate) &&
+      payload.startDate > payload.endDate
+    ) {
+      return helpers.error("sprint.dateRange");
+    }
+
+    return payload;
+  })
+  .messages({
+    "sprint.dateRange": "Sprint endDate must be on or after startDate.",
+    "object.unknown": "Unknown field: {{#label}}.",
+    "object.min": "At least one field must be provided for update.",
+  });
+

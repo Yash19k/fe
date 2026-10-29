@@ -7,7 +7,6 @@ const data_source_1 = require("../config/data.source");
 const app_error_1 = require("../errors/app.error");
 const recurrence_service_1 = require("./recurrence.service");
 const sla_service_1 = require("./sla.service");
-const notification_service_1 = require("./notification.service");
 let slaScheduler;
 let recurrenceScheduler;
 let isSlaJobRunning = false;
@@ -28,11 +27,8 @@ function startScheduler() {
             return;
         isSlaJobRunning = true;
         try {
-            const result = await data_source_1.AppDataSource.transaction(async (manager) => (0, sla_service_1.refreshSlaStatuses)(manager));
-            await (0, notification_service_1.createNotificationsBestEffort)(result.notifications, {
-                operation: "sla-refresh",
-            });
-            console.info(`[SLA Scheduler] Completed. Updated ${result.updatedCount} work items.`);
+            const updatedCount = await data_source_1.AppDataSource.transaction(async (manager) => (0, sla_service_1.refreshSlaStatuses)(manager));
+            console.info(`[SLA Scheduler] Completed. Updated ${updatedCount} work items.`);
         }
         catch (error) {
             console.error("[SLA Scheduler] Job failed:", error);

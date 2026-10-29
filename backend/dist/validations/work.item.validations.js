@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateWorkItemDependencyBody = exports.validateWorkItemDependencyParams = exports.validateWorkItemId = exports.updateWorkItemSchema = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
+exports.validateViewProjectWorkItems = exports.validateUpdateWorkItem = exports.validateWorkItemDependencyBody = exports.validateWorkItemDependencyParams = exports.validateWorkItemId = exports.validateCreateWorkItem = exports.createWorkItemSchema = void 0;
 const joi_1 = __importDefault(require("joi"));
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
@@ -53,25 +53,6 @@ const recurrenceSchema = joi_1.default.object({
     timezone: joi_1.default.string().trim().max(100).default(recurrence_service_1.DEFAULT_RECURRENCE_TIMEZONE),
     weekdaysOnly: joi_1.default.boolean().default(false),
 }).unknown(false);
-function validateSingleLabelPayload(value, helpers) {
-    if (typeof value !== "object" || value === null)
-        return value;
-    const payload = value;
-    if (payload.labelId === undefined || payload.labels === undefined) {
-        return value;
-    }
-    const labelId = payload.labelId === "" ? null : payload.labelId;
-    const labels = payload.labels;
-    const listLabel = labels === null
-        ? null
-        : Array.isArray(labels)
-            ? labels[0] ?? null
-            : undefined;
-    if (labelId !== listLabel) {
-        return helpers.error("any.invalid");
-    }
-    return value;
-}
 exports.createWorkItemSchema = joi_1.default.object({
     projectId: joi_1.default.string()
         .guid({ version: ["uuidv4"] })
@@ -106,12 +87,6 @@ exports.createWorkItemSchema = joi_1.default.object({
         .iso()
         .allow(null)
         .optional(),
-    plannedStartDate: dateOnlySchema.allow(null).optional(),
-    plannedDurationWorkingDays: joi_1.default.number()
-        .integer()
-        .min(1)
-        .allow(null)
-        .optional(),
     slaDeadline: joi_1.default.date()
         .iso()
         .min("now")
@@ -127,21 +102,9 @@ exports.createWorkItemSchema = joi_1.default.object({
         .optional(),
     labels: joi_1.default.array()
         .items(joi_1.default.string().guid({ version: ["uuidv4"] }))
-        .max(1)
         .allow(null)
         .optional(),
     recurrence: recurrenceSchema.allow(null).optional(),
-})
-    .custom(validateSingleLabelPayload)
-    .custom((value, helpers) => {
-    const hasStart = value.plannedStartDate != null;
-    const hasDuration = value.plannedDurationWorkingDays != null;
-    if (hasStart !== hasDuration) {
-        return helpers.error("any.invalid", {
-            message: "Planned start date and working-day duration must be provided together.",
-        });
-    }
-    return value;
 })
     .unknown(false);
 const validateCreateWorkItem = (req, res, next) => {
@@ -160,7 +123,7 @@ const validateCreateWorkItem = (req, res, next) => {
     next();
 };
 exports.validateCreateWorkItem = validateCreateWorkItem;
-exports.updateWorkItemSchema = joi_1.default.object({
+const updateWorkItemSchema = joi_1.default.object({
     sprintId: joi_1.default.string()
         .guid({ version: ["uuidv4", "uuidv5"] })
         .allow(null)
@@ -171,20 +134,14 @@ exports.updateWorkItemSchema = joi_1.default.object({
     priority: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemPriority)).optional(),
     status: joi_1.default.string().valid(...Object.values(work_item_entity_1.WorkItemStatus)).optional(),
     dueDate: joi_1.default.date().iso().allow(null).optional(),
-    plannedStartDate: dateOnlySchema.allow(null).optional(),
-    plannedDurationWorkingDays: joi_1.default.number().integer().min(1).allow(null).optional(),
-    isSchedulePinned: joi_1.default.boolean().optional(),
     slaDeadline: joi_1.default.date().iso().min("now").allow(null).optional(),
     parentWorkItemId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
     assignees: joi_1.default.array().items(assigneeSchema).unique("userId").allow(null).optional(),
     assigneeId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
     assigneeIds: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
     labelId: joi_1.default.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
-    labels: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).max(1).allow(null).optional(),
-})
-    .custom(validateSingleLabelPayload)
-    .min(1)
-    .unknown(false);
+    labels: joi_1.default.array().items(joi_1.default.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
+}).min(1).unknown(false);
 const workItemIdParamsSchema = joi_1.default.object({
     workItemId: joi_1.default.string()
         .guid({ version: ["uuidv4"] })
@@ -230,7 +187,7 @@ const validateWorkItemDependencyBody = (req, _res, next) => {
 };
 exports.validateWorkItemDependencyBody = validateWorkItemDependencyBody;
 const validateUpdateWorkItem = (req, _res, next) => {
-    const { error, value } = exports.updateWorkItemSchema.validate(req.body, {
+    const { error, value } = updateWorkItemSchema.validate(req.body, {
         abortEarly: false,
         convert: true,
     });
