@@ -417,47 +417,6 @@ export function CreateTaskModal({
 
         {/* --- TYPE-SPECIFIC DYNAMIC FIELDS --- */}
 
-        {/* 1. Epic Fields */}
-        {type === WORK_ITEM_TYPES.EPIC && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border space-y-3">
-            <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-              Epic Specifications
-            </h4>
-            <Input
-              label="Business Goal"
-              placeholder="Strategic outcome or business value..."
-              value={businessGoal}
-              onChange={(e) => setBusinessGoal(e.target.value)}
-              disabled={isSubmitting}
-            />
-            <Textarea
-              label="Success Criteria"
-              placeholder="Measurable KPIs or acceptance definition..."
-              value={successCriteria}
-              onChange={(e) => setSuccessCriteria(e.target.value)}
-              disabled={isSubmitting}
-              rows={2}
-            />
-          </div>
-        )}
-
-        {/* 2. Story Fields */}
-        {type === WORK_ITEM_TYPES.STORY && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border space-y-3">
-            <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-              Story Acceptance
-            </h4>
-            <Textarea
-              label="Acceptance Criteria"
-              placeholder="Given... When... Then... criteria"
-              value={acceptanceCriteria}
-              onChange={(e) => setAcceptanceCriteria(e.target.value)}
-              disabled={isSubmitting}
-              rows={2}
-            />
-          </div>
-        )}
-
         {/* 3. Bug Fields */}
         {type === WORK_ITEM_TYPES.BUG && (
           <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border space-y-3">
