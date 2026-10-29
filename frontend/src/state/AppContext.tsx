@@ -6,7 +6,7 @@ import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
 import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject } from '../domain/permissions';
 import { validateHierarchy } from '../domain/hierarchy';
-import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
+import { WORK_ITEM_TYPES, getWorkItemVersion, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
 import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
 import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
@@ -1033,13 +1033,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateTask = useCallback(async (taskId: string, updates: any, snapshotVersion: number | null = null): Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return { success: false, reason: 'Task not found' };
+    const persisted = isPersistedWorkItemId(taskId);
+    const targetVersion = getWorkItemVersion(target);
     const targetWorkflow =
       workflows.find((workflow) => workflow.projectId === target.projectId) ||
       (!isPersistedWorkItemId(target.projectId)
         ? workflows.find((workflow) => !workflow.projectId)
         : undefined);
 
-    if (snapshotVersion !== null && (target.version || 1) !== snapshotVersion) {
+    if (persisted && targetVersion === undefined) {
+      const reason = 'Cannot save this task because its current version is missing. Refresh the task and try again.';
+      showToast(reason, 'error');
+      return { success: false, reason };
+    }
+
+    if (snapshotVersion !== null && targetVersion !== snapshotVersion) {
       setConflictModalData({
         taskId,
         snapshotVersion,
@@ -1067,17 +1075,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const updated = {
       ...sanitized,
-      version: isPersistedWorkItemId(taskId)
-        ? target.version || 1
+      version: persisted
+        ? targetVersion
         : (target.version || 1) + 1,
-      updatedAt: isPersistedWorkItemId(taskId)
+      updatedAt: persisted
         ? target.updatedAt
         : new Date().toISOString(),
     };
 
-    if (isPersistedWorkItemId(taskId)) {
+    if (persisted) {
+      const version = snapshotVersion ?? targetVersion;
+      if (version === undefined) {
+        const reason = 'Cannot save this task because its current version is missing. Refresh the task and try again.';
+        showToast(reason, 'error');
+        return { success: false, reason };
+      }
       const backendUpdates: { version: number; [key: string]: any } = {
-        version: snapshotVersion ?? target.version ?? 1,
+        version,
       };
       if (updates.sprintId !== undefined) backendUpdates.sprintId = isPersistedWorkItemId(updates.sprintId) ? updates.sprintId : null;
       if (updates.title !== undefined) backendUpdates.title = updates.title;
@@ -1202,14 +1216,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return { success: true, task: authoritativeTask };
       } catch (err: any) {
         if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
-          let latestTask: Task = {
-            ...target,
-            version: Number(err?.details?.data?.currentVersion) || target.version || 1,
-          };
+          let latestTask: Task | undefined;
           try {
             latestTask = await reloadWorkItem(taskId);
           } catch (reloadError: any) {
             console.warn('TaskFlow: Could not load the current work item after a version conflict:', reloadError?.message || reloadError);
+          }
+          const currentVersion = err?.details?.data?.currentVersion;
+          if (!latestTask && typeof currentVersion === 'number' && Number.isInteger(currentVersion) && currentVersion >= 1) {
+            latestTask = { ...target, version: currentVersion };
+          }
+          if (!latestTask) {
+            const reason = 'This task was updated by another user, but its latest version could not be loaded. Refresh before trying again.';
+            showToast(reason, 'error');
+            return { success: false, reason, conflict: true };
           }
           setConflictModalData({
             taskId,
@@ -1312,6 +1332,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const changeTaskStatus = useCallback(async (taskId: string, newStatus: TaskStatus): Promise<boolean> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return false;
+    const persisted = isPersistedWorkItemId(taskId);
+    const version = getWorkItemVersion(target);
 
     if (!currentUser) return false;
     const transitionCheck = canTransitionStatus(currentUser.role, target.status, newStatus, currentWorkflow);
@@ -1320,12 +1342,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    if (isPersistedWorkItemId(taskId)) {
+    if (persisted && version === undefined) {
+      showToast('Cannot move this task because its current version is missing. Refresh the board and try again.', 'error');
+      return false;
+    }
+
+    let response: any;
+    if (persisted) {
+      if (version === undefined) {
+        showToast('Cannot move this task because its current version is missing. Refresh the board and try again.', 'error');
+        return false;
+      }
       try {
-        await updateWorkItemApi(taskId, {
+        response = await updateWorkItemApi(taskId, {
+          version,
           status: frontendStatusToBackend(newStatus),
         });
       } catch (err: any) {
+        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
+          try {
+            await reloadWorkItem(taskId);
+          } catch (reloadError: any) {
+            console.warn('TaskFlow: Could not refresh the task after a status version conflict:', reloadError?.message || reloadError);
+          }
+          showToast('This task was updated by another user. The latest version was refreshed; review it and try again.', 'error');
+          return false;
+        }
         const reason = toUserFriendlyErrorMessage(err, 'Could not update task status.');
         console.warn('TaskFlow: Backend status update failed:', err?.message || reason);
         showToast(reason, 'error');
@@ -1333,15 +1375,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    let authoritativeTarget = target;
+    if (persisted) {
+      if (response?.data) {
+        authoritativeTarget = backendWorkItemToTask(response.data, target.projectId);
+      } else {
+        try {
+          authoritativeTarget = await reloadWorkItem(taskId);
+        } catch (reloadError: any) {
+          console.warn('TaskFlow: Could not refresh the task after a status update:', reloadError?.message || reloadError);
+          authoritativeTarget = { ...target, status: newStatus, version: undefined };
+          showToast('The status was updated, but its latest version could not be loaded. Refresh the task before moving it again.', 'error');
+        }
+      }
+      if (response?.data && getWorkItemVersion(authoritativeTarget) === undefined) {
+        try {
+          authoritativeTarget = await reloadWorkItem(taskId);
+        } catch (reloadError: any) {
+          console.warn('TaskFlow: Could not refresh the task version after a status update:', reloadError?.message || reloadError);
+          showToast('The status was updated, but its latest version could not be loaded. Refresh the task before moving it again.', 'error');
+        }
+      }
+    }
+
     const previousValue = { status: target.status };
     const updated = {
-      ...target,
-      status: newStatus,
-      version: isPersistedWorkItemId(taskId)
-        ? target.version || 1
+      ...authoritativeTarget,
+      status: authoritativeTarget.status || newStatus,
+      version: persisted
+        ? authoritativeTarget.version
         : (target.version || 1) + 1,
-      updatedAt: isPersistedWorkItemId(taskId)
-        ? target.updatedAt
+      updatedAt: persisted
+        ? authoritativeTarget.updatedAt
         : new Date().toISOString(),
     };
 
@@ -1388,11 +1453,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     return true;
-  }, [tasks, currentUser.role, currentWorkflow, recordAudit, showToast, reloadWorkItem]);
+  }, [tasks, currentUser, currentWorkflow, recordAudit, showToast, reloadWorkItem]);
 
   const requestReschedule = useCallback(async (taskId: string, newDueDate: string) => {
     const target = tasks.find((task) => task.id === taskId);
     if (!target) return;
+    const version = getWorkItemVersion(target);
+    if (isPersistedWorkItemId(taskId) && version === undefined) {
+      showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+      return;
+    }
     const impact = calculateScheduleImpact(taskId, newDueDate, tasks);
     if (impact.affectedTasks && impact.affectedTasks.length > 0) {
       setImpactModalData(impact);
@@ -1404,9 +1474,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
 
     if (isPersistedWorkItemId(taskId)) {
+      if (version === undefined) {
+        setTasks(tasks);
+        showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
       try {
         const res = await updateWorkItemApi(taskId, {
-          version: target.version || 1,
+          version,
           dueDate: impact.newDueDate || newDueDate,
         });
         if (res?.data) {
@@ -1436,6 +1511,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const confirmRescheduleImpact = useCallback(async () => {
     if (!impactModalData) return;
     const impact = impactModalData;
+    const rootTask = tasks.find((task) => task.id === impact.taskId);
+    const rootTaskVersion = rootTask ? getWorkItemVersion(rootTask) : undefined;
+    if (rootTask && isPersistedWorkItemId(rootTask.id) && rootTaskVersion === undefined) {
+      showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+      return;
+    }
     const updatedTasks = applyScheduleChanges(impact, tasks);
     setTasks(updatedTasks);
     recordAudit(
@@ -1450,11 +1531,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     broadcastEvent('TASKS_BATCH_UPDATED', updatedTasks);
     setImpactModalData(null);
 
-    const rootTask = tasks.find((task) => task.id === impact.taskId);
     if (rootTask && isPersistedWorkItemId(rootTask.id)) {
+      if (rootTaskVersion === undefined) {
+        setTasks(tasks);
+        showToast('Cannot reschedule this task because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
       try {
         const res = await updateWorkItemApi(rootTask.id, {
-          version: rootTask.version || 1,
+          version: rootTaskVersion,
           dueDate: impact.newDueDate || null,
         });
         if (res?.data) {
@@ -1662,9 +1747,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const initialStatus = getInitialWorkflowStatus(parentWorkflow)?.name;
     if (!initialStatus) {
       showToast('The project workflow does not define an initial status.', 'error');
-      return;
+      return false;
     }
 
+    let subtaskRecord: Task | null = null;
     if (isPersistedWorkItemId(taskId) && isPersistedWorkItemId(parentTask.projectId)) {
       try {
         const payload: CreateWorkItemApiInput = {
@@ -1743,6 +1829,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }),
     ]);
     showToast('Subtask created', 'success');
+    return true;
   }, [tasks, workflows, currentUser?.id, showToast]);
 
   const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
@@ -1778,6 +1865,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const nextStatus = targetStatus?.name || subtaskItem?.status || '';
     const nextCompleted = !isCurrentlyDone;
+    const persistedSubtask = isPersistedWorkItemId(subtaskId);
+    const subtaskVersion = subtaskItem ? getWorkItemVersion(subtaskItem) : undefined;
+    if (persistedSubtask && subtaskVersion === undefined) {
+      showToast('Cannot update this subtask because its current version is missing. Refresh the task and try again.', 'error');
+      return;
+    }
 
     // Optimistic update
     setTasks((prev) =>
@@ -1786,10 +1879,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return {
             ...t,
             status: nextStatus,
-            version: isPersistedWorkItemId(subtaskId)
-              ? t.version || 1
+            version: persistedSubtask
+              ? subtaskVersion
               : (t.version || 1) + 1,
-            updatedAt: isPersistedWorkItemId(subtaskId)
+            updatedAt: persistedSubtask
               ? t.updatedAt
               : new Date().toISOString(),
           };
@@ -1807,9 +1900,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
     );
 
-    if (isPersistedWorkItemId(subtaskId)) {
+    if (persistedSubtask) {
+      if (subtaskVersion === undefined) {
+        setTasks((prev) =>
+          prev.map((task) => {
+            if (task.id === subtaskId) {
+              return {
+                ...task,
+                status: subtaskItem?.status ?? task.status,
+                version: subtaskItem?.version,
+                updatedAt: subtaskItem?.updatedAt,
+              };
+            }
+            if (task.id === taskId) {
+              return {
+                ...task,
+                subtasks: (task.subtasks || []).map((subtask) =>
+                  subtask.id === subtaskId
+                    ? { ...subtask, completed: isCurrentlyDone }
+                    : subtask,
+                ),
+              };
+            }
+            return task;
+          }),
+        );
+        showToast('Cannot update this subtask because its current version is missing. Refresh the task and try again.', 'error');
+        return;
+      }
       try {
-        await updateWorkItemApi(subtaskId, {
+        const res = await updateWorkItemApi(subtaskId, {
+          version: subtaskVersion,
           status: frontendStatusToBackend(nextStatus),
         });
         if (res?.data) {
@@ -1826,8 +1947,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               return {
                 ...t,
                 status: subtaskItem?.status ?? t.status,
-                version: (t.version || 1) + 1,
-                updatedAt: new Date().toISOString(),
+                version: subtaskItem?.version,
+                updatedAt: subtaskItem?.updatedAt,
               };
             }
             if (t.id === taskId) {

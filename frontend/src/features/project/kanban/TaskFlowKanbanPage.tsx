@@ -106,6 +106,7 @@ function toKanbanTask(
 
   return {
     id: task.id,
+    version: task.version,
     key: formattedKey,
     title: task.title,
     columnId: findWorkflowStatus(currentWorkflow, task.status)?.id || `legacy:${task.status}`,

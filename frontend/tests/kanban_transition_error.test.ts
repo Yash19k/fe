@@ -63,6 +63,30 @@ describe('Kanban workflow transition failures', () => {
     assert.doesNotMatch(commit, /if \(!success\) \{[^}]*showToast/s);
   });
 
+  test('sends the task version, preserves the authoritative response, and refreshes stale versions', () => {
+    const component = readFileSync(
+      new URL('../src/features/project/kanban/TaskFlowKanbanPage.tsx', import.meta.url),
+      'utf8',
+    );
+    const context = readFileSync(
+      new URL('../src/state/AppContext.tsx', import.meta.url),
+      'utf8',
+    );
+    const statusMutation = context.slice(
+      context.indexOf('const changeTaskStatus = useCallback'),
+      context.indexOf('const requestReschedule = useCallback'),
+    );
+
+    assert.match(component, /version: task\.version/);
+    assert.match(component, /status\.id === change\.toColumnId/);
+    assert.match(statusMutation, /const version = getWorkItemVersion\(target\)/);
+    assert.match(statusMutation, /version,\s*status: frontendStatusToBackend\(newStatus\)/);
+    assert.match(statusMutation, /persisted && version === undefined[\s\S]*?return false/);
+    assert.match(statusMutation, /backendWorkItemToTask\(response\.data, target\.projectId\)/);
+    assert.match(statusMutation, /WORK_ITEM_VERSION_CONFLICT[\s\S]*?await reloadWorkItem\(taskId\)/);
+    assert.match(statusMutation, /The latest version was refreshed; review it and try again/);
+  });
+
   test('preserves the existing data-loading error and retry UI', () => {
     const component = readFileSync(
       new URL('../src/features/project/kanban/TaskFlowKanbanPage.tsx', import.meta.url),

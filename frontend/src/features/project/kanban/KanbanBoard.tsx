@@ -41,6 +41,7 @@ export interface KanbanAssignee {
 
 export interface KanbanTask {
   id: string;
+  version?: number;
   /** Short identifier shown on the card, e.g. "BIL-104". */
   key: string;
   title: string;
