@@ -208,7 +208,7 @@ const createSprint = async (req, res) => {
             });
         }
     }
-    await Promise.all([...notifications.entries()].map(([assigneeId, item]) => notification_service_1.notificationService.createNotification({
+    await (0, notification_service_1.createNotificationsBestEffort)([...notifications.entries()].map(([assigneeId, item]) => ({
         userId: assigneeId,
         organizationId,
         type: notification_entity_1.NotificationType.TASK_UPDATED,
@@ -221,7 +221,11 @@ const createSprint = async (req, res) => {
             sprintId: result.sprint.id,
             sprintName: result.sprint.name,
         },
-    })));
+    })), {
+        operation: "sprint-create",
+        organizationId,
+        projectId,
+    });
     res.status(201).json({
         success: true,
         message: "Sprint created successfully.",

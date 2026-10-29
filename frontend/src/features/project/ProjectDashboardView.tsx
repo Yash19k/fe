@@ -8,7 +8,7 @@ import { getProjectDashboardApi, backendTypeToFrontend } from '../../services/ap
 import type { Task, WorkItemType } from '../../types';
 
 export function ProjectDashboardView() {
-  const { currentProject, projectTasks, allUsers } = useApp();
+  const { currentProject, projectTasks, allUsers, currentWorkflow } = useApp();
   const [backendDashboard, setBackendDashboard] = useState<any>(null);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState<boolean>(false);
 
@@ -131,12 +131,15 @@ export function ProjectDashboardView() {
       'On Hold',
       'Done',
     ];
-    const projectWorkflowStatuses = currentProject?.workflow?.statuses?.map((s) => s.name) || defaultStatuses;
+    const configuredStatuses = currentWorkflow?.statuses && currentWorkflow.statuses.length > 0
+      ? currentWorkflow.statuses.map((s) => s.name)
+      : (currentProject?.workflow?.statuses?.map((s) => s.name) || defaultStatuses);
+    const projectWorkflowStatuses = configuredStatuses;
     const allStatuses = Array.from(new Set([...projectWorkflowStatuses, ...Object.keys(counts)]));
     return allStatuses
       .map((status) => ({ status, count: counts[status] || 0 }))
       .filter((s) => s.count > 0 || projectWorkflowStatuses.includes(s.status));
-  }, [projectTasks, currentProject]);
+  }, [projectTasks, currentProject, currentWorkflow]);
 
   // Chart 3: Tasks by Assignee
   const tasksByAssignee = useMemo(() => {

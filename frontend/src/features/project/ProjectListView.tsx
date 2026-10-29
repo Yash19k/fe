@@ -260,6 +260,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
             title="Filter by priority"
           >
             <option value="ALL">All Priorities</option>
+            <option value="Urgent">Urgent</option>
             <option value="High">High</option>
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>

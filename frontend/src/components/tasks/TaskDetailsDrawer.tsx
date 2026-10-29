@@ -33,7 +33,8 @@ import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../doma
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
-import { getWorkItemCommentsApi } from '../../services/api';
+import { getWorkItemCommentsApi, isPersistedWorkItemId, toUserFriendlyErrorMessage } from '../../services/api';
+import { toDateInputValue } from '../../utils/dateUtils';
 import { LabelPicker } from '../ui/LabelPicker';
 
 interface TaskDetailsContentProps {
@@ -46,6 +47,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     tasks,
     updateTask,
     deleteTask,
+    uploadTaskAttachments,
     addSubtask,
     toggleSubtask,
     deleteSubtask,
@@ -95,7 +97,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       ? [...task.assigneeIds]
       : (task.assigneeId ? [task.assigneeId] : []),
     labels: task.labels ? [...task.labels] : [],
-    dueDate: task.dueDate || '',
+    dueDate: toDateInputValue(task.dueDate),
     estimateHours: task.estimateHours !== null && task.estimateHours !== undefined ? task.estimateHours : '',
     parentId: task.parentId || '',
     businessGoal: task.businessGoal || '',
@@ -109,8 +111,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   }), [task]);
 
   const [draft, setDraft] = useState(initialDraft);
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
+
   const [isSaving, setIsSaving] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [backendComments, setBackendComments] = useState<any[] | null>(null);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -119,7 +127,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   // Fetch comments from backend when task opens or comments tab is active
   useEffect(() => {
     let isCancelled = false;
-    if (task?.id && task.id.includes('-') && (activeTab === 'comments' || !task.comments)) {
+    if (isPersistedWorkItemId(task?.id) && (activeTab === 'comments' || !task.comments)) {
       getWorkItemCommentsApi(task.id)
         .then((res) => {
           if (res?.data && Array.isArray(res.data) && !isCancelled) {
@@ -241,7 +249,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     }));
   }
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     if (!draft.title.trim()) {
       showToast('Work item title is required', 'error');
       return;
@@ -293,9 +301,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         environment: draft.environment,
       };
 
-      updateTask(task.id, updates, snapshotVersion);
+      const result = await updateTask(task.id, updates, snapshotVersion);
+      if (result && !result.success && result.reason) {
+        showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
+      }
     } catch (err: any) {
-      showToast(err.message || 'Failed to save work item changes', 'error');
+      showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
     } finally {
       setIsSaving(false);
     }
@@ -333,14 +344,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     try {
       await addComment(task.id, text);
       setNewCommentText('');
-      if (task.id && task.id.includes('-')) {
+      if (isPersistedWorkItemId(task.id)) {
         const res = await getWorkItemCommentsApi(task.id).catch(() => null);
         if (res?.data && Array.isArray(res.data)) {
           setBackendComments(res.data);
         }
       }
     } catch (err: any) {
-      setCommentError(err?.message || 'Failed to post comment to server');
+      setCommentError(toUserFriendlyErrorMessage(err, 'Failed to post comment to server'));
     } finally {
       setIsSubmittingComment(false);
     }
@@ -389,17 +400,19 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => simulateExternalTaskEdit(task.id)}
-            className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
-            title="Simulate remote edit (tests conflict collision modal)"
-          >
-            <Zap size={15} />
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => simulateExternalTaskEdit(task.id)}
+              className="p-1.5 rounded-lg text-text-muted hover:text-amber-400 hover:bg-surface-hover transition-colors"
+              title="Simulate remote edit (tests conflict collision modal)"
+            >
+              <Zap size={15} />
+            </button>
+          )}
 
           {currentUser.role !== 'Teammate' && (
             <button
-              onClick={() => deleteTask(task.id)}
+              onClick={() => setConfirmDeleteOpen(true)}
               className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-surface-hover transition-colors"
               title="Delete task"
             >
@@ -520,6 +533,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               <option value="">No priority</option>
+              <option value="Urgent">Urgent</option>
               <option value="High">High</option>
               <option value="Medium">Medium</option>
               <option value="Low">Low</option>
@@ -531,7 +545,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             <label className="text-[11px] text-text-muted block mb-1">Due Date</label>
             <input
               type="date"
-              value={draft.dueDate}
+              value={toDateInputValue(draft.dueDate)}
               onChange={(e) => setDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
               className="w-full h-7 rounded bg-surface border border-border px-1 text-xs text-text-primary focus:outline-none"
             />
@@ -795,6 +809,17 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         <TaskAttachments
           attachments={task.attachments || []}
           onChange={(newAtts) => updateTask(task.id, { attachments: newAtts }, snapshotVersion)}
+          onFilesChange={async (files) => {
+            if (!files || files.length === 0) return;
+            if (isPersistedWorkItemId(task.id)) {
+              try {
+                const uploaded = await uploadTaskAttachments(task.id, files);
+                showToast(`Successfully uploaded ${uploaded.length} attachment(s)`, 'success');
+              } catch (err: any) {
+                showToast(toUserFriendlyErrorMessage(err, 'Failed to upload attachments to server'), 'error');
+              }
+            }
+          }}
         />
 
         {/* SLA & Escalation section */}
@@ -1326,6 +1351,31 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             }}
           >
             Discard & Close
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        isOpen={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        title="Delete Work Item"
+        description={`Are you sure you want to delete "${task.title}"? This action cannot be undone.`}
+        maxWidth="max-w-md"
+      >
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+          <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => {
+              setConfirmDeleteOpen(false);
+              deleteTask(task.id);
+              onClose();
+            }}
+          >
+            Delete
           </Button>
         </div>
       </Dialog>

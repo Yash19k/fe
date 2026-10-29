@@ -52,6 +52,14 @@ async function authenticateUpgrade(request: IncomingMessage): Promise<ChatActor 
   return { id: user.id, organizationId: user.organizationId ?? undefined, role: user.role };
 }
 
+async function isActiveActor(actor: ChatActor): Promise<boolean> {
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: { id: actor.id },
+    select: { id: true, status: true },
+  });
+  return user?.status === UserStatus.ACTIVE;
+}
+
 function sendError(socket: ChatSocket, message: string) {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ event: "chat:error", message }));
@@ -66,9 +74,35 @@ function isRateLimited(socket: ChatSocket) {
   return false;
 }
 
+const rooms = new Map<string, Set<ChatSocket>>();
+
+export function evictUserFromConversationRoom(conversationId: string, userId: string): void {
+  const room = rooms.get(conversationId);
+  if (!room) return;
+  for (const socket of Array.from(room)) {
+    if (socket.actor?.id === userId) {
+      socket.joined.delete(conversationId);
+      room.delete(socket);
+      if (socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(
+            JSON.stringify({
+              event: "conversation:removed",
+              conversationId,
+              message: "You have been removed from this conversation.",
+            }),
+          );
+        } catch {
+          // Ignore write failure on stale socket
+        }
+      }
+    }
+  }
+  if (room.size === 0) rooms.delete(conversationId);
+}
+
 export function attachChatWebSocket(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
-  const rooms = new Map<string, Set<ChatSocket>>();
 
   server.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
@@ -131,6 +165,11 @@ export function attachChatWebSocket(server: HttpServer) {
       const conversationId = event.conversationId;
 
       void (async () => {
+        if (!(await isActiveActor(socket.actor))) {
+          sendError(socket, "Authentication required.");
+          socket.close(1008, "Authentication required.");
+          return;
+        }
         if (!(await canAccessConversation(socket.actor, conversationId))) {
           sendError(socket, "You do not have access to this conversation.");
           return;

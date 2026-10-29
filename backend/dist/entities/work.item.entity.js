@@ -120,6 +120,22 @@ __decorate([
     __metadata("design:type", Object)
 ], WorkItem.prototype, "dueDate", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "planned_start_date", type: "date", nullable: true }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "plannedStartDate", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        name: "planned_duration_working_days",
+        type: "integer",
+        nullable: true,
+    }),
+    __metadata("design:type", Object)
+], WorkItem.prototype, "plannedDurationWorkingDays", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ name: "is_schedule_pinned", type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], WorkItem.prototype, "isSchedulePinned", void 0);
+__decorate([
     (0, typeorm_1.Column)({
         name: "sla_deadline",
         type: "timestamptz",
@@ -262,5 +278,6 @@ exports.WorkItem = WorkItem = __decorate([
     (0, typeorm_1.Index)("IDX_work_items_parent_id", ["parentWorkItemId"]),
     (0, typeorm_1.Index)("IDX_work_items_project_status", ["projectId", "status"]),
     (0, typeorm_1.Index)("IDX_work_items_project_type", ["projectId", "type"]),
-    (0, typeorm_1.Index)("IDX_work_items_sla_deadline_status", ["slaDeadline", "slaStatus"])
+    (0, typeorm_1.Index)("IDX_work_items_sla_deadline_status", ["slaDeadline", "slaStatus"]),
+    (0, typeorm_1.Check)("CHK_work_items_planned_duration_positive", `"planned_duration_working_days" IS NULL OR "planned_duration_working_days" > 0`)
 ], WorkItem);

@@ -6,7 +6,7 @@ import { User, UserRole } from "../entities/user.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { AppError } from "../errors/app.error";
 import { NotificationType } from "../entities/notification.entity";
-import { notificationService } from "../services/notification.service";
+import { createNotificationsBestEffort } from "../services/notification.service";
 
 type Actor = {
   id: string;
@@ -349,6 +349,19 @@ export const addProjectMember = async (req: Request, res: Response) => {
       );
     }
 
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      const actorMembership = await memberRepo.findOne({
+        where: { projectId: project.id, userId: actor.id },
+      });
+      if (!actorMembership || actorMembership.role !== ProjectRole.ADMIN) {
+        throw new AppError(
+          "Only a project administrator can assign the project administrator role.",
+          403,
+          "PROJECT_ADMIN_REQUIRED",
+        );
+      }
+    }
+
     const membership = await memberRepo.save(
       memberRepo.create({
         projectId: project.id,
@@ -370,19 +383,28 @@ export const addProjectMember = async (req: Request, res: Response) => {
   });
 
   if (result.userId !== actor.id) {
-    await notificationService.createNotification({
-      userId: result.userId,
-      organizationId: actor.organizationId,
-      type: NotificationType.PROJECT_MEMBER_ADDED,
-      title: "Added to a project",
-      message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
-      projectId,
-      link: `/projects/${projectId}`,
-      metadata: {
-        addedByUserId: actor.id,
-        role: result.role,
+    await createNotificationsBestEffort(
+      [
+        {
+          userId: result.userId,
+          organizationId: actor.organizationId,
+          type: NotificationType.PROJECT_MEMBER_ADDED,
+          title: "Added to a project",
+          message: `You have been added to "${result.projectName}" (${result.projectKey}) with the ${result.role} role.`,
+          projectId,
+          link: `/projects/${projectId}`,
+          metadata: {
+            addedByUserId: actor.id,
+            role: result.role,
+          },
+        },
+      ],
+      {
+        operation: "project-member-add",
+        organizationId: actor.organizationId,
+        projectId,
       },
-    });
+    );
   }
 
   res.status(201).json({
@@ -459,6 +481,19 @@ export const updateProjectMemberRole = async (
 
     if (member.role === ProjectRole.ADMIN && role !== ProjectRole.ADMIN) {
       await ensureNotLastProjectAdmin(manager, project.id, member);
+    }
+
+    if (role === ProjectRole.ADMIN && actor.role !== UserRole.ADMIN) {
+      const actorMembership = await memberRepo.findOne({
+        where: { projectId: project.id, userId: actor.id },
+      });
+      if (!actorMembership || actorMembership.role !== ProjectRole.ADMIN) {
+        throw new AppError(
+          "Only a project administrator can assign the project administrator role.",
+          403,
+          "PROJECT_ADMIN_REQUIRED",
+        );
+      }
     }
 
     member.role = role as ProjectRole;

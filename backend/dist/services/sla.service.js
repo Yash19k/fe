@@ -14,7 +14,6 @@ const audit_log_entity_1 = require("../entities/audit.log.entity");
 const work_item_entity_1 = require("../entities/work.item.entity");
 const organization_sla_entity_1 = require("../entities/organization.sla.entity");
 const work_item_assignee_entity_1 = require("../entities/work.item-assignee.entity");
-const notification_service_1 = require("./notification.service");
 const notification_entity_1 = require("../entities/notification.entity");
 exports.SLA_POLICY_HOURS = {
     [work_item_entity_1.WorkItemPriority.URGENT]: 4,
@@ -147,19 +146,79 @@ async function writeSlaAudit(manager, workItem, userId, action, description, pre
     }));
 }
 async function refreshSlaStatuses(manager) {
+    const now = new Date();
+    const priorityRiskHours = `
+    CASE
+      WHEN workItem.priority = 'URGENT' THEN 0.8
+      WHEN workItem.priority = 'HIGH' THEN 1.6
+      WHEN workItem.priority = 'MEDIUM' THEN 4.8
+      WHEN workItem.priority = 'LOW' THEN 14.4
+      ELSE 0
+    END
+  `;
     const candidates = await manager
         .getRepository(work_item_entity_1.WorkItem)
         .createQueryBuilder("workItem")
         .where("workItem.status != :done", { done: work_item_entity_1.WorkItemStatus.DONE })
-        .orderBy("workItem.createdAt", "ASC")
+        .andWhere(`(
+        (
+          workItem.priority IS NULL
+          AND (
+            workItem.slaDeadline IS NOT NULL
+            OR workItem.slaDeadlineIsCustom = true
+            OR workItem.slaStatus IS NOT NULL
+            OR workItem.escalatedAt IS NOT NULL
+            OR workItem.escalatedById IS NOT NULL
+            OR workItem.escalationReason IS NOT NULL
+            OR workItem.slaBreachedAt IS NOT NULL
+            OR workItem.slaResolvedAt IS NOT NULL
+          )
+        )
+        OR (
+          workItem.priority IS NOT NULL
+          AND (
+            workItem.slaDeadline IS NULL
+            OR workItem.slaStatus IS NULL
+            OR (
+              workItem.slaDeadline <= :now
+              AND workItem.escalatedAt IS NULL
+              AND workItem.slaResolvedAt IS NULL
+            )
+            OR (
+              workItem.slaDeadline > :now
+              AND workItem.slaStatus IS DISTINCT FROM :atRisk
+              AND workItem.escalatedAt IS NULL
+              AND workItem.slaResolvedAt IS NULL
+              AND workItem.slaDeadline <= :now + (
+                COALESCE(
+                  (
+                    SELECT policy.escalate_hours
+                    FROM organization_sla policy
+                    WHERE policy.organization_id = workItem.organization_id
+                  ),
+                  ${priorityRiskHours}
+                ) * INTERVAL '1 hour'
+              )
+            )
+            OR workItem.updatedAt < (
+              SELECT policy.updated_at
+              FROM organization_sla policy
+              WHERE policy.organization_id = workItem.organization_id
+            )
+          )
+        )
+      )`, { now, atRisk: work_item_entity_1.SlaStatus.AT_RISK })
+        .orderBy("COALESCE(workItem.slaDeadline, workItem.createdAt)", "ASC")
+        .addOrderBy("workItem.id", "ASC")
         .take(500)
         .setLock("pessimistic_write")
+        .setOnLocked("skip_locked")
         .getMany();
     const orgPolicies = new Map();
+    const notifications = [];
     let changed = 0;
     for (const item of candidates) {
         const previous = item.slaStatus;
-        const now = new Date();
         if (!item.priority) {
             const hadSlaState = Boolean(item.slaDeadline ||
                 item.slaDeadlineIsCustom ||
@@ -171,6 +230,7 @@ async function refreshSlaStatuses(manager) {
                 item.slaResolvedAt);
             if (hadSlaState) {
                 clearSlaState(item);
+                item.updatedAt = now;
                 await manager.getRepository(work_item_entity_1.WorkItem).save(item);
                 changed += 1;
             }
@@ -201,6 +261,7 @@ async function refreshSlaStatuses(manager) {
             item.escalatedById = null;
             item.escalationReason =
                 "Automated SLA escalation: task breached resolution deadline";
+            item.updatedAt = now;
             await manager.getRepository(work_item_entity_1.WorkItem).save(item);
             await writeSlaAudit(manager, item, item.createdById, "escalated", "Work item automatically escalated due to SLA deadline breach", { status: previous }, {
                 status: item.slaStatus,
@@ -215,25 +276,28 @@ async function refreshSlaStatuses(manager) {
                 ...assignments.map((assignment) => assignment.userId),
                 item.createdById,
             ]);
-            await Promise.all(Array.from(recipients).map((userId) => notification_service_1.notificationService.createNotification({
-                userId,
-                organizationId: item.organizationId,
-                type: notification_entity_1.NotificationType.SLA_ESCALATED,
-                title: "SLA escalation",
-                message: `"${item.title}" has been automatically escalated because of SLA breach.`,
-                workItemId: item.id,
-                projectId: item.projectId,
-                link: `/tasks/${item.id}`,
-                metadata: {
-                    reason: item.escalationReason,
-                    escalatedAt: item.escalatedAt?.toISOString() ?? null,
-                },
-            })));
+            for (const userId of recipients) {
+                notifications.push({
+                    userId,
+                    organizationId: item.organizationId,
+                    type: notification_entity_1.NotificationType.SLA_ESCALATED,
+                    title: "SLA escalation",
+                    message: `"${item.title}" has been automatically escalated because of SLA breach.`,
+                    workItemId: item.id,
+                    projectId: item.projectId,
+                    link: `/tasks/${item.id}`,
+                    metadata: {
+                        reason: item.escalationReason,
+                        escalatedAt: item.escalatedAt?.toISOString() ?? null,
+                    },
+                });
+            }
             changed += 1;
             continue;
         }
         const next = applySlaState(item, now, policy);
         if (previous !== next) {
+            item.updatedAt = now;
             await manager.getRepository(work_item_entity_1.WorkItem).save(item);
             if (next === work_item_entity_1.SlaStatus.BREACHED && previous !== work_item_entity_1.SlaStatus.BREACHED) {
                 await writeSlaAudit(manager, item, item.createdById, "sla_breached", "Work item SLA breached during scheduled refresh", { status: previous }, {
@@ -245,5 +309,5 @@ async function refreshSlaStatuses(manager) {
             changed += 1;
         }
     }
-    return changed;
+    return { updatedCount: changed, notifications };
 }

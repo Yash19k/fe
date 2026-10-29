@@ -421,6 +421,9 @@ export async function removeOrganizationMember(req: Request, res: Response) {
         .execute();
     }
 
+    // Revoke all active sessions for the removed user
+    await manager.getRepository(UserSession).delete({ userId: targetUserId });
+
     // Detach user from organization without deleting global account
     targetUser.organizationId = null as any;
     targetUser.role = UserRole.TEAMMATE;

@@ -29,8 +29,7 @@ import {
   addWorkItemDependency,
   getWorkItemDependencies,
   deleteWorkItemDependency,
- 
-} from "../controllers/feature-persistence.controller";
+} from "../controllers/work-item-collaboration.controller";
 import { asyncHandler } from "../middleware/async.handler";
 import { requireProjectPermission } from "../middleware/project.permission";
 import { uploadWorkItemAttachments } from "../middleware/work.item.attachment.upload.middleware";
@@ -116,13 +115,15 @@ router.post(
   "/:workItemId/comments",
   isLoggedIn,
   validateWorkItemId,
-  asyncHandler(addWorkItemComment)
+  requireProjectPermission("task:read"),
+  asyncHandler(addWorkItemComment),
 );
 router.get(
   "/:workItemId/comments",
   isLoggedIn,
   validateWorkItemId,
-  asyncHandler(getWorkItemComments)
+  requireProjectPermission("task:read"),
+  asyncHandler(getWorkItemComments),
 );
 
 // Time Entries
@@ -130,13 +131,15 @@ router.post(
   "/:workItemId/time-entries",
   isLoggedIn,
   validateWorkItemId,
-  asyncHandler(addWorkItemTimeEntry)
+  requireProjectPermission("task:read"),
+  asyncHandler(addWorkItemTimeEntry),
 );
 router.get(
   "/:workItemId/time-entries",
   isLoggedIn,
   validateWorkItemId,
-  asyncHandler(getWorkItemTimeEntries)
+  requireProjectPermission("task:read"),
+  asyncHandler(getWorkItemTimeEntries),
 );
 
 // Dependencies
@@ -144,20 +147,23 @@ router.post(
   "/:workItemId/dependencies",
   isLoggedIn,
   validateWorkItemId,
+  requireProjectPermission("task:update"),
   validateWorkItemDependencyBody,
-  asyncHandler(addWorkItemDependency)
+  asyncHandler(addWorkItemDependency),
 );
 router.get(
   "/:workItemId/dependencies",
   isLoggedIn,
   validateWorkItemId,
-  asyncHandler(getWorkItemDependencies)
+  requireProjectPermission("task:read"),
+  asyncHandler(getWorkItemDependencies),
 );
 router.delete(
   "/:workItemId/dependencies/:depId",
   isLoggedIn,
   validateWorkItemDependencyParams,
-  asyncHandler(deleteWorkItemDependency)
+  requireProjectPermission("task:update"),
+  asyncHandler(deleteWorkItemDependency),
 );
-// router.post("/:logId/undo", isLoggedIn, asyncHandler(undoAuditLog));
+
 export default router;

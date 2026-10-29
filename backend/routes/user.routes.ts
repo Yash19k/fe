@@ -5,13 +5,21 @@ import { isLoggedIn } from "../middleware/is.loggedin";
 import { getMyAuditLogs } from "../controllers/auditlog.controller";
 
 
+import {
+  acceptInvitationController,
+  inviteMembersController,
+} from "../controllers/member-invitation.controller";
+
 const router = Router();
 router.post("/", asyncHandler(registerOrganization));  // when skip the add member step, this route will be used to register the organization and the first user
+router.post("/register", asyncHandler(registerOrganization));
 router.get("/", isLoggedIn, asyncHandler(getOrganizationUsers));
 router.post("/login", asyncHandler(login));
 router.get("/me", isLoggedIn, asyncHandler(currentUser));
 router.post("/logout", asyncHandler(logout));
 router.post("/refresh", refreshAccessToken);
+router.post("/invite", isLoggedIn, inviteMembersController);
+router.post("/accept-invitation", acceptInvitationController);
 
 
 export default router;

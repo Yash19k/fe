@@ -11,6 +11,7 @@ import {
   validateProjectDates,
   normalizeProjectId,
 } from '../../domain/projects';
+import { toDateInputValue } from '../../utils/dateUtils';
 
 export interface CreateProjectModalProps {
   isOpen: boolean;
@@ -98,6 +99,8 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
     }
   }
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   function resetForm() {
     setName('');
     setProjectId('');
@@ -111,9 +114,10 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
     setNameError('');
     setIdError('');
     setDateError('');
+    setIsSubmitting(false);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     let hasErrors = false;
@@ -135,25 +139,30 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
       hasErrors = true;
     }
 
-    if (hasErrors) return;
+    if (hasErrors || isSubmitting) return;
 
-    const normalizedKey = normalizeProjectId(projectId);
+    setIsSubmitting(true);
+    try {
+      const normalizedKey = normalizeProjectId(projectId);
 
-    const newProj = createProject({
-      name: name.trim(),
-      projectKey: normalizedKey,
-      description: description.trim(),
-      startDate: startDate || '',
-      dueDate: dueDate || '',
-      visibility,
-      color,
-      workflowId,
-    });
+      const newProj = await createProject({
+        name: name.trim(),
+        projectKey: normalizedKey,
+        description: description.trim(),
+        startDate: startDate || '',
+        dueDate: dueDate || '',
+        visibility,
+        color,
+        workflowId,
+      });
 
-    if (newProj) {
-      resetForm();
-      onClose();
-      navigate(`/project/${newProj.id}/overview`);
+      if (newProj) {
+        resetForm();
+        onClose();
+        navigate(`/project/${newProj.id}/overview`);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -233,13 +242,13 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
             <Input
               label="Start Date (Optional)"
               type="date"
-              value={startDate}
+              value={toDateInputValue(startDate)}
               onChange={handleStartDateChange}
             />
             <Input
               label="Target Delivery Date (Optional)"
               type="date"
-              value={dueDate}
+              value={toDateInputValue(dueDate)}
               onChange={handleDueDateChange}
             />
           </div>
@@ -357,8 +366,8 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
           >
             Cancel
           </Button>
-          <Button variant="primary" size="sm" type="submit">
-            Create Project
+          <Button variant="primary" size="sm" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating...' : 'Create Project'}
           </Button>
         </div>
       </form>

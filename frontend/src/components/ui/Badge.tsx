@@ -193,6 +193,13 @@ export function PriorityBadge({ priority, size = 'sm' }: PriorityBadgeProps) {
     string,
     { label: string; bg: string; text: string; border: string; icon: LucideIcon }
   > = {
+    'Urgent': {
+      label: 'Urgent',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger-border',
+      icon: AlertTriangle,
+    },
     'High': {
       label: 'High',
       bg: 'bg-status-danger-bg',

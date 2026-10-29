@@ -67,6 +67,31 @@ const recurrenceSchema = Joi.object({
   weekdaysOnly: Joi.boolean().default(false),
 }).unknown(false);
 
+function validateSingleLabelPayload(
+  value: unknown,
+  helpers: Joi.CustomHelpers,
+): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const payload = value as Record<string, unknown>;
+  if (payload.labelId === undefined || payload.labels === undefined) {
+    return value;
+  }
+
+  const labelId = payload.labelId === "" ? null : payload.labelId;
+  const labels = payload.labels;
+  const listLabel =
+    labels === null
+      ? null
+      : Array.isArray(labels)
+        ? labels[0] ?? null
+        : undefined;
+
+  if (labelId !== listLabel) {
+    return helpers.error("any.invalid");
+  }
+  return value;
+}
+
 export const createWorkItemSchema = Joi.object({
   projectId: Joi.string()
     .guid({ version: ["uuidv4"] })
@@ -109,6 +134,12 @@ export const createWorkItemSchema = Joi.object({
     .iso()
     .allow(null)
     .optional(),
+  plannedStartDate: dateOnlySchema.allow(null).optional(),
+  plannedDurationWorkingDays: Joi.number()
+    .integer()
+    .min(1)
+    .allow(null)
+    .optional(),
   slaDeadline: Joi.date()
     .iso()
     .min("now")
@@ -127,11 +158,24 @@ export const createWorkItemSchema = Joi.object({
 
   labels: Joi.array()
     .items(Joi.string().guid({ version: ["uuidv4"] }))
+    .max(1)
     .allow(null)
     .optional(),
 
   recurrence: recurrenceSchema.allow(null).optional(),
 })
+  .custom(validateSingleLabelPayload)
+  .custom((value, helpers) => {
+    const hasStart = value.plannedStartDate != null;
+    const hasDuration = value.plannedDurationWorkingDays != null;
+    if (hasStart !== hasDuration) {
+      return helpers.error("any.invalid", {
+        message:
+          "Planned start date and working-day duration must be provided together.",
+      });
+    }
+    return value;
+  })
   .unknown(false);
 
 export const validateCreateWorkItem = (
@@ -161,7 +205,7 @@ export const validateCreateWorkItem = (
   next();
 };
 
-const updateWorkItemSchema = Joi.object({
+export const updateWorkItemSchema = Joi.object({
   sprintId: Joi.string()
     .guid({ version: ["uuidv4", "uuidv5"] })
     .allow(null)
@@ -169,17 +213,26 @@ const updateWorkItemSchema = Joi.object({
   title: Joi.string().trim().min(1).max(255).optional(),
   description: Joi.string().allow("", null).optional(),
   type: Joi.string().valid(...Object.values(WorkItemType)).optional(),
-  priority: Joi.string().valid(...Object.values(WorkItemPriority)).optional(),
+  priority: Joi.string()
+    .valid(...Object.values(WorkItemPriority))
+    .allow(null)
+    .optional(),
   status: Joi.string().valid(...Object.values(WorkItemStatus)).optional(),
   dueDate: Joi.date().iso().allow(null).optional(),
+  plannedStartDate: dateOnlySchema.allow(null).optional(),
+  plannedDurationWorkingDays: Joi.number().integer().min(1).allow(null).optional(),
+  isSchedulePinned: Joi.boolean().optional(),
   slaDeadline: Joi.date().iso().min("now").allow(null).optional(),
   parentWorkItemId: Joi.string().guid({ version: ["uuidv4"] }).allow(null).optional(),
   assignees: Joi.array().items(assigneeSchema).unique("userId").allow(null).optional(),
   assigneeId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
   assigneeIds: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
   labelId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
-  labels: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).allow(null).optional(),
-}).min(1).unknown(false);
+  labels: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).max(1).allow(null).optional(),
+})
+  .custom(validateSingleLabelPayload)
+  .min(1)
+  .unknown(false);
 
 const workItemIdParamsSchema = Joi.object({
   workItemId: Joi.string()

@@ -21,7 +21,7 @@ import { getPersonalDashboardApi, backendWorkItemToTask } from '../../services/a
 import type { User } from '../../types';
 
 export function HomeView() {
-  const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer } = useApp();
+  const { currentUser, tasks, projects, auditLog, navigate, openTaskDrawer, myTasks, loadCrossProjectTasks } = useApp();
 
   const [personalData, setPersonalData] = useState<{
     summary: {
@@ -59,16 +59,28 @@ export function HomeView() {
 
   useEffect(() => {
     fetchPersonalDashboard();
-  }, [currentUser?.id]);
+    if (loadCrossProjectTasks) {
+      loadCrossProjectTasks();
+    }
+  }, [currentUser?.id, loadCrossProjectTasks]);
 
   const accessibleProjects = useMemo(() => {
-    return projects.filter((p) => canUserAccessProject(p, currentUser.id));
-  }, [projects, currentUser.id]);
+    return projects.filter((p) => canUserAccessProject(p, currentUser?.id, currentUser?.role));
+  }, [projects, currentUser?.id, currentUser?.role]);
 
-  // Tasks assigned to current user
+  // Tasks assigned to current user (including multi-assignee tasks)
   const userTasks = useMemo(() => {
-    return tasks.filter((t) => t.assigneeId === currentUser.id);
-  }, [tasks, currentUser.id]);
+    if (Array.isArray(myTasks) && myTasks.length > 0) {
+      return myTasks;
+    }
+    if (!currentUser?.id) return [];
+    return tasks.filter((t) => {
+      if (t.assigneeId === currentUser.id) return true;
+      if (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(currentUser.id)) return true;
+      if (Array.isArray(t.assignees) && t.assignees.some((a: any) => a.id === currentUser.id || a.userId === currentUser.id)) return true;
+      return false;
+    });
+  }, [myTasks, tasks, currentUser?.id]);
 
   // Personal metrics from backend or local fallback
   const personalMetrics = useMemo(() => {

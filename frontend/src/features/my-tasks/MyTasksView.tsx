@@ -10,7 +10,11 @@ import {
 import { Task } from '../../types';
 
 export function MyTasksView() {
-  const { currentUser, myTasks, projects } = useApp();
+  const { currentUser, myTasks, projects, loadCrossProjectTasks } = useApp();
+
+  React.useEffect(() => {
+    loadCrossProjectTasks?.();
+  }, [loadCrossProjectTasks]);
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -54,7 +58,7 @@ export function MyTasksView() {
         return a.dueDate.localeCompare(b.dueDate);
       }
       if (sortBy === 'priority') {
-        const pMap: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
+        const pMap: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
         const scoreB = b.priority ? (pMap[b.priority] || 0) : 0;
         const scoreA = a.priority ? (pMap[a.priority] || 0) : 0;
         return scoreB - scoreA;
@@ -89,7 +93,7 @@ export function MyTasksView() {
     }
 
     if (groupBy === 'priority') {
-      const groups: Record<string, Task[]> = { High: [], Medium: [], Low: [], 'No priority': [] };
+      const groups: Record<string, Task[]> = { Urgent: [], High: [], Medium: [], Low: [], 'No priority': [] };
       sortedTasks.forEach((t) => {
         const key = t.priority || 'No priority';
         if (!groups[key]) groups[key] = [];
@@ -183,6 +187,7 @@ export function MyTasksView() {
             className="h-8 rounded-lg bg-surface-elevated border border-border px-2 text-xs text-text-secondary focus:outline-none"
           >
             <option value="ALL">All Priorities</option>
+            <option value="Urgent">Urgent</option>
             <option value="High">High</option>
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>

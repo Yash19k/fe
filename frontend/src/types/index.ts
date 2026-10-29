@@ -16,6 +16,9 @@ export interface User {
   id: string;
   name: string;
   fullName?: string;
+  displayName?: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   role: Role;
   avatar?: string;
@@ -41,7 +44,7 @@ export type DefaultTaskStatus =
 
 export type TaskStatus = DefaultTaskStatus | string;
 
-export type Priority = 'Low' | 'Medium' | 'High';
+export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
 export type BugSeverity = 'Low' | 'Medium' | 'High' | 'Critical';
 
@@ -292,10 +295,11 @@ export interface AppContextValue {
   currentUser: User;
   currentCompany: Company | null;
   registerUser: (userData: { name: string; email: string }) => User;
+  register?: (params: { name: string; email: string; password: string; companyName?: string }) => Promise<boolean>;
   completeCompanyOnboarding: (companyName: string, markComplete?: boolean) => boolean;
   finishOnboarding: () => void;
   projects: Project[];
-  createProject: (projectData: Partial<Project>) => Project | null;
+  createProject: (projectData: Partial<Project>) => Promise<Project | null>;
   updateProject: (projectId: string, updates: Partial<Project>) => boolean;
   renameProject: (projectId: string, name: string) => boolean;
   updateProjectVisibility: (projectId: string, visibility: ProjectVisibility) => boolean;
@@ -321,16 +325,17 @@ export interface AppContextValue {
     reason?: string;
   }>;
   uploadTaskAttachments: (workItemId: string, files: File[]) => Promise<TaskAttachment[]>;
-  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => { success: boolean; reason?: string };
+  updateTask: (taskId: string, updates: any, snapshotVersion?: any) => Promise<{ success: boolean; task?: Task; reason?: string }> | { success: boolean; reason?: string };
   deleteTask: (taskId: string) => void;
   changeTaskStatus: (taskId: string, newStatus: string) => boolean;
   requestReschedule: (taskId: string, newDueDate: string) => void;
   confirmRescheduleImpact: () => void;
   addDependency: (predecessorId: string, successorId: string) => any;
   removeDependency: (predecessorId: string, successorId: string) => void;
-  addSubtask: (taskId: string, title: string) => void;
-  toggleSubtask: (taskId: string, subtaskId: string) => void;
-  deleteSubtask: (taskId: string, subtaskId: string) => void;
+  addSubtask: (taskId: string, title: string, assigneeId?: string | null) => Promise<void> | void;
+  toggleSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void> | void;
+  loadCrossProjectTasks?: () => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
   pendingSignupPassword?: string;
   setPendingSignupPassword?: (pwd: string) => void;

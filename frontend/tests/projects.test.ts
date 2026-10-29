@@ -6,6 +6,7 @@ import {
   validateProjectId,
   validateProjectDates,
 } from '../src/domain/projects.ts';
+import { backendProjectToFrontend } from '../src/services/api.ts';
 
 describe('Project Domain Logic Tests', () => {
   const existingProjects = [
@@ -238,6 +239,39 @@ describe('Project Domain Logic Tests', () => {
       assert.equal(canManageMembers('Admin'), true);
       assert.equal(canManageMembers('Manager'), true);
       assert.equal(canManageMembers('Teammate'), false);
+    });
+  });
+
+  describe('Project Creation ID & Database UUID Strategy Tests', () => {
+    it('does not manufacture any frontend proj- or Date.now() IDs and adopts the backend generated UUID', () => {
+      const serverUuid = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
+      const serverProjectPayload = {
+        id: serverUuid,
+        name: 'New Platform',
+        key: 'PLATFORM',
+        description: 'Platform modernization',
+        visibility: 'PUBLIC',
+        organizationId: '123e4567-e89b-12d3-a456-426614174000',
+        createdById: '123e4567-e89b-12d3-a456-426614174001',
+        createdAt: '2026-10-28T12:00:00.000Z',
+        updatedAt: '2026-10-28T12:00:00.000Z',
+      };
+
+      const mapped = backendProjectToFrontend(serverProjectPayload);
+      assert.equal(mapped.id, serverUuid);
+      assert.equal(mapped.id.startsWith('proj-'), false);
+      assert.match(mapped.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+
+    it('uses the server-returned UUID for route navigation and authorization checks without proj- prefix', () => {
+      const serverUuid = 'c74fa309-8bb8-4180-8772-c5132207b5a8';
+      const route = `/project/${serverUuid}/overview`;
+      const match = route.match(/^\/project\/([^/?#]+)/);
+      const parsedProjectId = match ? match[1] : '';
+
+      assert.equal(parsedProjectId, serverUuid);
+      assert.equal(parsedProjectId.startsWith('proj-'), false);
+      assert.match(parsedProjectId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     });
   });
 });

@@ -8,7 +8,7 @@ import {
 } from "../entities/work.item.entity";
 import { OrganizationSla } from "../entities/organization.sla.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
-import { notificationService } from "./notification.service";
+import type { CreateNotificationInput } from "./notification.service";
 import { NotificationType } from "../entities/notification.entity";
 
 export const SLA_POLICY_HOURS: Record<WorkItemPriority, number> = {
@@ -203,22 +203,87 @@ export async function writeSlaAudit(
   );
 }
 
-export async function refreshSlaStatuses(manager: EntityManager): Promise<number> {
+export async function refreshSlaStatuses(
+  manager: EntityManager,
+): Promise<{ updatedCount: number; notifications: CreateNotificationInput[] }> {
+  const now = new Date();
+  const priorityRiskHours = `
+    CASE
+      WHEN workItem.priority = 'URGENT' THEN 0.8
+      WHEN workItem.priority = 'HIGH' THEN 1.6
+      WHEN workItem.priority = 'MEDIUM' THEN 4.8
+      WHEN workItem.priority = 'LOW' THEN 14.4
+      ELSE 0
+    END
+  `;
   const candidates = await manager
     .getRepository(WorkItem)
     .createQueryBuilder("workItem")
     .where("workItem.status != :done", { done: WorkItemStatus.DONE })
-    .orderBy("workItem.createdAt", "ASC")
+    .andWhere(
+      `(
+        (
+          workItem.priority IS NULL
+          AND (
+            workItem.slaDeadline IS NOT NULL
+            OR workItem.slaDeadlineIsCustom = true
+            OR workItem.slaStatus IS NOT NULL
+            OR workItem.escalatedAt IS NOT NULL
+            OR workItem.escalatedById IS NOT NULL
+            OR workItem.escalationReason IS NOT NULL
+            OR workItem.slaBreachedAt IS NOT NULL
+            OR workItem.slaResolvedAt IS NOT NULL
+          )
+        )
+        OR (
+          workItem.priority IS NOT NULL
+          AND (
+            workItem.slaDeadline IS NULL
+            OR workItem.slaStatus IS NULL
+            OR (
+              workItem.slaDeadline <= :now
+              AND workItem.escalatedAt IS NULL
+              AND workItem.slaResolvedAt IS NULL
+            )
+            OR (
+              workItem.slaDeadline > :now
+              AND workItem.slaStatus IS DISTINCT FROM :atRisk
+              AND workItem.escalatedAt IS NULL
+              AND workItem.slaResolvedAt IS NULL
+              AND workItem.slaDeadline <= :now + (
+                COALESCE(
+                  (
+                    SELECT policy.escalate_hours
+                    FROM organization_sla policy
+                    WHERE policy.organization_id = workItem.organization_id
+                  ),
+                  ${priorityRiskHours}
+                ) * INTERVAL '1 hour'
+              )
+            )
+            OR workItem.updatedAt < (
+              SELECT policy.updated_at
+              FROM organization_sla policy
+              WHERE policy.organization_id = workItem.organization_id
+            )
+          )
+        )
+      )`,
+      { now, atRisk: SlaStatus.AT_RISK },
+    )
+    .orderBy("COALESCE(workItem.slaDeadline, workItem.createdAt)", "ASC")
+    .addOrderBy("workItem.id", "ASC")
     .take(500)
     .setLock("pessimistic_write")
+    .setOnLocked("skip_locked")
     .getMany();
 
   const orgPolicies = new Map<string, OrganizationSla | null>();
+  const notifications: CreateNotificationInput[] = [];
   let changed = 0;
 
   for (const item of candidates) {
     const previous = item.slaStatus;
-    const now = new Date();
 
     if (!item.priority) {
       const hadSlaState = Boolean(
@@ -234,6 +299,7 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
 
       if (hadSlaState) {
         clearSlaState(item);
+        item.updatedAt = now;
         await manager.getRepository(WorkItem).save(item);
         changed += 1;
       }
@@ -273,6 +339,7 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
       item.escalatedById = null;
       item.escalationReason =
         "Automated SLA escalation: task breached resolution deadline";
+      item.updatedAt = now;
 
       await manager.getRepository(WorkItem).save(item);
 
@@ -299,24 +366,22 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
         item.createdById,
       ]);
 
-      await Promise.all(
-        Array.from(recipients).map((userId) =>
-          notificationService.createNotification({
-            userId,
-            organizationId: item.organizationId,
-            type: NotificationType.SLA_ESCALATED,
-            title: "SLA escalation",
-            message: `"${item.title}" has been automatically escalated because of SLA breach.`,
-            workItemId: item.id,
-            projectId: item.projectId,
-            link: `/tasks/${item.id}`,
-            metadata: {
-              reason: item.escalationReason,
-              escalatedAt: item.escalatedAt?.toISOString() ?? null,
-            },
-          }),
-        ),
-      );
+      for (const userId of recipients) {
+        notifications.push({
+          userId,
+          organizationId: item.organizationId,
+          type: NotificationType.SLA_ESCALATED,
+          title: "SLA escalation",
+          message: `"${item.title}" has been automatically escalated because of SLA breach.`,
+          workItemId: item.id,
+          projectId: item.projectId,
+          link: `/tasks/${item.id}`,
+          metadata: {
+            reason: item.escalationReason,
+            escalatedAt: item.escalatedAt?.toISOString() ?? null,
+          },
+        });
+      }
 
       changed += 1;
       continue;
@@ -325,6 +390,7 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
     const next = applySlaState(item, now, policy);
 
     if (previous !== next) {
+      item.updatedAt = now;
       await manager.getRepository(WorkItem).save(item);
 
       if (next === SlaStatus.BREACHED && previous !== SlaStatus.BREACHED) {
@@ -347,6 +413,5 @@ export async function refreshSlaStatuses(manager: EntityManager): Promise<number
     }
   }
 
-  return changed;
+  return { updatedCount: changed, notifications };
 }
-

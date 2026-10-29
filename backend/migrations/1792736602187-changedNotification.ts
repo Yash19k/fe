@@ -7,7 +7,8 @@ export class ChangedNotification1792736602187 implements MigrationInterface {
         await queryRunner.query(`ALTER TABLE "work_items" DROP CONSTRAINT "FK_work_items_escalated_by"`);
         await queryRunner.query(`DROP INDEX "public"."IDX_audit_logs_is_undone"`);
         await queryRunner.query(`CREATE TYPE "public"."notifications_type_enum" AS ENUM('TASK_ASSIGNED', 'TASK_UPDATED', 'TASK_COMPLETED', 'TASK_OVERDUE', 'TASK_MENTIONED', 'SLA_ESCALATED', 'RECURRING_TASK_CREATED', 'RECURRING_TASK_FAILED', 'PROJECT_MEMBER_ADDED')`);
-        await queryRunner.query(`ALTER TABLE "notifications" ADD "type" "public"."notifications_type_enum" NOT NULL`);
+        await queryRunner.query(`ALTER TABLE "notifications" ADD "type" "public"."notifications_type_enum" NOT NULL DEFAULT 'TASK_UPDATED'`);
+        await queryRunner.query(`ALTER TABLE "notifications" ALTER COLUMN "type" DROP DEFAULT`);
         await queryRunner.query(`ALTER TABLE "notifications" ADD "read_at" TIMESTAMP WITH TIME ZONE`);
         await queryRunner.query(`ALTER TABLE "notifications" ADD "work_item_id" uuid`);
         await queryRunner.query(`ALTER TABLE "notifications" ADD "project_id" uuid`);

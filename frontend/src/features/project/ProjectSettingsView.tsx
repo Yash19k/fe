@@ -7,6 +7,7 @@ import { Dialog } from '../../components/ui/Dialog';
 import { Avatar } from '../../components/ui/Avatar';
 import { hasPermission, PERMISSIONS } from '../../domain/permissions';
 import { validateProjectId, normalizeProjectId } from '../../domain/projects';
+import { toDateInputValue } from '../../utils/dateUtils';
 import {
   Settings,
   ShieldAlert,
@@ -454,8 +455,8 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
   const [draftVisibility, setDraftVisibility] = useState<ProjectVisibility>(
     currentProject?.visibility || 'global'
   );
-  const [draftStartDate, setDraftStartDate] = useState(currentProject?.startDate || '');
-  const [draftDueDate, setDraftDueDate] = useState(currentProject?.dueDate || '');
+  const [draftStartDate, setDraftStartDate] = useState(toDateInputValue(currentProject?.startDate));
+  const [draftDueDate, setDraftDueDate] = useState(toDateInputValue(currentProject?.dueDate));
 
   const isGeneralDirty = useMemo(() => {
     if (!currentProject) return false;
@@ -595,9 +596,9 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
     const q = auditFilter.toLowerCase();
     return sourceRecords.filter((log: AuditLogEntry) => {
       const actor = getAuditActor(log, allUsers);
-      const entity = getAuditEntityInfo(log, projectTasks, currentProject.name);
+      const entity = getAuditEntityInfo(log, projectTasks, currentProject?.name || '');
       const actionInfo = formatAuditAction(log.action);
-      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject.name);
+      const formattedDesc = formatAuditDescription(log, projectTasks, currentProject?.name || '');
 
       return (
         actionInfo.label.toLowerCase().includes(q) ||
@@ -1013,7 +1014,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                   <input
                     id="settings-start-date"
                     type="date"
-                    value={draftStartDate}
+                    value={toDateInputValue(draftStartDate)}
                     onChange={(e) => setDraftStartDate(e.target.value)}
                     disabled={!canEdit}
                     className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
@@ -1027,7 +1028,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                   <input
                     id="settings-due-date"
                     type="date"
-                    value={draftDueDate}
+                    value={toDateInputValue(draftDueDate)}
                     onChange={(e) => setDraftDueDate(e.target.value)}
                     disabled={!canEdit}
                     className="w-full h-9 rounded-lg bg-surface-elevated border border-border px-3 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"

@@ -56,7 +56,7 @@ __decorate([
         length: 255,
         nullable: true,
     }),
-    __metadata("design:type", String)
+    __metadata("design:type", Object)
 ], User.prototype, "passwordHash", void 0);
 __decorate([
     (0, typeorm_1.Column)({

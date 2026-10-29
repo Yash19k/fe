@@ -14,6 +14,7 @@ import { OrganizationSla } from "../entities/organization.sla.entity";
 import {
   applySlaState,
   calculateSlaDeadline,
+  clearSlaState,
   writeSlaAudit,
 } from "./sla.service";
 
@@ -240,14 +241,7 @@ export const getInitialOccurrenceRunAt = (
 const initializeGeneratedTaskSla = async (manager: EntityManager, task: WorkItem, actorId: string): Promise<void> => {
   // A task without a priority must not receive an SLA deadline or escalation state.
   if (!task.priority) {
-    task.slaDeadline = null;
-    task.slaStatus = null;
-    task.slaDeadlineIsCustom = false;
-    task.escalatedAt = null;
-    task.escalatedById = null;
-    task.escalationReason = null;
-    task.slaBreachedAt = null;
-    task.slaResolvedAt = null;
+    clearSlaState(task);
     await manager.getRepository(WorkItem).save(task);
     return;
   }

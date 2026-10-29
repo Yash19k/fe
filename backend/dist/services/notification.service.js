@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.notificationService = exports.NotificationService = void 0;
+exports.createNotificationsBestEffort = createNotificationsBestEffort;
 const data_source_1 = require("../config/data.source");
 const app_error_1 = require("../errors/app.error");
 const notification_entity_1 = require("../entities/notification.entity");
@@ -51,3 +52,24 @@ class NotificationService {
 }
 exports.NotificationService = NotificationService;
 exports.notificationService = new NotificationService();
+async function createNotificationsBestEffort(inputs, context) {
+    const results = await Promise.allSettled(inputs.map((input) => exports.notificationService.createNotification(input)));
+    const failures = results.flatMap((result) => result.status === "rejected"
+        ? [
+            result.reason instanceof app_error_1.AppError
+                ? { name: result.reason.name, code: result.reason.code }
+                : {
+                    name: result.reason instanceof Error
+                        ? result.reason.name
+                        : "UnknownError",
+                },
+        ]
+        : []);
+    if (failures.length > 0) {
+        console.error("Best-effort notification delivery failed.", {
+            ...context,
+            failureCount: failures.length,
+            failures,
+        });
+    }
+}

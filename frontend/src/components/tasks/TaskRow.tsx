@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp } from '../../hooks/useApp';
 import { StatusBadge, PriorityBadge, SlaBadge, WorkItemTypeBadge } from '../ui/Badge';
-import { Avatar } from '../ui/Avatar';
+import { TaskAssignees } from '../ui/Avatar';
 import { getRelativeDateLabel } from '../../domain/businessDays';
 import { isTaskBlocked } from '../../domain/dependencyGraph';
 import { evaluateTaskSla } from '../../domain/sla';
@@ -18,7 +18,6 @@ export interface TaskRowProps {
 export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProps) {
   const { openTaskDrawer, changeTaskStatus, allUsers, tasks } = useApp();
 
-  const assignee = allUsers.find((u) => u.id === task.assigneeId) || task.assignees?.[0];
   const isDone = task.status === 'Done';
   const isBlocked = isTaskBlocked(task, tasks);
   const slaInfo = evaluateTaskSla(task);
@@ -115,8 +114,8 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
       </div>
 
       {/* 2. Assignee */}
-      <div className="flex items-center min-w-0 overflow-hidden" title={assignee?.name || 'Unassigned'}>
-        <Avatar user={assignee} size="xs" showName />
+      <div className="flex items-center min-w-0 overflow-hidden">
+        <TaskAssignees task={task} allUsers={allUsers} size="xs" max={3} showNameForSingle />
       </div>
 
       {/* 3. Due Date */}

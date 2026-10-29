@@ -12,6 +12,7 @@ import type {
   Sprint,
   Role,
   SprintStatus,
+  User,
 } from '../types';
 
 export const API_BASE_URL =
@@ -19,19 +20,34 @@ export const API_BASE_URL =
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
 
+let memoryToken: string | null = null;
+
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  if (memoryToken) return memoryToken;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
+  return null;
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  memoryToken = token;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+    }
+  } catch {}
 }
 
 export function clearAuthToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  memoryToken = null;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {}
 }
 
 export class ApiError extends Error {
@@ -78,7 +94,7 @@ async function executeTokenRefresh(): Promise<string | null> {
         setAuthToken(data.token);
         return data.token;
       }
-      return getAuthToken() || 'active_session';
+      return getAuthToken();
     } catch {
       clearAuthToken();
       return null;
@@ -99,12 +115,16 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+    ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
 
   try {
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers,
+    });
 
     if (response.status === 401 && !options._retry) {
       options._retry = true;
@@ -155,16 +175,22 @@ export async function checkBackendHealth(): Promise<boolean> {
 
 // Auth & Users
 export interface RegisterOrganizationInput {
-  organizationName: string;
-  adminName: string;
-  email: string;
-  password?: string;
+  user: {
+    fullName: string;
+    email: string;
+    password: string;
+  };
+  organization: {
+    name: string;
+  };
 }
 
 export interface RegisterOrganizationResponse {
   user: any;
   organization: any;
   token?: string;
+  organizationId?: string;
+  userId?: string;
 }
 
 export async function registerOrganizationApi(
@@ -200,6 +226,24 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
     setAuthToken(res.token);
   }
   return res;
+}
+
+export async function requestPasswordResetApi(email: string): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPasswordApi(payload: {
+  token: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function currentUserApi(): Promise<any> {
@@ -258,9 +302,10 @@ export async function updateOrganizationMemberRoleApi(
   memberId: string,
   role: string
 ): Promise<any> {
+  const canonicalRole = toBackendRole(role as Role) || role.toUpperCase();
   return request<any>(`/api/organization/members/${encodeURIComponent(memberId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role: canonicalRole }),
   });
 }
 
@@ -316,6 +361,96 @@ export async function getProjectMembersApi(projectId: string): Promise<any> {
   });
 }
 
+export interface WhiteboardScene {
+  elements: readonly Record<string, unknown>[];
+  appState: Record<string, unknown>;
+  files: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface WhiteboardSummary {
+  id: string;
+  projectId: string;
+  name: string;
+  revision: number;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Whiteboard extends WhiteboardSummary {
+  sceneData: WhiteboardScene;
+}
+
+export interface WhiteboardRevision {
+  id: string;
+  whiteboardId: string;
+  revisionNumber: number;
+  createdById: string | null;
+  sceneSnapshot: WhiteboardScene;
+  changeSummary: string | null;
+  createdAt: string;
+}
+
+export async function createWhiteboardApi(projectId: string, name: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function listWhiteboardsApi(
+  projectId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardSummary[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/whiteboards?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardApi(whiteboardId: string): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'GET' });
+}
+
+export async function listWhiteboardRevisionsApi(
+  whiteboardId: string,
+  page = 1,
+  limit = 25
+): Promise<{ data: { items: WhiteboardRevision[]; pagination: { page: number; limit: number; total: number; pages: number } } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions?page=${page}&limit=${limit}`, {
+    method: 'GET',
+  });
+}
+
+export async function getWhiteboardRevisionApi(
+  whiteboardId: string,
+  revisionNumber: number
+): Promise<{ data: WhiteboardRevision }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/revisions/${revisionNumber}`, { method: 'GET' });
+}
+
+export async function updateWhiteboardApi(
+  whiteboardId: string,
+  payload: { sceneData: WhiteboardScene; revision: number }
+): Promise<{ data: Whiteboard }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function renameWhiteboardApi(whiteboardId: string, name: string): Promise<{ data: WhiteboardSummary }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}/name`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteWhiteboardApi(whiteboardId: string): Promise<{ data: { id: string } }> {
+  return request(`/api/whiteboards/${encodeURIComponent(whiteboardId)}`, { method: 'DELETE' });
+}
+
 export async function addProjectMemberApi(
   projectId: string,
   member: { memberId: string; role?: string }
@@ -359,6 +494,8 @@ export interface CreateWorkItemApiInput {
   status?: string;
   dueDate?: string | null;
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
+  labelId?: string | null;
+  labels?: string[];
 }
 
 export async function getProjectWorkItemsApi(
@@ -399,8 +536,9 @@ export async function uploadWorkItemAttachmentsApi(
     `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
     {
       method: 'POST',
+      credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : { Authorization: 'Bearer active_session' }),
+        ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData,
     }
@@ -428,7 +566,7 @@ export async function updateWorkItemApi(workItemId: string, updates: any): Promi
 
 export async function escalateWorkItemApi(workItemId: string, reason?: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/escalate`, {
-    method: 'POST',
+    method: 'PATCH',
     body: JSON.stringify({ reason }),
   });
 }
@@ -574,15 +712,26 @@ export interface AuditPaginationMeta {
 }
 
 export interface GetProjectAuditLogsResponse {
+  success: boolean;
   data: any[];
-  meta?: AuditPaginationMeta;
+  pagination?: AuditPaginationMeta;
 }
 
 export async function getProjectAuditLogsApi(
-  projectId: string
+  projectId: string,
+  page?: number,
+  limit?: number
 ): Promise<GetProjectAuditLogsResponse> {
+  const query = new URLSearchParams();
+  if (page !== undefined && page !== null) {
+    query.set('page', String(page));
+  }
+  if (limit !== undefined && limit !== null) {
+    query.set('limit', String(limit));
+  }
+  const queryString = query.toString() ? `?${query.toString()}` : '';
   return request<GetProjectAuditLogsResponse>(
-    `/api/projects/${encodeURIComponent(projectId)}/audit-logs`,
+    `/api/projects/${encodeURIComponent(projectId)}/audit-logs${queryString}`,
     { method: 'GET' }
   );
 }
@@ -603,17 +752,32 @@ export async function undoAuditLogApi(projectId: string, auditId: string): Promi
 
 // Notifications
 export async function getUserNotificationsApi(): Promise<any> {
-  return request<any>('/api/notifications', { method: 'GET' });
+  try {
+    return await request<any>('/api/notifications', { method: 'GET' });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking notifications fetch failure:', err.message);
+    return { success: false, count: 0, data: [] };
+  }
 }
 
 export async function markNotificationReadApi(notifId: string): Promise<any> {
-  return request<any>(`/api/notifications/${encodeURIComponent(notifId)}/read`, {
-    method: 'PATCH',
-  });
+  try {
+    return await request<any>(`/api/notifications/${encodeURIComponent(notifId)}/read`, {
+      method: 'PATCH',
+    });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark notification read notice:', err.message);
+    return { success: false };
+  }
 }
 
 export async function markAllNotificationsReadApi(): Promise<any> {
-  return request<any>('/api/notifications/read-all', { method: 'PATCH' });
+  try {
+    return await request<any>('/api/notifications/read-all', { method: 'PATCH' });
+  } catch (err: any) {
+    console.warn('TaskFlow: Non-blocking mark all notifications read notice:', err.message);
+    return { success: false };
+  }
 }
 
 export async function createNotificationApi(payload: any): Promise<any> {
@@ -623,14 +787,73 @@ export async function createNotificationApi(payload: any): Promise<any> {
   });
 }
 
+// SLA Settings
+export interface OrganizationSlaPolicy {
+  id?: string;
+  organizationId?: string;
+  urgentHours?: number;
+  highHours: number;
+  mediumHours: number;
+  lowHours: number;
+  escalateHours: number;
+  warningThresholdHours?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function getOrganizationSlaApi(): Promise<{ success: boolean; data: OrganizationSlaPolicy }> {
+  return request<{ success: boolean; data: OrganizationSlaPolicy }>('/api/sla', { method: 'GET' });
+}
+
+export async function updateOrganizationSlaApi(
+  payload: Partial<OrganizationSlaPolicy>
+): Promise<{ success: boolean; message: string; data: OrganizationSlaPolicy }> {
+  return request<{ success: boolean; message: string; data: OrganizationSlaPolicy }>('/api/sla', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 // Chat / Messaging
+export interface ChatConversationMember {
+  userId: string;
+  lastReadAt?: string | null;
+  user?: {
+    id: string;
+    fullName?: string | null;
+    email: string;
+    role?: string;
+    status?: string;
+    [key: string]: any;
+  };
+}
+
+export interface ChatParticipant {
+  id: string;
+  fullName?: string | null;
+  email: string;
+}
+
+export interface ChatLastMessage {
+  id: string;
+  content: string;
+  createdAt: string;
+  senderId: string;
+}
+
 export interface ChatConversation {
   id: string;
   type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
-  name?: string;
-  projectId?: string;
+  name?: string | null;
+  projectId?: string | null;
+  organizationId?: string | null;
   updatedAt: string;
-  members: Array<{ userId: string; user?: any }>;
+  createdAt?: string;
+  members: ChatConversationMember[];
+  otherParticipant?: ChatParticipant | null;
+  lastMessage?: ChatLastMessage | null;
+  unreadCount?: number;
+  lastReadAt?: string | null;
 }
 
 export interface ChatMessage {
@@ -639,7 +862,13 @@ export interface ChatMessage {
   senderId: string;
   content: string;
   createdAt: string;
-  sender?: any;
+  sender?: {
+    id: string;
+    fullName?: string | null;
+    email: string;
+    role?: string;
+    [key: string]: any;
+  } | null;
 }
 
 export async function getChatConversationsApi(): Promise<any> {
@@ -648,8 +877,11 @@ export async function getChatConversationsApi(): Promise<any> {
 
 export async function createChatConversationApi(payload: {
   type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
-  name?: string;
-  projectId?: string;
+  name?: string | null;
+  projectId?: string | null;
+  organizationId?: string;
+  participantId?: string;
+  memberIds?: string[];
   recipientUserIds?: string[];
 }): Promise<any> {
   return request<any>('/api/chat/conversations', {
@@ -669,19 +901,80 @@ export async function getChatMessagesApi(
 }
 
 // Helpers & Converters
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export function isUuid(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return UUID_REGEX.test(id.trim());
+}
+
 export function isPersistedWorkItemId(id?: string | null): boolean {
-  if (!id) return false;
-  return !id.startsWith('tf-') && !id.startsWith('sub-') && !id.startsWith('att-');
+  return isUuid(id);
+}
+
+export function toUserFriendlyErrorMessage(
+  err: any,
+  fallbackMessage: string = 'An error occurred. Please try again.'
+): string {
+  if (!err) return fallbackMessage;
+
+  const raw = String(err?.message || err?.details?.message || err || '').trim();
+
+  // Check for raw database, SQL, TypeORM, or internal exception patterns
+  const isRawDbError =
+    /invalid input syntax for type uuid/i.test(raw) ||
+    /invalid.*uuid/i.test(raw) ||
+    /syntax error at or near/i.test(raw) ||
+    /relation ".*" does not exist/i.test(raw) ||
+    /column ".*" does not exist/i.test(raw) ||
+    /violates foreign key constraint/i.test(raw) ||
+    /violates not-null constraint/i.test(raw) ||
+    /violates check constraint/i.test(raw) ||
+    /duplicate key/i.test(raw) ||
+    /deadlock detected/i.test(raw) ||
+    /QueryFailedError/i.test(raw) ||
+    /TypeORM/i.test(raw) ||
+    /SELECT |INSERT |UPDATE |DELETE |FROM |WHERE /i.test(raw) ||
+    /node:internal/i.test(raw) ||
+    /at (?:async )?[A-Za-z0-9_.]+\s*\(/i.test(raw) ||
+    raw === 'Internal Server Error' ||
+    raw === 'INTERNAL_SERVER_ERROR';
+
+  if (isRawDbError) {
+    if (/uuid/i.test(raw)) {
+      return 'The requested identifier is invalid or not yet saved.';
+    }
+    if (/duplicate key|unique constraint/i.test(raw)) {
+      return 'A conflict occurred with an existing record.';
+    }
+    if (/foreign key/i.test(raw)) {
+      return 'The referenced item was not found or is no longer available.';
+    }
+    return fallbackMessage;
+  }
+
+  // Strip technical prefix like "error: " or "Error: "
+  const cleaned = raw.replace(/^error:\s*/i, '');
+  return cleaned || fallbackMessage;
 }
 
 export function frontendStatusToBackend(status: string): string {
   switch (status) {
     case 'In Progress': return 'IN_PROGRESS';
     case 'In Review': return 'IN_REVIEW';
+    case 'Testing / QA': return 'TESTING_QA';
+    case 'Blocked': return 'BLOCKED';
     case 'Done': return 'DONE';
-    case 'Backlog':
-    default:
+    case 'On Hold': return 'ON_HOLD';
+    case 'Backlog': return 'BACKLOG';
+    default: {
+      const upper = String(status || '').toUpperCase().replace(/[\s\/-]+/g, '_');
+      if (['BACKLOG', 'IN_PROGRESS', 'IN_REVIEW', 'TESTING_QA', 'BLOCKED', 'DONE', 'ON_HOLD'].includes(upper)) {
+        return upper;
+      }
+      console.warn(`[TaskFlow API] Unknown task status "${status}", falling back to BACKLOG`);
       return 'BACKLOG';
+    }
   }
 }
 
@@ -689,10 +982,17 @@ export function backendStatusToFrontend(status?: string | null): TaskStatus {
   switch (status?.toUpperCase()) {
     case 'IN_PROGRESS': return 'In Progress';
     case 'IN_REVIEW': return 'In Review';
+    case 'TESTING_QA': return 'Testing / QA';
+    case 'BLOCKED': return 'Blocked';
     case 'DONE': return 'Done';
-    case 'BACKLOG':
-    default:
+    case 'ON_HOLD': return 'On Hold';
+    case 'BACKLOG': return 'Backlog';
+    default: {
+      if (status) {
+        console.warn(`[TaskFlow API] Unrecognized backend status "${status}", falling back to Backlog`);
+      }
       return 'Backlog';
+    }
   }
 }
 
@@ -722,8 +1022,8 @@ export function backendTypeToFrontend(type?: string | null): WorkItemType {
 
 export function backendPriorityToFrontend(priority?: string | null): Priority {
   switch (priority?.toUpperCase()) {
-    case 'HIGH':
-    case 'URGENT': return 'High';
+    case 'URGENT': return 'Urgent';
+    case 'HIGH': return 'High';
     case 'LOW': return 'Low';
     case 'MEDIUM':
     default:
@@ -743,61 +1043,151 @@ export function frontendPriorityToBackend(priority?: Priority | string | null): 
 export function normalizeRole(backendRole?: string | null): Role {
   switch (backendRole?.toUpperCase()) {
     case 'ADMIN': return 'Admin';
-    case 'MANAGER': return 'Manager';
-   
+    case 'MANAGER':
+    case 'LEAD': return 'Manager';
     case 'TEAMMATE':
+    case 'MEMBER':
     default:
       return 'Teammate';
   }
 }
 
 export function toBackendRole(role?: Role | string | null): string {
-  switch (role) {
-    case 'Admin': return 'ADMIN';
-    case 'Manager': return 'MANAGER';
-    case 'Guest': return 'GUEST';
-    case 'Teammate':
-    default:
+  if (!role) return '';
+  switch (String(role).trim().toUpperCase()) {
+    case 'ADMIN':
+      return 'ADMIN';
+    case 'MANAGER':
+    case 'LEAD':
+      return 'MANAGER';
+    case 'TEAMMATE':
+    case 'MEMBER':
       return 'TEAMMATE';
+    case 'GUEST':
+      return 'GUEST';
+    default:
+      return '';
   }
 }
 
 export function toBackendProjectRole(role?: Role | string | null): string {
-  return toBackendRole(role);
+  switch (role) {
+    case 'Admin': return 'ADMIN';
+    case 'Manager': return 'LEAD';
+    case 'Teammate':
+    default:
+      return 'MEMBER';
+  }
 }
 
 export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Task {
+  if (!item) return {} as Task;
+
+  const entity = item.workItem || item;
+  const assignments = item.assignments || entity.assignments;
+  const rawAssignees = item.assignees || entity.assignees;
+
+  let assigneeIds: string[] = [];
+  let assignees: User[] = [];
+
+  if (Array.isArray(item.assigneeIds) && item.assigneeIds.length > 0) {
+    assigneeIds = item.assigneeIds;
+  } else if (Array.isArray(entity.assigneeIds) && entity.assigneeIds.length > 0) {
+    assigneeIds = entity.assigneeIds;
+  } else if (Array.isArray(assignments) && assignments.length > 0) {
+    assigneeIds = assignments
+      .map((a: any) => a.userId || a.user?.id || a.id)
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+  } else if (Array.isArray(rawAssignees) && rawAssignees.length > 0) {
+    assigneeIds = rawAssignees
+      .map((a: any) => (typeof a === 'string' ? a : a.userId || a.id))
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+  } else if (item.assigneeId || entity.assigneeId) {
+    const single = item.assigneeId || entity.assigneeId;
+    if (typeof single === 'string' && single.length > 0) assigneeIds = [single];
+  }
+
+  if (Array.isArray(assignments) && assignments.length > 0) {
+    assignees = assignments
+      .map((a: any) => {
+        const u = a.user || a;
+        if (!u || typeof u !== 'object') return null;
+        return {
+          id: a.userId || u.id,
+          name: u.fullName || u.name || u.email?.split('@')[0] || 'Member',
+          email: u.email || '',
+          role: normalizeRole(u.role),
+          initials: (u.fullName || u.name || u.email || 'M').slice(0, 2).toUpperCase(),
+        } as User;
+      })
+      .filter((u): u is User => Boolean(u && u.id));
+  } else if (Array.isArray(rawAssignees) && rawAssignees.length > 0) {
+    assignees = rawAssignees
+      .map((a: any) => {
+        if (!a || typeof a !== 'object') return null;
+        const u = a.user || a;
+        return {
+          id: a.userId || u.id,
+          name: u.fullName || u.name || u.email?.split('@')[0] || 'Member',
+          email: u.email || '',
+          role: normalizeRole(u.role),
+          initials: (u.fullName || u.name || u.email || 'M').slice(0, 2).toUpperCase(),
+        } as User;
+      })
+      .filter((u): u is User => Boolean(u && u.id));
+  }
+
+  const primaryAssigneeId =
+    assigneeIds[0] ||
+    item.assigneeId ||
+    entity.assigneeId ||
+    null;
+
+  let labels: string[] = [];
+  const rawLabels = item.labels || entity.labels;
+  const singleLabel = item.label || entity.label;
+
+  if (Array.isArray(rawLabels) && rawLabels.length > 0) {
+    labels = rawLabels
+      .map((l: any) => (typeof l === 'string' ? l : l.name || l.title || l.id))
+      .filter((name: any): name is string => typeof name === 'string' && name.length > 0);
+  } else if (singleLabel) {
+    const labelName = typeof singleLabel === 'string' ? singleLabel : singleLabel.name;
+    if (labelName) labels = [labelName];
+  }
+
   return {
-    id: item.id,
-    projectId: item.projectId || fallbackProjectId || '',
-    sprintId: item.sprintId || null,
-    parentId: item.parentWorkItemId || item.parentId || null,
-    type: backendTypeToFrontend(item.type),
-    title: item.title || 'Untitled Task',
-    description: item.description || '',
-    status: backendStatusToFrontend(item.status),
-    priority: backendPriorityToFrontend(item.priority),
-    assigneeId: item.assignees?.[0]?.userId || item.assigneeId || null,
-    assigneeIds: item.assignees ? item.assignees.map((a: any) => a.userId) : [],
-    creatorId: item.creatorId || '',
-    startDate: item.startDate || null,
-    dueDate: item.dueDate || null,
-    estimateHours: item.estimateHours ? Number(item.estimateHours) : null,
-    actualHours: item.actualHours ? Number(item.actualHours) : 0,
-    dependencyIds: Array.isArray(item.dependencies)
-      ? item.dependencies.map((d: any) => d.dependsOnWorkItemId || d.id)
+    id: entity.id || item.id,
+    projectId: entity.projectId || item.projectId || fallbackProjectId || '',
+    sprintId: entity.sprintId ?? item.sprintId ?? null,
+    parentId: entity.parentWorkItemId || entity.parentId || item.parentWorkItemId || item.parentId || null,
+    type: backendTypeToFrontend(entity.type || item.type),
+    title: entity.title || item.title || 'Untitled Task',
+    description: entity.description ?? item.description ?? '',
+    status: backendStatusToFrontend(entity.status || item.status),
+    priority: backendPriorityToFrontend(entity.priority ?? item.priority),
+    assigneeId: primaryAssigneeId,
+    assigneeIds,
+    assignees,
+    creatorId: entity.createdById || entity.creatorId || item.createdById || item.creatorId || '',
+    startDate: entity.startDate || item.startDate || null,
+    dueDate: entity.dueDate || item.dueDate || null,
+    estimateHours: (entity.estimateHours ?? item.estimateHours) ? Number(entity.estimateHours ?? item.estimateHours) : null,
+    actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
+    dependencyIds: Array.isArray(entity.dependencies || item.dependencies)
+      ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
-    labels: Array.isArray(item.labels) ? item.labels.map((l: any) => l.name || l) : [],
-    subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
-    comments: Array.isArray(item.comments) ? item.comments : [],
-    timeEntries: Array.isArray(item.timeEntries) ? item.timeEntries : [],
-    recurrenceRule: item.recurrenceRule || { frequency: 'none' },
-    sla: item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
-    version: item.version ? Number(item.version) : 1,
-    createdAt: item.createdAt || new Date().toISOString(),
-    updatedAt: item.updatedAt || new Date().toISOString(),
-    attachments: Array.isArray(item.attachments)
-      ? item.attachments.map((att: any) => ({
+    labels,
+    subtasks: Array.isArray(entity.subtasks || item.subtasks) ? (entity.subtasks || item.subtasks) : [],
+    comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
+    timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
+    recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
+    sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
+    version: entity.version ? Number(entity.version) : 1,
+    createdAt: entity.createdAt || item.createdAt || new Date().toISOString(),
+    updatedAt: entity.updatedAt || item.updatedAt || new Date().toISOString(),
+    attachments: Array.isArray(entity.attachments || item.attachments)
+      ? (entity.attachments || item.attachments).map((att: any) => ({
           id: att.id,
           name: att.originalName || att.name || 'attachment',
           size: Number(att.size) || 0,
@@ -806,7 +1196,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
           blobKey: att.blobKey || att.id,
           uploadedAt: att.createdAt || att.uploadedAt || new Date().toISOString(),
         }))
-      : (item.attachments || []),
+      : (entity.attachments || item.attachments || []),
   };
 }
 

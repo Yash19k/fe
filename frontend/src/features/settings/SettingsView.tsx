@@ -21,6 +21,10 @@ import {
   addOrganizationMemberApi,
   updateOrganizationMemberRoleApi,
   removeOrganizationMemberApi,
+  getOrganizationSlaApi,
+  updateOrganizationSlaApi,
+  toUserFriendlyErrorMessage,
+  toBackendRole,
 } from '../../services/api';
 
 export function SettingsView() {
@@ -30,6 +34,8 @@ export function SettingsView() {
   const [slaMedium, setSlaMedium] = useState<number | string>(48);
   const [slaLow, setSlaLow] = useState<number | string>(96);
   const [warningThreshold, setWarningThreshold] = useState<number | string>(8);
+  const [isLoadingSla, setIsLoadingSla] = useState<boolean>(false);
+  const [isSavingSla, setIsSavingSla] = useState<boolean>(false);
 
   // Organization Member Management State
   const [members, setMembers] = useState<any[]>([]);
@@ -75,9 +81,67 @@ export function SettingsView() {
     }
   }, [canManageOrgMembers]);
 
-  function handleSaveSlaSettings(e: React.FormEvent) {
+  useEffect(() => {
+    let isCancelled = false;
+    setIsLoadingSla(true);
+    getOrganizationSlaApi()
+      .then((res) => {
+        if (!isCancelled && res?.data) {
+          if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+          if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+          if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+          if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load SLA settings:', err);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingSla(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  async function handleSaveSlaSettings(e: React.FormEvent) {
     e.preventDefault();
-    showToast('SLA threshold policy updated successfully', 'success');
+    const high = Number(slaHigh);
+    const medium = Number(slaMedium);
+    const low = Number(slaLow);
+    const escalate = Number(warningThreshold);
+
+    if (
+      isNaN(high) || high <= 0 ||
+      isNaN(medium) || medium <= 0 ||
+      isNaN(low) || low <= 0 ||
+      isNaN(escalate) || escalate <= 0
+    ) {
+      showToast('All SLA thresholds must be positive numbers greater than 0', 'error');
+      return;
+    }
+
+    setIsSavingSla(true);
+    try {
+      const res = await updateOrganizationSlaApi({
+        highHours: high,
+        mediumHours: medium,
+        lowHours: low,
+        escalateHours: escalate,
+      });
+      if (res?.data) {
+        if (res.data.highHours !== undefined) setSlaHigh(res.data.highHours);
+        if (res.data.mediumHours !== undefined) setSlaMedium(res.data.mediumHours);
+        if (res.data.lowHours !== undefined) setSlaLow(res.data.lowHours);
+        if (res.data.escalateHours !== undefined) setWarningThreshold(res.data.escalateHours);
+      }
+      showToast(res?.message || 'SLA threshold policy updated successfully', 'success');
+    } catch (err: any) {
+      showToast(toUserFriendlyErrorMessage(err, 'Unable to save SLA settings. Please try again.'), 'error');
+    } finally {
+      setIsSavingSla(false);
+    }
   }
 
   async function handleAddMemberSubmit(e: React.FormEvent) {
@@ -119,16 +183,27 @@ export function SettingsView() {
   }
 
   async function handleRoleChange(userId: string, newRole: string) {
+    const canonicalRole = toBackendRole(newRole as any) || newRole.toUpperCase();
+    if (!['ADMIN', 'MANAGER', 'TEAMMATE'].includes(canonicalRole)) {
+      showToast('Invalid role specified', 'error');
+      return;
+    }
+    const previousMember = members.find((m) => m.id === userId);
     setUpdatingRoleId(userId);
     try {
-      const res = await updateOrganizationMemberRoleApi(userId, newRole);
+      const res = await updateOrganizationMemberRoleApi(userId, canonicalRole);
       showToast(res?.message || 'Member role updated successfully', 'success');
       setMembers((prev) =>
-        prev.map((m) => (m.id === userId ? { ...m, role: newRole } : m))
+        prev.map((m) => (m.id === userId ? { ...m, role: canonicalRole } : m))
       );
     } catch (err: any) {
       const msg = err?.message || 'Failed to update member role';
       showToast(msg, 'error');
+      if (previousMember) {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === userId ? { ...m, role: previousMember.role } : m))
+        );
+      }
     } finally {
       setUpdatingRoleId(null);
     }
@@ -361,16 +436,31 @@ export function SettingsView() {
                       {/* Role Selector with "All users can be managers" support */}
                       <div className="flex items-center gap-1.5">
                         <span className="text-text-muted text-[11px]">Role:</span>
-                        <select
-                          value={m.role}
-                          disabled={isSelf || isUpdating}
-                          onChange={(e) => handleRoleChange(m.id, e.target.value)}
-                          className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
-                        >
-                          <option value="Admin">Admin</option>
-                          <option value="Manager">Manager</option>
-                          <option value="Teammate">Teammate</option>
-                        </select>
+                        {(() => {
+                          const backendRole = toBackendRole(m.role);
+                          const isRecognized = ['ADMIN', 'MANAGER', 'TEAMMATE'].includes(backendRole);
+                          const selectValue = isRecognized ? backendRole : (m.role ? String(m.role) : '');
+                          if (!isRecognized) {
+                            console.warn(`[Settings] Member ${m.id} (${m.email}) has unexpected or missing role:`, m.role);
+                          }
+                          return (
+                            <select
+                              value={selectValue}
+                              disabled={isSelf || isUpdating}
+                              onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                              className="h-7 rounded-lg bg-surface-elevated border border-border px-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary disabled:opacity-60 cursor-pointer"
+                            >
+                              <option value="ADMIN">Admin</option>
+                              <option value="MANAGER">Manager</option>
+                              <option value="TEAMMATE">Teammate</option>
+                              {!isRecognized && (
+                                <option value={selectValue} disabled>
+                                  {m.role ? `Unrecognized (${m.role})` : 'Missing Role'}
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
                       </div>
 
                       {/* Remove Member Button */}
@@ -435,8 +525,14 @@ export function SettingsView() {
           />
 
           <div className="sm:col-span-2 flex justify-end">
-            <Button variant="primary" size="sm" type="submit" icon={Check}>
-              Save SLA Settings
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              icon={isSavingSla ? RefreshCw : Check}
+              disabled={isSavingSla || isLoadingSla}
+            >
+              {isSavingSla ? 'Saving...' : 'Save SLA Settings'}
             </Button>
           </div>
         </form>

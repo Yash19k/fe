@@ -4,6 +4,7 @@ import { AppDataSource } from "../config/data.source";
 import { AppError } from "../errors/app.error";
 import { processDueRecurrences } from "./recurrence.service";
 import { refreshSlaStatuses } from "./sla.service";
+import { createNotificationsBestEffort } from "./notification.service";
 
 let slaScheduler: Cron | undefined;
 let recurrenceScheduler: Cron | undefined;
@@ -34,12 +35,15 @@ export function startScheduler(): void {
 
       isSlaJobRunning = true;
       try {
-        const updatedCount = await AppDataSource.transaction(
+        const result = await AppDataSource.transaction(
           async (manager) => refreshSlaStatuses(manager),
         );
+        await createNotificationsBestEffort(result.notifications, {
+          operation: "sla-refresh",
+        });
 
         console.info(
-          `[SLA Scheduler] Completed. Updated ${updatedCount} work items.`,
+          `[SLA Scheduler] Completed. Updated ${result.updatedCount} work items.`,
         );
       } catch (error) {
         console.error("[SLA Scheduler] Job failed:", error);

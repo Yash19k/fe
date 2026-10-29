@@ -21,7 +21,7 @@ import {
 } from "../utils/pagination";
 import { Sprint } from "../entities/sprint.entities";
 import { NotificationType } from "../entities/notification.entity";
-import { notificationService } from "../services/notification.service";
+import { createNotificationsBestEffort } from "../services/notification.service";
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -376,9 +376,8 @@ export const createSprint = async (
     }
   }
 
-  await Promise.all(
-    [...notifications.entries()].map(([assigneeId, item]) =>
-      notificationService.createNotification({
+  await createNotificationsBestEffort(
+    [...notifications.entries()].map(([assigneeId, item]) => ({
         userId: assigneeId,
         organizationId,
         type: NotificationType.TASK_UPDATED,
@@ -391,8 +390,12 @@ export const createSprint = async (
           sprintId: result.sprint.id,
           sprintName: result.sprint.name,
         },
-      }),
-    ),
+      })),
+    {
+      operation: "sprint-create",
+      organizationId,
+      projectId,
+    },
   );
 
   res.status(201).json({

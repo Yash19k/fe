@@ -16,7 +16,6 @@
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.11.0",
     "cookie-parser": "^1.4.7",
-    "cloudinary": "^2.7.0",
     "cors": "^2.8.6",
     "croner": "^10.0.1",
     "dotenv": "^18.0.7",
@@ -29,6 +28,7 @@
     "pg": "^8.23.1",
     "pnpm": "^12.15.0",
     "reflect-metadata": "^0.2.2",
+    "socket.io": "^4.8.4",
     "typeorm": "^1.1.2",
     "ws": "^8.22.0"
   },

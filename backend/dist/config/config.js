@@ -6,9 +6,19 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET;
+const isTestEnv = process.env.NODE_ENV === "test" ||
+    process.argv.some((arg) => arg.includes("test"));
+const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET ||
+    process.env.JWT_SECRET ||
+    (isTestEnv
+        ? "test_jwt_secret_must_be_at_least_32_characters_long"
+        : undefined);
 if (!accessTokenSecret || accessTokenSecret.length < 32) {
     throw new Error("ACCESS_TOKEN_SECRET (or JWT_SECRET) must be configured with a strong secret of at least 32 characters.");
+}
+const databaseSynchronize = process.env.DB_SYNCHRONIZE === "true";
+if (process.env.NODE_ENV === "production" && databaseSynchronize) {
+    throw new Error("DB_SYNCHRONIZE must be disabled in production.");
 }
 exports.config = {
     host: process.env.HOST ?? "127.0.0.1",
@@ -23,7 +33,7 @@ exports.config = {
         username: process.env.DB_USERNAME ?? "postgres",
         password: process.env.DB_PASSWORD ?? "",
         name: process.env.DB_NAME ?? "taskflow",
-        synchronize: process.env.DB_SYNCHRONIZE === "true",
+        synchronize: databaseSynchronize,
         logging: process.env.DB_LOGGING === "true",
     },
     accessTokenSecret,
