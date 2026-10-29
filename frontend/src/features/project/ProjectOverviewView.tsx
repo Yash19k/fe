@@ -28,7 +28,13 @@ import {
   Sparkles,
   ChevronRight,
 } from 'lucide-react';
-import type { Task, AuditLogEntry, User, WorkItemType, WorkflowStatus } from '../../types';
+import type { Task, AuditLogEntry, User, WorkItemType } from '../../types';
+import {
+  findWorkflowStatus,
+  getStatusCounts,
+  isWorkflowStatusActive,
+  isWorkflowStatusComplete,
+} from '../../domain/workflow';
 
 export function ProjectOverviewView() {
   const {
@@ -93,26 +99,32 @@ export function ProjectOverviewView() {
 
   const totalDeliverables = deliverableTasks.length > 0 ? deliverableTasks.length : projectTasks.length;
   const completedDeliverables = (deliverableTasks.length > 0 ? deliverableTasks : projectTasks).filter(
-    (t: Task) => t.status === 'Done'
+    (task: Task) => isWorkflowStatusComplete(currentWorkflow, task.status)
   ).length;
 
   const totalTasksCount = projectTasks.length;
-  const completedTasksCount = projectTasks.filter((t: Task) => t.status === 'Done').length;
+  const completedTasksCount = projectTasks.filter(
+    (task: Task) => isWorkflowStatusComplete(currentWorkflow, task.status),
+  ).length;
   const inProgressTasksCount = projectTasks.filter(
-    (t: Task) => t.status !== 'Done' && t.status !== 'Backlog'
+    (task: Task) => isWorkflowStatusActive(currentWorkflow, task.status),
   ).length;
 
   const overdueTasks = useMemo(() => {
     return projectTasks.filter(
-      (t: Task) => t.status !== 'Done' && getRelativeDateLabel(t.dueDate).isOverdue
+      (task: Task) =>
+        !isWorkflowStatusComplete(currentWorkflow, task.status) &&
+        getRelativeDateLabel(task.dueDate).isOverdue,
     );
-  }, [projectTasks]);
+  }, [projectTasks, currentWorkflow]);
 
   const blockedTasks = useMemo(() => {
     return projectTasks.filter(
-      (t: Task) => t.status !== 'Done' && isTaskBlocked(t, projectTasks)
+      (task: Task) =>
+        !isWorkflowStatusComplete(currentWorkflow, task.status) &&
+        isTaskBlocked(task, projectTasks, currentWorkflow),
     );
-  }, [projectTasks]);
+  }, [projectTasks, currentWorkflow]);
 
   const completionPct =
     totalDeliverables > 0 ? Math.round((completedDeliverables / totalDeliverables) * 100) : 0;
@@ -151,36 +163,30 @@ export function ProjectOverviewView() {
 
   // Section B: Task Status Distribution across actual workflow configuration
   const statusDistribution = useMemo(() => {
-    const counts: Record<string, number> = {};
-    projectTasks.forEach((t: Task) => {
-      counts[t.status] = (counts[t.status] || 0) + 1;
+    const configuredCounts = getStatusCounts(currentWorkflow, projectTasks);
+    const distribution = configuredCounts.map((status) => ({
+      id: status.id,
+      name: status.name,
+      color: status.color || '#94A3B8',
+      count: status.count,
+    }));
+    const legacyCounts = new Map<string, number>();
+    projectTasks.forEach((task) => {
+      if (findWorkflowStatus(currentWorkflow, task.status)) return;
+      legacyCounts.set(task.status, (legacyCounts.get(task.status) || 0) + 1);
     });
-
-    const defaultStatuses: WorkflowStatus[] = [
-      { id: 'st-backlog', name: 'Backlog', category: 'unstarted', color: '#6B7280' },
-      { id: 'st-inprogress', name: 'In Progress', category: 'active', color: '#3B82F6' },
-      { id: 'st-inreview', name: 'In Review', category: 'active', color: '#A855F7' },
-      { id: 'st-testingqa', name: 'Testing / QA', category: 'active', color: '#06B6D4' },
-      { id: 'st-blocked', name: 'Blocked', category: 'impediment', color: '#EF4444' },
-      { id: 'st-onhold', name: 'On Hold', category: 'impediment', color: '#F97316' },
-      { id: 'st-done', name: 'Done', category: 'completed', color: '#22C55E' },
-    ];
-
-    const configuredStatuses = currentWorkflow?.statuses && currentWorkflow.statuses.length > 0
-      ? currentWorkflow.statuses
-      : defaultStatuses;
-
-    return configuredStatuses.map((st) => {
-      const count = counts[st.name] || 0;
-      const pct = totalTasksCount > 0 ? Math.round((count / totalTasksCount) * 100) : 0;
-      return {
-        id: st.id,
-        name: st.name,
-        color: st.color || '#94A3B8',
+    legacyCounts.forEach((count, status) => {
+      distribution.push({
+        id: `legacy:${status}`,
+        name: `${status || 'Unknown status'} (not in workflow)`,
+        color: '#737987',
         count,
-        pct,
-      };
+      });
     });
+    return distribution.map((status) => ({
+      ...status,
+      pct: totalTasksCount > 0 ? Math.round((status.count / totalTasksCount) * 100) : 0,
+    }));
   }, [projectTasks, currentWorkflow, totalTasksCount]);
 
   // Section C: Workload by Assignee
@@ -377,7 +383,7 @@ export function ProjectOverviewView() {
             <div>
               <h3 className="text-sm font-semibold text-text-primary">Tasks by Workflow Status</h3>
               <p className="text-xs text-text-muted">
-                Configured pipeline: <strong className="text-text-primary">{currentWorkflow?.name || 'TaskFlow Pro — Final Statuses'}</strong>
+                Configured pipeline: <strong className="text-text-primary">{currentWorkflow?.name || 'Project workflow'}</strong>
               </p>
             </div>
             <span className="text-xs font-mono text-text-muted">{totalTasksCount} total</span>

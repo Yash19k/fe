@@ -11,6 +11,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
+import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
 
 interface NavItem {
   id: string;
@@ -26,7 +27,7 @@ export interface GlobalRailProps {
 }
 
 export function GlobalRail({ isCollapsed = false, onToggleCollapse }: GlobalRailProps) {
-  const { activeRoute, navigate, myTasks } = useApp();
+  const { activeRoute, navigate, myTasks, workflows } = useApp();
 
   const navItems: NavItem[] = [
     { id: 'home', label: 'Home', icon: LayoutDashboard, route: '/' },
@@ -35,7 +36,12 @@ export function GlobalRail({ isCollapsed = false, onToggleCollapse }: GlobalRail
       label: 'My Tasks',
       icon: CheckSquare,
       route: '/my-tasks',
-      badge: myTasks.filter((t) => t.status !== 'Done').length,
+      badge: myTasks.filter((task) =>
+        !isWorkflowStatusComplete(
+          getWorkflowForProject(workflows, task.projectId),
+          task.status,
+        ),
+      ).length,
     },
     { id: 'projects', label: 'Projects', icon: FolderKanban, route: '/projects' },
     { id: 'chat', label: 'Chat', icon: MessageCircle, route: '/chat' },

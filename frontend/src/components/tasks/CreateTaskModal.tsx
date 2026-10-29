@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Dialog } from '../ui/Dialog';
 import { Input, Textarea, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -15,6 +15,7 @@ import { TaskAttachments } from './TaskAttachments';
 import { LabelPicker } from '../ui/LabelPicker';
 import { toDateInputValue } from '../../utils/dateUtils';
 import { Repeat } from 'lucide-react';
+import { getInitialWorkflowStatus } from '../../domain/workflow';
 
 export interface CreateTaskModalProps {
   isOpen: boolean;
@@ -44,6 +45,7 @@ export function CreateTaskModal({
     tasks,
     projectLabels,
   } = useApp();
+  const defaultStatus = getInitialWorkflowStatus(currentWorkflow)?.name || '';
 
   // Core Common Fields - default to unassigned, no priority, empty dates and hours
   const [type, setType] = useState<WorkItemType>(WORK_ITEM_TYPES.TASK);
@@ -51,7 +53,7 @@ export function CreateTaskModal({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [sectionId, setSectionId] = useState(currentProject?.sections?.[0]?.id || 'sec-1');
-  const [status, setStatus] = useState('Backlog');
+  const [status, setStatus] = useState(defaultStatus);
   const [priority, setPriority] = useState<Priority | ''>('');
   const [assigneeId, setAssigneeId] = useState('');
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
@@ -63,6 +65,14 @@ export function CreateTaskModal({
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [attachmentPickerKey, setAttachmentPickerKey] = useState(0);
   const [createdWorkItemId, setCreatedWorkItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStatus((previous) =>
+      currentWorkflow?.statuses.some((workflowStatus) => workflowStatus.name === previous)
+        ? previous
+        : defaultStatus,
+    );
+  }, [currentProject?.id, currentWorkflow, defaultStatus]);
 
   // Recurrence configuration
   const [recFrequency, setRecFrequency] = useState('none');
@@ -132,6 +142,9 @@ export function CreateTaskModal({
     const errs: Record<string, string> = {};
     if (!title.trim()) {
       errs.title = 'Title is required';
+    }
+    if (!status) {
+      errs.status = 'The project workflow is not available. Please retry after it loads.';
     }
 
     if (type === WORK_ITEM_TYPES.SUBTASK) {
@@ -281,7 +294,7 @@ export function CreateTaskModal({
     setParentId('');
     setTitle('');
     setDescription('');
-    setStatus('Backlog');
+    setStatus(defaultStatus);
     setPriority('');
     setAssigneeId('');
     setSelectedAssigneeIds([]);
@@ -578,14 +591,18 @@ export function CreateTaskModal({
             label="Initial Status"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !currentWorkflow?.statuses.length}
           >
             {currentWorkflow?.statuses?.map((st) => (
               <option key={st.id} value={st.name}>
                 {st.name}
               </option>
-            )) || <option value="Backlog">Backlog</option>}
+            ))}
+            {!currentWorkflow?.statuses.length && (
+              <option value="">Workflow statuses unavailable</option>
+            )}
           </Select>
+          {errors.status && <p className="text-[11px] text-rose-400">{errors.status}</p>}
 
           <Select
             label="Priority"

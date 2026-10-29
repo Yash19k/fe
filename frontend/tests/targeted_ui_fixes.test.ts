@@ -143,8 +143,8 @@ describe('TaskFlow Pro — Targeted UI Fixes Verification', () => {
 
     test('calculates completion percentage strictly from completed work items', () => {
       assert.ok(
-        content.includes("const completed = sprintTasks.filter((t) => t.status === 'Done').length;"),
-        'Completed tasks must be defined by Done status'
+        content.includes('isWorkflowStatusComplete(currentWorkflow, task.status)'),
+        'Completed tasks must follow the configured workflow completion category'
       );
       assert.ok(
         content.includes('total > 0 ? Math.round((completed / total) * 100) : 0'),

@@ -19,6 +19,13 @@ import {
   Plus,
 } from 'lucide-react';
 import { getRelativeDateLabel } from '../../domain/businessDays';
+import {
+  findWorkflowStatus,
+  getStatusNameForTask,
+  getStatusCounts,
+  isWorkflowStatusActive,
+  isWorkflowStatusComplete,
+} from '../../domain/workflow';
 
 export interface SprintDashboardViewProps {
   onOpenCreateSprint?: () => void;
@@ -26,7 +33,15 @@ export interface SprintDashboardViewProps {
 }
 
 export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: SprintDashboardViewProps) {
-  const { currentProject, projectTasks, projectSprints, allUsers, openTaskDrawer, currentUser } = useApp();
+  const {
+    currentProject,
+    currentWorkflow,
+    projectTasks,
+    projectSprints,
+    allUsers,
+    openTaskDrawer,
+    currentUser,
+  } = useApp();
 
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('');
@@ -121,13 +136,17 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
   // Sprint Summary Calculations
   const metrics = useMemo(() => {
     const total = sprintTasks.length;
-    const completed = sprintTasks.filter((t) => t.status === 'Done').length;
+    const completed = sprintTasks.filter(
+      (task) => isWorkflowStatusComplete(currentWorkflow, task.status),
+    ).length;
     const inProgress = sprintTasks.filter(
-      (t) => t.status === 'In Progress' || t.status === 'In Review' || t.status === 'Testing / QA'
+      (task) => isWorkflowStatusActive(currentWorkflow, task.status),
     ).length;
     const remaining = total - completed;
     const overdue = sprintTasks.filter(
-      (t) => t.status !== 'Done' && getRelativeDateLabel(t.dueDate).isOverdue
+      (task) =>
+        !isWorkflowStatusComplete(currentWorkflow, task.status) &&
+        getRelativeDateLabel(task.dueDate).isOverdue,
     ).length;
     const completionPercentage = total > 0 ? Math.round((completed / total) * 100) : 0;
 
@@ -139,16 +158,27 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
       overdue,
       completionPercentage,
     };
-  }, [sprintTasks]);
+  }, [sprintTasks, currentWorkflow]);
 
   // Distribution by Status
   const statusDistribution = useMemo(() => {
-    const counts: Record<string, number> = {};
-    sprintTasks.forEach((t) => {
-      counts[t.status] = (counts[t.status] || 0) + 1;
+    const configured = getStatusCounts(currentWorkflow, sprintTasks).map(
+      (status) => ({ status: status.name, color: status.color, count: status.count }),
+    );
+    const legacyCounts = new Map<string, number>();
+    sprintTasks.forEach((task) => {
+      if (findWorkflowStatus(currentWorkflow, task.status)) return;
+      legacyCounts.set(task.status, (legacyCounts.get(task.status) || 0) + 1);
     });
-    return Object.entries(counts).map(([status, count]) => ({ status, count }));
-  }, [sprintTasks]);
+    legacyCounts.forEach((count, status) =>
+      configured.push({
+        status: `${status || 'Unknown status'} (not in workflow)`,
+        color: '#737987',
+        count,
+      }),
+    );
+    return configured;
+  }, [sprintTasks, currentWorkflow]);
 
   // Workload by Member
   const memberWorkload = useMemo(() => {
@@ -165,7 +195,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
           memberMap[assigneeKey] = { total: 0, completed: 0, inProgress: 0, tasks: [] };
         }
         memberMap[assigneeKey].total += 1;
-        if (t.status === 'Done') {
+        if (isWorkflowStatusComplete(currentWorkflow, t.status)) {
           memberMap[assigneeKey].completed += 1;
         } else {
           memberMap[assigneeKey].inProgress += 1;
@@ -175,7 +205,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
     });
 
     return memberMap;
-  }, [sprintTasks, allUsers]);
+  }, [sprintTasks, allUsers, currentWorkflow]);
 
   const canCreateSprint = currentUser?.role !== 'Teammate';
 
@@ -392,12 +422,12 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
 
             {/* Status Legend Pills */}
             <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
-              {statusDistribution.map(({ status, count }) => (
+              {statusDistribution.map(({ status, color, count }) => (
                 <div
                   key={status}
                   className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-elevated border border-border"
                 >
-                  <StatusBadge status={status} size="sm" />
+                  <StatusBadge status={status} label={status} color={color} size="sm" />
                   <span className="font-mono font-semibold text-text-primary">{count}</span>
                 </div>
               ))}
@@ -493,7 +523,12 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
                         <span className="font-medium text-text-primary truncate">{t.title}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <StatusBadge status={t.status} size="sm" />
+                        <StatusBadge
+                          status={t.status}
+                          label={getStatusNameForTask(currentWorkflow, t)}
+                          color={findWorkflowStatus(currentWorkflow, t.status)?.color}
+                          size="sm"
+                        />
                       </div>
                     </div>
                   ))}

@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../../hooks/useApp';
 import { hasPermission, PERMISSIONS } from '../../../domain/permissions';
+import {
+  findWorkflowStatus,
+  getWorkflowColumns,
+  isWorkflowStatusComplete,
+} from '../../../domain/workflow';
 import { resolveTaskAssignees } from '../../../components/ui/Avatar';
 import { WORK_ITEM_TYPES } from '../../../domain/workItems';
+import { formatShortDate, getRelativeDateLabel } from '../../../domain/businessDays';
 import type { Task, User } from '../../../types';
+import { restoreTaskPosition } from './boardState';
 import {
   KanbanBoard,
   type KanbanAssignee,
@@ -16,13 +23,6 @@ import {
   type TaskReorderEvent,
 } from './KanbanBoard';
 
-const DEFAULT_STANDARD_STATUSES: KanbanColumnDef[] = [
-  { id: 'Backlog', name: 'Backlog', color: 'var(--kb-s-backlog)' },
-  { id: 'In Progress', name: 'In Progress', color: 'var(--kb-s-progress)' },
-  { id: 'In Review', name: 'In Review', color: 'var(--kb-s-review)' },
-  { id: 'Done', name: 'Done', color: 'var(--kb-s-done)' },
-];
-
 const TONE_PALETTE: KanbanLabelTone[] = ['blue', 'green', 'amber', 'rose', 'violet'];
 const AVATAR_COLOR_PALETTE = ['#6a7be8', '#3fa66b', '#d9738a', '#d08a2e', '#8b5cf6', '#06b6d4'];
 
@@ -32,6 +32,7 @@ function toKanbanTask(
   projectKey: string,
   allUsers: User[],
   allTasks: Task[],
+  currentWorkflow: ReturnType<typeof useApp>['currentWorkflow'],
 ): KanbanTask {
   const formattedKey = task.key
     ? task.key
@@ -86,33 +87,28 @@ function toKanbanTask(
   });
 
   // Due date & overdue check
-  let dueDateStr: string | undefined;
-  let overdue = false;
-  if (task.dueDate) {
-    const d = new Date(task.dueDate);
-    if (!isNaN(d.getTime())) {
-      dueDateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dueDateZero = new Date(d);
-      dueDateZero.setHours(0, 0, 0, 0);
-      overdue = task.status !== 'Done' && dueDateZero.getTime() < today.getTime();
-    }
-  }
+  const dueDateStr = formatShortDate(task.dueDate);
+  const overdue = Boolean(task.dueDate) &&
+    getRelativeDateLabel(task.dueDate).isOverdue &&
+    !isWorkflowStatusComplete(currentWorkflow, task.status);
 
   // Subtasks
   const childSubtasks = allTasks.filter(
     (t) => t.parentId === task.id && t.type === WORK_ITEM_TYPES.SUBTASK,
   );
   const subtasks = childSubtasks.length > 0 ? childSubtasks : task.subtasks || [];
-  const subtasksDone = subtasks.filter((s: any) => s.status === 'Done' || s.completed).length;
+  const subtasksDone = subtasks.filter(
+    (subtask: any) =>
+      (subtask.status && isWorkflowStatusComplete(currentWorkflow, subtask.status)) ||
+      (!subtask.status && subtask.completed),
+  ).length;
   const subtasksTotal = subtasks.length;
 
   return {
     id: task.id,
     key: formattedKey,
     title: task.title,
-    columnId: task.status,
+    columnId: findWorkflowStatus(currentWorkflow, task.status)?.id || `legacy:${task.status}`,
     priority,
     labels,
     assignees,
@@ -147,6 +143,8 @@ export function TaskFlowKanbanPage({ onOpenCreateTask }: TaskFlowKanbanPageProps
   const {
     currentProject,
     currentWorkflow,
+    currentWorkflowLoading,
+    currentWorkflowError,
     projectTasks,
     tasks: allTasks,
     allUsers,
@@ -168,76 +166,81 @@ export function TaskFlowKanbanPage({ onOpenCreateTask }: TaskFlowKanbanPageProps
 
   // Resolve dynamic status columns
   const columns: KanbanColumnDef[] = useMemo(() => {
-    const workflowStatuses = currentWorkflow?.statuses || [];
-    if (workflowStatuses.length === 0) {
-      return DEFAULT_STANDARD_STATUSES;
-    }
-
-    if (workflowStatuses.length <= 4) {
-      return workflowStatuses.map((s) => ({
-        id: s.name,
-        name: s.name,
-        color: s.color || 'var(--kb-s-backlog)',
-      }));
-    }
-
-    // If more than 4 statuses exist, prioritize the 4 standard ones, plus any populated statuses
-    const activeStatusSet = new Set(projectTasks.map((t) => t.status));
-    const coreNames = ['Backlog', 'In Progress', 'In Review', 'Done'];
-    const chosenStatuses = workflowStatuses.filter(
-      (s) => coreNames.includes(s.name) || activeStatusSet.has(s.name),
-    );
-
-    return (chosenStatuses.length > 0 ? chosenStatuses : workflowStatuses.slice(0, 4)).map((s) => ({
-      id: s.name,
-      name: s.name,
-      color: s.color || 'var(--kb-s-backlog)',
+    return getWorkflowColumns(currentWorkflow, projectTasks).map((column) => ({
+      id: column.id,
+      name: column.name,
+      color: column.color,
     }));
   }, [currentWorkflow, projectTasks]);
 
   const doneColumnId = useMemo(() => {
-    const found = columns.find((c) => c.name.toLowerCase() === 'done');
-    return found ? found.id : columns[columns.length - 1]?.id ?? 'Done';
-  }, [columns]);
+    return currentWorkflow?.statuses.find((status) =>
+      isWorkflowStatusComplete(currentWorkflow, status.name),
+    )?.id;
+  }, [currentWorkflow]);
 
   // Local optimistic task state synchronized with incoming projectTasks
   const [tasks, setTasks] = useState<KanbanTask[]>(() =>
-    projectTasks.map((t) => toKanbanTask(t, projectKey, allUsers, allTasks)),
+    projectTasks.map((t) => toKanbanTask(t, projectKey, allUsers, allTasks, currentWorkflow)),
   );
-  const [error, setError] = useState<string | null>(null);
+  const pendingMoves = useRef(new Set<string>());
 
   useEffect(() => {
-    setTasks(projectTasks.map((t) => toKanbanTask(t, projectKey, allUsers, allTasks)));
-  }, [projectTasks, projectKey, allUsers, allTasks]);
+    setTasks(projectTasks.map((t) => toKanbanTask(t, projectKey, allUsers, allTasks, currentWorkflow)));
+  }, [projectTasks, projectKey, allUsers, allTasks, currentWorkflow]);
 
   const commit = useCallback(
-    async (change: { taskId: string; toColumnId: string; orderedIds: string[] }) => {
+    async (change: {
+      taskId: string;
+      fromColumnId: string;
+      toColumnId: string;
+      orderedIds: string[];
+    }) => {
+      if (change.fromColumnId === change.toColumnId) {
+        setTasks((current) => applyOrder(current, change));
+        return;
+      }
+
+      const targetStatus = currentWorkflow?.statuses.find(
+        (status) => status.id === change.toColumnId,
+      );
+      const task = projectTasks.find((item) => item.id === change.taskId);
+      if (!targetStatus || !task || !findWorkflowStatus(currentWorkflow, task.status)) {
+        showToast('This task status is not part of the current project workflow.', 'error');
+        return;
+      }
+      if (pendingMoves.current.has(change.taskId)) return;
+
       const previous = tasks;
+      pendingMoves.current.add(change.taskId);
       // 1. Immediate optimistic UI update
       setTasks((current) => applyOrder(current, change));
 
       try {
         // 2. Call TaskFlow status mutation
-        const success = changeTaskStatus(change.taskId, change.toColumnId);
+        const success = await changeTaskStatus(change.taskId, targetStatus.name);
         if (!success) {
-          throw new Error('Status transition is not allowed by workflow or permissions.');
+          setTasks((current) => restoreTaskPosition(current, previous, change.taskId));
+          return;
         }
-        setError(null);
       } catch (err: any) {
-        // 3. Rollback immediately on failure
-        setTasks(previous);
-        const msg = err?.message || 'Could not update task status. Restored previous board state.';
-        setError(msg);
-        showToast(msg, 'error');
+        setTasks((current) => restoreTaskPosition(current, previous, change.taskId));
+        showToast(
+          err?.message || 'Cannot move this task to the selected status. Check the workflow permissions.',
+          'error',
+        );
+      } finally {
+        pendingMoves.current.delete(change.taskId);
       }
     },
-    [tasks, changeTaskStatus, showToast],
+    [tasks, projectTasks, currentWorkflow, changeTaskStatus, showToast],
   );
 
   const handleMove = useCallback(
     (e: TaskMoveEvent) => {
       void commit({
         taskId: e.taskId,
+        fromColumnId: e.fromColumnId,
         toColumnId: e.toColumnId,
         orderedIds: e.orderedIds,
       });
@@ -249,6 +252,7 @@ export function TaskFlowKanbanPage({ onOpenCreateTask }: TaskFlowKanbanPageProps
     (e: TaskReorderEvent) => {
       void commit({
         taskId: e.taskId,
+        fromColumnId: e.columnId,
         toColumnId: e.columnId,
         orderedIds: e.orderedIds,
       });
@@ -263,8 +267,8 @@ export function TaskFlowKanbanPage({ onOpenCreateTask }: TaskFlowKanbanPageProps
       columns={columns}
       tasks={tasks}
       doneColumnId={doneColumnId}
-      isLoading={isLoadingProjectData}
-      error={error || projectDataError}
+      isLoading={isLoadingProjectData || currentWorkflowLoading}
+      error={currentWorkflowError || projectDataError}
       onRetry={reloadProjectData}
       readOnly={!canEdit}
       onTaskMove={handleMove}

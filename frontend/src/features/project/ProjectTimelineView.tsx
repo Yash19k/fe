@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../../hooks/useApp';
+import { isWorkflowStatusActive, isWorkflowStatusComplete } from '../../domain/workflow';
 import { calculateCriticalPath } from '../../domain/criticalPath';
 import { parseLocalDate, formatShortDate } from '../../domain/businessDays';
 import {
@@ -27,7 +28,7 @@ const MONTH_NAMES = [
 ];
 
 export function ProjectTimelineView() {
-  const { currentProject, projectTasks, openTaskDrawer } = useApp();
+  const { currentProject, currentWorkflow, projectTasks, openTaskDrawer } = useApp();
 
   const [today] = useState(() => new Date());
   const [viewYear, setViewYear] = useState(() => today.getFullYear());
@@ -362,9 +363,9 @@ export function ProjectTimelineView() {
                               className={`absolute top-1.5 bottom-1.5 rounded-md px-2.5 flex items-center justify-between text-xs font-semibold cursor-pointer shadow-xs transition-transform hover:scale-[1.01] overflow-hidden ${
                                 highlightCriticalPath && isCritical
                                   ? 'bg-status-danger-bg border border-status-danger-border text-status-danger-text'
-                                  : task.status === 'Done'
+                                  : isWorkflowStatusComplete(currentWorkflow, task.status)
                                     ? 'bg-status-success-bg border border-status-success-border text-status-success-text'
-                                    : task.status === 'In Progress'
+                                    : isWorkflowStatusActive(currentWorkflow, task.status)
                                       ? 'bg-brand-subtle border border-brand-border text-brand-text'
                                       : 'bg-surface-elevated border border-border-strong text-text-secondary'
                               }`}

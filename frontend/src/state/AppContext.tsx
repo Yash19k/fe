@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppContext } from '../context/AppContextInstance';
-import { loadInitialState, saveStateToStorage, DEFAULT_STANDARD_WORKFLOW, STORAGE_KEYS, emptyUser } from './storage';
+import { loadInitialState, saveStateToStorage, STORAGE_KEYS, emptyUser } from './storage';
 import { broadcastEvent, subscribeToBroadcast } from './broadcast';
 import { validateNewDependency } from '../domain/dependencyGraph';
 import { calculateScheduleImpact, applyScheduleChanges } from '../domain/scheduling';
@@ -8,6 +8,7 @@ import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject }
 import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, sanitizeWorkItemData } from '../domain/workItems';
 import { createNextRecurringTask } from '../domain/recurrence';
+import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
 import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
 import {
   AppContextValue,
@@ -222,6 +223,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const projectFetchSeqRef = useRef<number>(0);
   const [isLoadingProjectData, setIsLoadingProjectData] = useState<boolean>(false);
   const [projectDataError, setProjectDataError] = useState<string | null>(null);
+  const [workflowLoadByProjectId, setWorkflowLoadByProjectId] = useState<
+    Record<string, { isLoading: boolean; error: string | null }>
+  >({});
 
   // Parallelized project asset loader
   const fetchProjectAssets = useCallback(async (projId: string, force: boolean = false) => {
@@ -231,6 +235,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const currentSeq = ++projectFetchSeqRef.current;
     setIsLoadingProjectData(true);
     setProjectDataError(null);
+    setWorkflowLoadByProjectId((previous) => ({
+      ...previous,
+      [projId]: { isLoading: true, error: null },
+    }));
 
     try {
       const [itemsRes, sprintsRes, membersRes, labelsRes, wfRes, auditRes] = await Promise.all([
@@ -318,41 +326,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      if (wfRes && !('error' in wfRes) && wfRes?.data) {
-        const backendWf = wfRes.data;
-        const resolvedName =
-          backendWf.name &&
-          backendWf.name !== 'Custom Engineering Flow' &&
-          !backendWf.name.endsWith(' Workflow') &&
-          !/^[0-9a-fA-F-]{20,}/.test(backendWf.name)
-            ? backendWf.name
-            : 'TaskFlow Pro — Final Statuses';
+      if (wfRes && 'error' in wfRes) {
+        setWorkflowLoadByProjectId((previous) => ({
+          ...previous,
+          [projId]: {
+            isLoading: false,
+            error: wfRes.error instanceof Error
+              ? wfRes.error.message
+              : 'Failed to load project workflow',
+          },
+        }));
+      } else {
+        const backendWf = wfRes?.data;
+        const statuses = backendWf?.statuses ?? backendWf?.stages;
+        if (
+          backendWf &&
+          typeof backendWf.name === 'string' &&
+          Array.isArray(statuses)
+        ) {
+          const projectWorkflow: Workflow = {
+            id: backendWf.id || `wf-${projId}`,
+            projectId: projId,
+            name: backendWf.name,
+            statuses,
+          };
 
-        setWorkflows((prev) => {
-          const exists = prev.some((w) => w.projectId === projId || w.id === `wf-${projId}`);
-          if (exists) {
-            return prev.map((w) => {
-              if (w.projectId === projId || w.id === `wf-${projId}`) {
-                return {
-                  ...w,
-                  name: resolvedName,
-                  statuses: backendWf.stages || backendWf.statuses || w.statuses,
-                };
-              }
-              return w;
-            });
-          } else {
-            return [
-              ...prev,
-              {
-                id: `wf-${projId}`,
-                projectId: projId,
-                name: resolvedName,
-                statuses: backendWf.stages || backendWf.statuses || DEFAULT_STANDARD_WORKFLOW.statuses,
-              },
-            ];
-          }
-        });
+          setWorkflows((previous) => [
+            ...previous.filter((workflow) => workflow.projectId !== projId),
+            projectWorkflow,
+          ]);
+          setProjects((previous) =>
+            previous.map((project) =>
+              project.id === projId
+                ? { ...project, workflow: projectWorkflow }
+                : project,
+            ),
+          );
+          setWorkflowLoadByProjectId((previous) => ({
+            ...previous,
+            [projId]: { isLoading: false, error: null },
+          }));
+        } else {
+          setWorkflowLoadByProjectId((previous) => ({
+            ...previous,
+            [projId]: {
+              isLoading: false,
+              error: 'The server returned an invalid project workflow configuration.',
+            },
+          }));
+        }
       }
 
       if (auditRes && !('error' in auditRes) && auditRes?.data && Array.isArray(auditRes.data)) {
@@ -398,6 +420,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (err: any) {
       if (currentSeq === projectFetchSeqRef.current) {
         setProjectDataError(err?.message || 'Failed to load project details');
+        setWorkflowLoadByProjectId((previous) => ({
+          ...previous,
+          [projId]: {
+            isLoading: false,
+            error: err?.message || 'Failed to load project workflow',
+          },
+        }));
       }
     } finally {
       if (currentSeq === projectFetchSeqRef.current) {
@@ -708,29 +737,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [projects, currentProjectId]);
 
   const currentWorkflow = useMemo(() => {
-    const fallback = workflows[0] || DEFAULT_STANDARD_WORKFLOW;
-    if (!currentProject) {
-      return {
-        ...fallback,
-        name:
-          fallback.name && !fallback.name.endsWith(' Workflow') && !/^[0-9a-fA-F-]{20,}/.test(fallback.name)
-            ? fallback.name
-            : 'TaskFlow Pro — Final Statuses',
-      };
-    }
-    const found =
-      workflows.find((w) => w.projectId === currentProject.id || w.id === currentProject.workflowId) || fallback;
-    const isGeneric =
-      !found.name ||
-      found.name === 'Custom Engineering Flow' ||
-      found.name.endsWith(' Workflow') ||
-      /^[0-9a-fA-F-]{20,}/.test(found.name);
-
-    return {
-      ...found,
-      name: isGeneric ? 'TaskFlow Pro — Final Statuses' : found.name,
-    };
+    if (!currentProject) return undefined;
+    const projectWorkflow = workflows.find(
+      (workflow) => workflow.projectId === currentProject.id,
+    );
+    if (projectWorkflow) return projectWorkflow;
+    if (isPersistedWorkItemId(currentProject.id)) return undefined;
+    return currentProject.workflow ||
+      workflows.find((workflow) => workflow.id === currentProject.workflowId) ||
+      workflows.find((workflow) => !workflow.projectId);
   }, [workflows, currentProject]);
+
+  const currentWorkflowLoadState = currentProject
+    ? workflowLoadByProjectId[currentProject.id]
+    : undefined;
+  const currentWorkflowLoading = Boolean(
+    currentProject &&
+      isPersistedWorkItemId(currentProject.id) &&
+      (currentWorkflowLoadState?.isLoading ?? !currentWorkflow),
+  );
+  const currentWorkflowError = currentWorkflowLoadState?.error || null;
 
   const projectTasks = useMemo(() => {
     if (!currentProject) return [];
@@ -815,6 +841,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const targetProjectId = sanitized.projectId || currentProjectId;
     const targetProject = projects.find((p) => p.id === targetProjectId);
     const isServerProject = Boolean(targetProject && isPersistedWorkItemId(targetProject.id));
+    const targetWorkflow =
+      workflows.find((workflow) => workflow.projectId === targetProjectId) ||
+      (!isPersistedWorkItemId(targetProjectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
 
     if (!isServerProject) {
       showToast('A persisted backend project is required to create this task', 'error');
@@ -859,7 +890,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         environment: sanitized.environment ?? null,
         estimatedHours: sanitized.estimateHours ?? null,
         ...(backendPriority !== null ? { priority: backendPriority } : {}),
-        status: frontendStatusToBackend(sanitized.status || 'Backlog'),
+        status: frontendStatusToBackend(
+          sanitized.status || getInitialWorkflowStatus(targetWorkflow)?.name || '',
+        ),
         dueDate: sanitized.dueDate || null,
         assignees: (
           Array.isArray(sanitized.assigneeIds)
@@ -896,7 +929,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const subEntry = {
               id: authoritativeTask.id,
               title: authoritativeTask.title,
-              completed: authoritativeTask.status === 'Done',
+              completed: isWorkflowStatusComplete(targetWorkflow, authoritativeTask.status),
               assigneeId: authoritativeTask.assigneeId,
             };
 
@@ -942,6 +975,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     currentProjectId,
     projects,
     tasks,
+    workflows,
     recordAudit,
     showToast,
     broadcastEvent,
@@ -999,6 +1033,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateTask = useCallback(async (taskId: string, updates: any, snapshotVersion: number | null = null): Promise<{ success: boolean; task?: Task; reason?: string; conflict?: boolean }> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return { success: false, reason: 'Task not found' };
+    const targetWorkflow =
+      workflows.find((workflow) => workflow.projectId === target.projectId) ||
+      (!isPersistedWorkItemId(target.projectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
 
     if (snapshotVersion !== null && (target.version || 1) !== snapshotVersion) {
       setConflictModalData({
@@ -1137,20 +1176,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           if (authoritativeTask.type === WORK_ITEM_TYPES.SUBTASK && authoritativeTask.parentId) {
             nextList = nextList.map((t) => {
-              if (t.id !== authoritativeTask.parentId) return t;
-              const subtask = {
-                id: taskId,
-                title: authoritativeTask.title,
-                completed: authoritativeTask.status === 'Done',
-                assigneeId: authoritativeTask.assigneeId,
-              };
-              return {
-                ...t,
-                subtasks: [
-                  ...(t.subtasks || []).filter((item) => item.id !== taskId),
-                  subtask,
-                ],
-              };
+              if (t.id === authoritativeTask.parentId) {
+                const subtasks = (t.subtasks || []).map((s: any) =>
+                  s.id === taskId
+                    ? {
+                        ...s,
+                        title: authoritativeTask.title,
+                        completed: isWorkflowStatusComplete(targetWorkflow, authoritativeTask.status),
+                        assigneeId: authoritativeTask.assigneeId,
+                      }
+                    : s
+                );
+                return { ...t, subtasks };
+              }
+              return t;
             });
           }
 
@@ -1199,7 +1238,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (t.id === updated.parentId) {
             const subtasks = (t.subtasks || []).map((s: any) =>
               s.id === taskId
-                ? { ...s, title: updated.title, completed: updated.status === 'Done', assigneeId: updated.assigneeId }
+                ? {
+                    ...s,
+                    title: updated.title,
+                    completed: isWorkflowStatusComplete(targetWorkflow, updated.status),
+                    assigneeId: updated.assigneeId,
+                  }
                 : s
             );
             return { ...t, subtasks };
@@ -1215,7 +1259,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     broadcastEvent('TASK_UPDATED', updated);
     showToast(`${updated.type || 'Task'} "${updated.title}" updated`, 'success');
     return { success: true, task: updated };
-  }, [tasks, labels, currentProjectId, recordAudit, showToast, broadcastEvent, reloadWorkItem]);
+  }, [tasks, labels, workflows, currentProjectId, recordAudit, showToast, broadcastEvent]);
 
   const deleteTask = useCallback((taskId: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.DELETE_TASK)) {
@@ -1265,7 +1309,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [currentUser.role, tasks, activeDrawerTaskId, recordAudit, showToast]);
 
-  const changeTaskStatus = useCallback((taskId: string, newStatus: TaskStatus) => {
+  const changeTaskStatus = useCallback(async (taskId: string, newStatus: TaskStatus): Promise<boolean> => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return false;
 
@@ -1274,6 +1318,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!transitionCheck.allowed) {
       showToast(transitionCheck.reason || 'Status transition not allowed', 'error');
       return false;
+    }
+
+    if (isPersistedWorkItemId(taskId)) {
+      try {
+        await updateWorkItemApi(taskId, {
+          status: frontendStatusToBackend(newStatus),
+        });
+      } catch (err: any) {
+        const reason = toUserFriendlyErrorMessage(err, 'Could not update task status.');
+        console.warn('TaskFlow: Backend status update failed:', err?.message || reason);
+        showToast(reason, 'error');
+        return false;
+      }
     }
 
     const previousValue = { status: target.status };
@@ -1288,9 +1345,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : new Date().toISOString(),
     };
 
+    const isComplete = isWorkflowStatusComplete(currentWorkflow, newStatus);
+    const wasComplete = isWorkflowStatusComplete(currentWorkflow, target.status);
     const nextRecurring =
-      newStatus === 'Done' && target.status !== 'Done'
-        ? createNextRecurringTask(target)
+      isComplete && !wasComplete
+        ? createNextRecurringTask(
+            target,
+            getInitialWorkflowStatus(currentWorkflow)?.name || target.status,
+          )
         : null;
 
     setTasks((prev) => {
@@ -1299,7 +1361,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         nextList = nextList.map((t) => {
           if (t.id === updated.parentId) {
             const subtasks = (t.subtasks || []).map((s) =>
-              s.id === taskId ? { ...s, completed: newStatus === 'Done' } : s
+              s.id === taskId ? { ...s, completed: isComplete } : s
             );
             return { ...t, subtasks };
           }
@@ -1323,41 +1385,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     } else if (!isPersistedWorkItemId(taskId)) {
       showToast(`Status updated to ${newStatus}`, 'success');
-    }
-
-    if (isPersistedWorkItemId(taskId)) {
-      updateWorkItemApi(taskId, {
-        version: target.version || 1,
-        status: frontendStatusToBackend(newStatus),
-      }).then((res) => {
-        if (res?.data) {
-          const authoritativeTask = backendWorkItemToTask(res.data, target.projectId);
-          setTasks((prev) => prev.map((task) =>
-            task.id === taskId ? authoritativeTask : task
-          ));
-          showToast(
-            nextRecurring
-              ? `Completed "${target.title}". Next occurrence scheduled for ${nextRecurring.dueDate || nextRecurring.startDate}.`
-              : `Status updated to ${newStatus}`,
-            'success',
-          );
-        }
-      }).catch(async (err: any) => {
-        console.warn('TaskFlow: Backend status update failed:', err?.message || err);
-        if (nextRecurring) {
-          setTasks((prev) => prev.filter((task) => task.id !== nextRecurring.id));
-        }
-        if (err?.status === 409 && err?.code === 'WORK_ITEM_VERSION_CONFLICT') {
-          try {
-            await reloadWorkItem(taskId);
-          } catch (reloadError: any) {
-            console.warn('TaskFlow: Could not refresh the work item after a status conflict:', reloadError?.message || reloadError);
-          }
-        } else {
-          setTasks((prev) => prev.map((task) => task.id === taskId ? target : task));
-        }
-        showToast(toUserFriendlyErrorMessage(err, 'Failed to update work item status.'), 'error');
-      });
     }
 
     return true;
@@ -1626,7 +1653,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    let subtaskRecord: Task | null = null;
+    let subId = `sub-${Date.now()}-${Math.random().toString(36).substring(5)}`;
+    const parentWorkflow =
+      workflows.find((workflow) => workflow.projectId === parentTask.projectId) ||
+      (!isPersistedWorkItemId(parentTask.projectId)
+        ? workflows.find((workflow) => !workflow.projectId)
+        : undefined);
+    const initialStatus = getInitialWorkflowStatus(parentWorkflow)?.name;
+    if (!initialStatus) {
+      showToast('The project workflow does not define an initial status.', 'error');
+      return;
+    }
 
     if (isPersistedWorkItemId(taskId) && isPersistedWorkItemId(parentTask.projectId)) {
       try {
@@ -1637,7 +1674,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           plannedDurationWorkingDays: parentTask.plannedDurationWorkingDays ?? null,
           type: 'SUBTASK',
           title: title.trim(),
-          status: 'BACKLOG',
+          priority: parentTask.priority ? (parentTask.priority.toUpperCase() as any) : 'MEDIUM',
+          status: frontendStatusToBackend(initialStatus),
           dueDate: parentTask.dueDate || null,
           estimatedHours: 2,
           assignees: (assigneeId || parentTask.assigneeId)
@@ -1665,7 +1703,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sectionId: parentTask.sectionId,
       title: title.trim(),
       description: '',
-      status: 'Backlog',
+      status: initialStatus,
       priority: parentTask.priority || 'Medium',
       assigneeId: assigneeId || parentTask.assigneeId,
       creatorId: currentUser?.id || '',
@@ -1705,17 +1743,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }),
     ]);
     showToast('Subtask created', 'success');
-    return true;
-  }, [tasks, currentUser?.id, showToast]);
+  }, [tasks, workflows, currentUser?.id, showToast]);
 
   const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
     const subtaskItem = tasks.find((t) => t.id === subtaskId);
     const parentTask = tasks.find((t) => t.id === taskId);
+    const workflow =
+      workflows.find((entry) => entry.projectId === parentTask?.projectId) ||
+      (!isPersistedWorkItemId(parentTask?.projectId)
+        ? workflows.find((entry) => !entry.projectId)
+        : undefined);
     const isCurrentlyDone = subtaskItem
-      ? subtaskItem.status === 'Done'
+      ? isWorkflowStatusComplete(workflow, subtaskItem.status)
       : Boolean(parentTask?.subtasks?.find((s) => s.id === subtaskId)?.completed);
 
-    const nextStatus = isCurrentlyDone ? 'Backlog' : 'Done';
+    const targetStatus = isCurrentlyDone
+      ? getInitialWorkflowStatus(workflow)
+      : workflow?.statuses.find((stage) => isWorkflowStatusComplete(workflow, stage.name));
+    if (subtaskItem && !targetStatus) {
+      showToast('The project workflow does not define a target status for this action.', 'error');
+      return;
+    }
+    if (subtaskItem && targetStatus) {
+      const transition = canTransitionStatus(
+        currentUser.role,
+        subtaskItem.status,
+        targetStatus.name,
+        workflow,
+      );
+      if (!transition.allowed) {
+        showToast(transition.reason || 'Status transition not allowed', 'error');
+        return;
+      }
+    }
+    const nextStatus = targetStatus?.name || subtaskItem?.status || '';
     const nextCompleted = !isCurrentlyDone;
 
     // Optimistic update
@@ -1748,9 +1809,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (isPersistedWorkItemId(subtaskId)) {
       try {
-        const res = await updateWorkItemApi(subtaskId, {
-          version: subtaskItem?.version || 1,
-          status: nextCompleted ? 'DONE' : 'BACKLOG',
+        await updateWorkItemApi(subtaskId, {
+          status: frontendStatusToBackend(nextStatus),
         });
         if (res?.data) {
           const authoritativeTask = backendWorkItemToTask(res.data, subtaskItem?.projectId);
@@ -1765,9 +1825,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (t.id === subtaskId) {
               return {
                 ...t,
-                status: isCurrentlyDone ? 'Done' : 'Backlog',
-                version: subtaskItem?.version || 1,
-                updatedAt: subtaskItem?.updatedAt,
+                status: subtaskItem?.status ?? t.status,
+                version: (t.version || 1) + 1,
+                updatedAt: new Date().toISOString(),
               };
             }
             if (t.id === taskId) {
@@ -1792,7 +1852,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast(toUserFriendlyErrorMessage(err, 'Failed to update subtask status'), 'error');
       }
     }
-  }, [tasks, showToast, reloadWorkItem]);
+  }, [tasks, workflows, currentUser.role, showToast]);
 
   const deleteSubtask = useCallback(async (taskId: string, subtaskId: string) => {
     const prevTasksSnapshot = tasks;
@@ -2820,6 +2880,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     workflows,
     currentWorkflow,
     setWorkflows,
+    currentWorkflowLoading,
+    currentWorkflowError,
     tasks,
     projectTasks,
     myTasks,
@@ -2900,6 +2962,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     projectTab,
     workflows,
     currentWorkflow,
+    currentWorkflowLoading,
+    currentWorkflowError,
     tasks,
     projectTasks,
     myTasks,

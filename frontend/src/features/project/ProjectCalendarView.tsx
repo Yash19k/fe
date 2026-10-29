@@ -20,9 +20,14 @@ interface CalendarDay {
 }
 
 import { isTaskDueOnCalendarDate } from '../../domain/calendar';
+import {
+  findWorkflowStatus,
+  getStatusNameForTask,
+  isWorkflowStatusComplete,
+} from '../../domain/workflow';
 
 export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewProps) {
-  const { projectTasks, openTaskDrawer, allUsers } = useApp();
+  const { projectTasks, currentWorkflow, openTaskDrawer, allUsers } = useApp();
 
   const [today] = useState(() => new Date());
   const [currentYear, setCurrentYear] = useState(() => today.getFullYear());
@@ -244,7 +249,7 @@ export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewPro
                       openTaskDrawer(task.id);
                     }}
                     className={`px-1.5 py-0.5 rounded text-[11px] font-medium truncate cursor-pointer transition-colors border flex items-center gap-1 ${
-                      task.status === 'Done'
+                      isWorkflowStatusComplete(currentWorkflow, task.status)
                         ? 'bg-status-success-bg border-status-success-border text-status-success-text'
                         : task.priority === 'High'
                           ? 'bg-status-danger-bg border-status-danger-border text-status-danger-text'
@@ -349,7 +354,12 @@ export function ProjectCalendarView({ onOpenCreateTask }: ProjectCalendarViewPro
 
                     <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-border/50">
                       <div className="flex items-center gap-2">
-                        <StatusBadge status={task.status} size="sm" />
+                        <StatusBadge
+                          status={task.status}
+                          label={getStatusNameForTask(currentWorkflow, task)}
+                          color={findWorkflowStatus(currentWorkflow, task.status)?.color}
+                          size="sm"
+                        />
                         {task.priority && (
                           <span
                             className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${

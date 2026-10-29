@@ -8,7 +8,8 @@
  * 4. Escalated: Flagged for Manager/Admin review due to critical block or breach.
  */
 
-import { Task } from '../types';
+import { Task, Workflow } from '../types';
+import { isWorkflowStatusComplete } from './workflow';
 
 export interface SlaPolicy {
   highPriorityHours: number;
@@ -37,7 +38,11 @@ export interface TaskSlaEvaluation {
   badgeClass?: string;
 }
 
-export function evaluateTaskSla(task: Task, policy: SlaPolicy = DEFAULT_SLA_POLICY): TaskSlaEvaluation {
+export function evaluateTaskSla(
+  task: Task,
+  policy: SlaPolicy = DEFAULT_SLA_POLICY,
+  workflow?: Workflow | null,
+): TaskSlaEvaluation {
   if (task.sla) {
     const status = task.sla.status;
     const isBreached = status === 'BREACHED' || Boolean(task.sla.isBreached);
@@ -67,7 +72,7 @@ export function evaluateTaskSla(task: Task, policy: SlaPolicy = DEFAULT_SLA_POLI
     };
   }
 
-  if (task.status === 'Done') {
+  if (isWorkflowStatusComplete(workflow, task.status)) {
     return {
       status: 'resolved',
       badgeText: 'SLA Met',
