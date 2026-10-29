@@ -1,0 +1,92 @@
+import { MigrationInterface, QueryRunner } from "typeorm";
+
+export class ModifyProjectVisibility1791889680740 implements MigrationInterface {
+    name = 'ModifyProjectVisibility1791889680740'
+
+    public async up(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`CREATE TABLE "user_sessions" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "user_id" uuid NOT NULL, "token_hash" character varying(64) NOT NULL, "expires_at" TIMESTAMP WITH TIME ZONE NOT NULL, "revoked_at" TIMESTAMP WITH TIME ZONE, "last_used_at" TIMESTAMP WITH TIME ZONE, "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), CONSTRAINT "UQ_6596adb3b8927b35bda97e734aa" UNIQUE ("token_hash"), CONSTRAINT "PK_e93e031a5fed190d4789b6bfd83" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_user_sessions_expires_at" ON "user_sessions"  ("expires_at") `);
+        await queryRunner.query(`CREATE INDEX "IDX_user_sessions_user_id" ON "user_sessions"  ("user_id") `);
+        await queryRunner.query(`ALTER TABLE "projects" ADD "start_date" date`);
+        await queryRunner.query(`ALTER TABLE "projects" ADD "end_date" date`);
+        await queryRunner.query(`CREATE TYPE "public"."projects_visibility_enum" AS ENUM('PRIVATE', 'PUBLIC')`);
+        await queryRunner.query(`ALTER TABLE "projects" ADD "visibility" "public"."projects_visibility_enum" NOT NULL DEFAULT 'PRIVATE'`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_work_items_project_type"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_work_items_project_status"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_type_enum" RENAME TO "work_items_type_enum_old"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_type_enum" AS ENUM('EPIC', 'STORY', 'TASK', 'SUBTASK', 'BUG')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "type" TYPE "public"."work_items_type_enum" USING "type"::"text"::"public"."work_items_type_enum"`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_type_enum_old"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_status_enum" RENAME TO "work_items_status_enum_old"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_status_enum" AS ENUM('BACKLOG', 'IN_PROGRESS', 'IN_REVIEW', 'TESTING_QA', 'BLOCKED', 'ON_HOLD', 'DONE')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" TYPE "public"."work_items_status_enum" USING "status"::"text"::"public"."work_items_status_enum"`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" SET DEFAULT 'BACKLOG'`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_status_enum_old"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_priority_enum" RENAME TO "work_items_priority_enum_old"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_priority_enum" AS ENUM('LOW', 'MEDIUM', 'HIGH', 'URGENT')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" TYPE "public"."work_items_priority_enum" USING "priority"::"text"::"public"."work_items_priority_enum"`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" SET DEFAULT 'MEDIUM'`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_priority_enum_old"`);
+        await queryRunner.query(`ALTER TYPE "public"."users_role_enum" RENAME TO "users_role_enum_old"`);
+        await queryRunner.query(`CREATE TYPE "public"."users_role_enum" AS ENUM('ADMIN', 'MANAGER', 'TEAMMATE')`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" TYPE "public"."users_role_enum" USING "role"::"text"::"public"."users_role_enum"`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" SET DEFAULT 'ADMIN'`);
+        await queryRunner.query(`DROP TYPE "public"."users_role_enum_old"`);
+        await queryRunner.query(`ALTER TYPE "public"."users_status_enum" RENAME TO "users_status_enum_old"`);
+        await queryRunner.query(`CREATE TYPE "public"."users_status_enum" AS ENUM('PENDING', 'ACTIVE', 'DISABLED')`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" TYPE "public"."users_status_enum" USING "status"::"text"::"public"."users_status_enum"`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'PENDING'`);
+        await queryRunner.query(`DROP TYPE "public"."users_status_enum_old"`);
+        await queryRunner.query(`CREATE INDEX "IDX_work_items_project_type" ON "work_items"  ("project_id", "type") `);
+        await queryRunner.query(`CREATE INDEX "IDX_work_items_project_status" ON "work_items"  ("project_id", "status") `);
+        await queryRunner.query(`ALTER TABLE "user_sessions" ADD CONSTRAINT "FK_e9658e959c490b0a634dfc54783" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+    }
+
+    public async down(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`ALTER TABLE "user_sessions" DROP CONSTRAINT "FK_e9658e959c490b0a634dfc54783"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_work_items_project_status"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_work_items_project_type"`);
+        await queryRunner.query(`CREATE TYPE "public"."users_status_enum_old" AS ENUM('PENDING', 'ACTIVE', 'DISABLED')`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" TYPE "public"."users_status_enum_old" USING "status"::"text"::"public"."users_status_enum_old"`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'PENDING'`);
+        await queryRunner.query(`DROP TYPE "public"."users_status_enum"`);
+        await queryRunner.query(`ALTER TYPE "public"."users_status_enum_old" RENAME TO "users_status_enum"`);
+        await queryRunner.query(`CREATE TYPE "public"."users_role_enum_old" AS ENUM('ADMIN', 'MANAGER', 'TEAMMATE')`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" TYPE "public"."users_role_enum_old" USING "role"::"text"::"public"."users_role_enum_old"`);
+        await queryRunner.query(`ALTER TABLE "users" ALTER COLUMN "role" SET DEFAULT 'ADMIN'`);
+        await queryRunner.query(`DROP TYPE "public"."users_role_enum"`);
+        await queryRunner.query(`ALTER TYPE "public"."users_role_enum_old" RENAME TO "users_role_enum"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_priority_enum_old" AS ENUM('LOW', 'MEDIUM', 'HIGH', 'URGENT')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" TYPE "public"."work_items_priority_enum_old" USING "priority"::"text"::"public"."work_items_priority_enum_old"`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "priority" SET DEFAULT 'MEDIUM'`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_priority_enum"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_priority_enum_old" RENAME TO "work_items_priority_enum"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_status_enum_old" AS ENUM('TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" DROP DEFAULT`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" TYPE "public"."work_items_status_enum_old" USING "status"::"text"::"public"."work_items_status_enum_old"`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "status" SET DEFAULT 'TODO'`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_status_enum"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_status_enum_old" RENAME TO "work_items_status_enum"`);
+        await queryRunner.query(`CREATE TYPE "public"."work_items_type_enum_old" AS ENUM('EPIC', 'STORY', 'TASK', 'SUBTASK', 'BUG')`);
+        await queryRunner.query(`ALTER TABLE "work_items" ALTER COLUMN "type" TYPE "public"."work_items_type_enum_old" USING "type"::"text"::"public"."work_items_type_enum_old"`);
+        await queryRunner.query(`DROP TYPE "public"."work_items_type_enum"`);
+        await queryRunner.query(`ALTER TYPE "public"."work_items_type_enum_old" RENAME TO "work_items_type_enum"`);
+        await queryRunner.query(`CREATE INDEX "IDX_work_items_project_status" ON "work_items" USING btree ("project_id", "status") `);
+        await queryRunner.query(`CREATE INDEX "IDX_work_items_project_type" ON "work_items" USING btree ("project_id", "type") `);
+        await queryRunner.query(`ALTER TABLE "projects" DROP COLUMN "visibility"`);
+        await queryRunner.query(`DROP TYPE "public"."projects_visibility_enum"`);
+        await queryRunner.query(`ALTER TABLE "projects" DROP COLUMN "end_date"`);
+        await queryRunner.query(`ALTER TABLE "projects" DROP COLUMN "start_date"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_user_sessions_user_id"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_user_sessions_expires_at"`);
+        await queryRunner.query(`DROP TABLE "user_sessions"`);
+    }
+
+}

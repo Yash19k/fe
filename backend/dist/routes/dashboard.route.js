@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const dashboard_controller_1 = require("../controllers/dashboard.controller");
+const is_loggedin_1 = require("../middleware/is.loggedin");
+const project_permission_1 = require("../middleware/project.permission");
+const async_handler_1 = require("../middleware/async.handler");
+const project_validations_1 = require("../validations/project.validations");
+const router = (0, express_1.Router)();
+router.get("/dashboard/personal", is_loggedin_1.isLoggedIn, (0, async_handler_1.asyncHandler)(dashboard_controller_1.getPersonalDashboard));
+router.get("/projects/:projectId/dashboard", is_loggedin_1.isLoggedIn, project_validations_1.validateProjectId, (0, project_permission_1.requireProjectPermission)("project:view"), (0, async_handler_1.asyncHandler)(dashboard_controller_1.getProjectDashboard));
+exports.default = router;

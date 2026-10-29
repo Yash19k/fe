@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const sla_controller_1 = require("../controllers/sla.controller");
+const is_loggedin_1 = require("../middleware/is.loggedin");
+const async_handler_1 = require("../middleware/async.handler");
+const router = (0, express_1.Router)();
+router.use(is_loggedin_1.isLoggedIn);
+router.get("/", (0, async_handler_1.asyncHandler)(sla_controller_1.getOrganizationSla));
+router.put("/", (0, async_handler_1.asyncHandler)(sla_controller_1.updateOrganizationSla));
+router.patch("/", (0, async_handler_1.asyncHandler)(sla_controller_1.updateOrganizationSla));
+exports.default = router;

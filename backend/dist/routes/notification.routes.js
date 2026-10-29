@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const is_loggedin_1 = require("../middleware/is.loggedin");
+const async_handler_1 = require("../middleware/async.handler");
+const notification_controller_1 = require("../controllers/notification.controller");
+const router = (0, express_1.Router)();
+router.use(is_loggedin_1.isLoggedIn);
+router.get("/", (0, async_handler_1.asyncHandler)(notification_controller_1.getUserNotifications));
+router.get("/unread-count", (0, async_handler_1.asyncHandler)(notification_controller_1.getUnreadNotificationCount));
+router.patch("/read-all", (0, async_handler_1.asyncHandler)(notification_controller_1.markAllNotificationsRead));
+router.patch("/:id/read", (0, async_handler_1.asyncHandler)(notification_controller_1.markNotificationRead));
+exports.default = router;
