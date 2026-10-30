@@ -6,6 +6,7 @@ import { Project } from "../entities/project.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
 import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
+import { validateWorkflowConfiguration } from "../services/work-item-workflow.service";
 
 /**
  * Validates that the project exists in the user's organization and
@@ -189,16 +190,19 @@ export async function getProjectWorkflow(req: Request, res: Response) {
 
 export async function saveProjectWorkflow(req: Request, res: Response) {
   const projectId = String(req.params.projectId);
-  const stages = req.body.stages || req.body.statuses;
-  const rawName = req.body.name ? String(req.body.name).trim() : "";
+  const stages = validateWorkflowConfiguration(req.body?.stages ?? req.body?.statuses);
+  if (req.body?.name !== undefined && typeof req.body.name !== "string") {
+    throw new AppError("Workflow name must be a string.", 400, "VALIDATION_ERROR");
+  }
+  const rawName = req.body?.name ? req.body.name.trim() : "";
   const name =
     rawName && rawName !== "Custom Engineering Flow" && !rawName.endsWith(" Workflow")
       ? rawName
       : DEFAULT_WORKFLOW_NAME;
 
-  if (!stages || !Array.isArray(stages) || stages.length === 0) {
+  if (name.length > 150) {
     throw new AppError(
-      "Workflow stages or statuses array is required and must not be empty.",
+      "Workflow name must be at most 150 characters.",
       400,
       "VALIDATION_ERROR",
     );
@@ -206,41 +210,29 @@ export async function saveProjectWorkflow(req: Request, res: Response) {
 
   await assertProjectSettingsAccess(projectId, req, true);
 
-  const repo = AppDataSource.getRepository(ProjectWorkflow);
-  let workflow = await repo.findOne({ where: { projectId } });
-
-  if (workflow) {
-    workflow.name = name;
-    workflow.statuses = stages;
-    const saved = await repo.save(workflow);
-    return res.json({
-      success: true,
-      data: {
-        id: saved.id,
-        projectId: saved.projectId,
-        name: saved.name,
-        statuses: saved.statuses,
-        stages: saved.statuses,
-        updatedAt: saved.updatedAt,
-      },
-    });
-  } else {
-    const created = repo.create({
+  const saved = await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(ProjectWorkflow);
+    const workflow = await repo.findOne({ where: { projectId } });
+    const entity = workflow || repo.create({
       projectId,
       name,
       statuses: stages,
     });
-    const saved = await repo.save(created);
-    return res.json({
-      success: true,
-      data: {
-        id: saved.id,
-        projectId: saved.projectId,
-        name: saved.name,
-        statuses: saved.statuses,
-        stages: saved.statuses,
-        createdAt: saved.createdAt,
-      },
-    });
-  }
+    entity.name = name;
+    entity.statuses = stages;
+    return repo.save(entity);
+  });
+
+  return res.json({
+    success: true,
+    data: {
+      id: saved.id,
+      projectId: saved.projectId,
+      name: saved.name,
+      statuses: saved.statuses,
+      stages: saved.statuses,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt,
+    },
+  });
 }

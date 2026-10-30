@@ -4,6 +4,7 @@ import { WorkItemStatus } from "../entities/work.item.entity";
 import { AppError } from "../errors/app.error";
 import {
   DEFAULT_WORKFLOW_STATUSES,
+  validateWorkflowConfiguration,
   validateWorkItemStatusTransition,
 } from "../services/work-item-workflow.service";
 import { createAuditLog } from "../controllers/auditlog.controller";
@@ -71,6 +72,44 @@ describe("work-item workflow transitions", () => {
       (error: unknown) =>
         error instanceof AppError &&
         error.code === "INVALID_STATUS_TRANSITION",
+    );
+  });
+});
+
+describe("workflow configuration validation", () => {
+  test("normalizes names and transition references", () => {
+    const stages = validateWorkflowConfiguration([
+      { id: "stage-a", name: "  In   Progress ", color: "#12aBcD", allowedTransitions: ["stage-b"] },
+      { id: "stage-b", name: "Review", color: "#abcdef", allowedTransitions: ["  in progress "] },
+    ]);
+
+    assert.equal(stages[0].name, "In Progress");
+    assert.deepEqual(stages[0].allowedTransitions, ["Review"]);
+    assert.deepEqual(stages[1].allowedTransitions, ["In Progress"]);
+  });
+
+  test("rejects duplicate names regardless of case and whitespace", () => {
+    assert.throws(
+      () => validateWorkflowConfiguration([
+        { id: "stage-a", name: "In Progress", color: "#112233" },
+        { id: "stage-b", name: " in   progress ", color: "#445566" },
+      ]),
+      (error: unknown) => error instanceof AppError && error.code === "VALIDATION_ERROR",
+    );
+  });
+
+  test("rejects invalid colors and unknown transition targets", () => {
+    assert.throws(
+      () => validateWorkflowConfiguration([
+        { id: "stage-a", name: "Backlog", color: "red", allowedTransitions: [] },
+      ]),
+      (error: unknown) => error instanceof AppError && error.code === "VALIDATION_ERROR",
+    );
+    assert.throws(
+      () => validateWorkflowConfiguration([
+        { id: "stage-a", name: "Backlog", color: "#112233", allowedTransitions: ["Missing"] },
+      ]),
+      (error: unknown) => error instanceof AppError && error.code === "VALIDATION_ERROR",
     );
   });
 });

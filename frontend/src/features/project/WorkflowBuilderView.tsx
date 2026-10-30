@@ -7,6 +7,25 @@ import type { WorkflowStatus, Workflow, Task } from '../../types';
 import { isPersistedWorkItemId, saveProjectWorkflowApi } from '../../services/api';
 import { findWorkflowStatus } from '../../domain/workflow';
 
+function normalizeStageName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function getWorkflowConfigurationSignature(statuses: WorkflowStatus[]): string {
+  return JSON.stringify(
+    statuses.map((status) => ({
+      id: status.id,
+      name: status.name,
+      category: status.category ?? null,
+      color: status.color ?? null,
+      allowedTransitions: [...(status.allowedTransitions || [])].sort(),
+      roleRestrictions: Object.entries(status.roleRestrictions || {})
+        .sort(([first], [second]) => first.localeCompare(second))
+        .map(([target, roles]) => [target, [...roles].sort()]),
+    })),
+  );
+}
+
 export interface WorkflowBuilderViewProps {
   isEmbedded?: boolean;
 }
@@ -28,9 +47,15 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
   const [draftStatuses, setDraftStatuses] = useState<WorkflowStatus[]>(() =>
     currentWorkflow?.statuses ? JSON.parse(JSON.stringify(currentWorkflow.statuses)) : []
   );
-  const savedStatusesRef = useRef(JSON.stringify(currentWorkflow?.statuses || []));
+  const [savedStatusesSignature, setSavedStatusesSignature] = useState(
+    getWorkflowConfigurationSignature(currentWorkflow?.statuses || []),
+  );
+  const savedWorkflowSignatureRef = useRef(
+    getWorkflowConfigurationSignature(currentWorkflow?.statuses || []),
+  );
   const savedWorkflowIdRef = useRef(currentWorkflow?.id);
   const savedProjectIdRef = useRef(currentProject?.id);
+  const pendingAddedStatusIdRef = useRef<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [newStatusName, setNewStatusName] = useState('');
   const [newStatusColor, setNewStatusColor] = useState('#6366F1');
@@ -43,22 +68,49 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
   const [grabbedIdx, setGrabbedIdx] = useState<number | null>(null);
   const [liveAnnouncement, setLiveAnnouncement] = useState<string>('');
 
-  const originalStatuses = currentWorkflow?.statuses || [];
-  const isDirty = JSON.stringify(draftStatuses) !== JSON.stringify(originalStatuses);
+  const isDirty = getWorkflowConfigurationSignature(draftStatuses) !== savedStatusesSignature;
 
   useEffect(() => {
     const nextStatuses = currentWorkflow?.statuses || [];
-    const draftIsClean = JSON.stringify(draftStatuses) === savedStatusesRef.current;
+    const savedSignature = getWorkflowConfigurationSignature(nextStatuses);
+    const draftSignature = getWorkflowConfigurationSignature(draftStatuses);
+    const draftIsClean = draftSignature === savedStatusesSignature;
     const workflowChanged =
       savedProjectIdRef.current !== currentProject?.id ||
       savedWorkflowIdRef.current !== currentWorkflow?.id;
-    if (workflowChanged || draftIsClean) {
+    const savedConfigurationChanged = savedWorkflowSignatureRef.current !== savedSignature;
+    if (
+      (workflowChanged || (savedConfigurationChanged && draftIsClean)) &&
+      draftSignature !== savedSignature
+    ) {
       setDraftStatuses(JSON.parse(JSON.stringify(nextStatuses)));
     }
-    savedStatusesRef.current = JSON.stringify(nextStatuses);
+    setSavedStatusesSignature(savedSignature);
+    savedWorkflowSignatureRef.current = savedSignature;
     savedWorkflowIdRef.current = currentWorkflow?.id;
     savedProjectIdRef.current = currentProject?.id;
-  }, [currentProject?.id, currentWorkflow?.id, currentWorkflow?.statuses, draftStatuses]);
+  }, [
+    currentProject?.id,
+    currentWorkflow?.id,
+    currentWorkflow?.statuses,
+    draftStatuses,
+    savedStatusesSignature,
+  ]);
+
+  useEffect(() => {
+    if (
+      pendingAddedStatusIdRef.current &&
+      draftStatuses.some((status) => status.id === pendingAddedStatusIdRef.current)
+    ) {
+      const addedStatus = draftStatuses.find(
+        (status) => status.id === pendingAddedStatusIdRef.current,
+      );
+      pendingAddedStatusIdRef.current = null;
+      if (addedStatus) {
+        showToast(`Status "${addedStatus.name}" added to draft workflow`, 'info');
+      }
+    }
+  }, [draftStatuses, showToast]);
 
   if (!currentWorkflow) {
     return (
@@ -77,24 +129,32 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
 
   function handleAddStatus(e: React.FormEvent) {
     e.preventDefault();
-    if (!newStatusName.trim() || !currentWorkflow) return;
+    const name = newStatusName.trim().replace(/\s+/g, ' ');
+    if (!name) {
+      showToast('Stage name is required', 'error');
+      return;
+    }
+    if (!currentWorkflow) return;
 
-    if (draftStatuses.some((s: WorkflowStatus) => s.name.toLowerCase() === newStatusName.trim().toLowerCase())) {
+    if (draftStatuses.some((s: WorkflowStatus) => normalizeStageName(s.name) === normalizeStageName(name))) {
       showToast('A status with this name already exists in the draft', 'error');
       return;
     }
 
     const newStatus: WorkflowStatus = {
-      id: `st-${Date.now()}`,
-      name: newStatusName.trim(),
+      id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
       category: 'active',
       color: newStatusColor,
-      allowedTransitions: draftStatuses.map((s: WorkflowStatus) => s.name),
+      allowedTransitions: [],
     };
 
-    setDraftStatuses((prev) => [...prev, newStatus]);
+    pendingAddedStatusIdRef.current = newStatus.id;
+    setDraftStatuses((prev) => [
+      ...prev,
+      { ...newStatus, allowedTransitions: prev.map((status) => status.name) },
+    ]);
     setNewStatusName('');
-    showToast(`Status "${newStatus.name}" added to draft workflow`, 'info');
   }
 
   function handleDeleteStatus(statusObj: WorkflowStatus) {
@@ -220,7 +280,7 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
 
     if (
       oldName !== trimmed &&
-      draftStatuses.some((s) => s.name.toLowerCase() === trimmed.toLowerCase())
+      draftStatuses.some((s) => s.id !== statusId && normalizeStageName(s.name) === normalizeStageName(trimmed))
     ) {
       showToast('Another status with that name already exists', 'error');
       return;
@@ -319,7 +379,9 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
         savedWorkflow,
       ]);
       setDraftStatuses(JSON.parse(JSON.stringify(savedWorkflow.statuses)));
-      savedStatusesRef.current = JSON.stringify(savedWorkflow.statuses);
+      const savedSignature = getWorkflowConfigurationSignature(savedWorkflow.statuses);
+      setSavedStatusesSignature(savedSignature);
+      savedWorkflowSignatureRef.current = savedSignature;
       showToast('Workflow configuration saved and published successfully', 'success');
     } catch (err: any) {
       console.error('TaskFlow: Failed to persist workflow to backend:', err);
@@ -330,10 +392,15 @@ export function WorkflowBuilderView({ isEmbedded = false }: WorkflowBuilderViewP
   }
 
   function handleCancelChanges() {
-    if (currentWorkflow?.statuses) {
-      setDraftStatuses(JSON.parse(JSON.stringify(currentWorkflow.statuses)));
-      savedStatusesRef.current = JSON.stringify(currentWorkflow.statuses);
-    }
+    const savedStatuses = currentWorkflow?.statuses || [];
+    pendingAddedStatusIdRef.current = null;
+    setDraftStatuses(JSON.parse(JSON.stringify(savedStatuses)));
+    setNewStatusName('');
+    setNewStatusColor('#6366F1');
+    setEditingStatusId(null);
+    const savedSignature = getWorkflowConfigurationSignature(savedStatuses);
+    setSavedStatusesSignature(savedSignature);
+    savedWorkflowSignatureRef.current = savedSignature;
     showToast('Workflow changes reverted to saved state', 'info');
   }
 
