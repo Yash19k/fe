@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   MessageCircle,
   Plus,
@@ -20,8 +20,18 @@ import {
   createChatConversationApi,
   getChatConversationsApi,
   getChatMessagesApi,
+  markChatConversationReadApi,
 } from '../../services/api';
 import type { User } from '../../types';
+import {
+  canSendChatMessage,
+  clearConversationUnread,
+  matchesPendingChatMessage,
+  mergeChatMessages,
+  shouldClearSubmittedDraft,
+  updateConversationFromMessage,
+  type ChatConnectionStatus,
+} from './chatState';
 
 function websocketUrl(): string {
   const url = new URL(API_BASE_URL);
@@ -203,12 +213,45 @@ interface DraftAttachment {
   previewUrl?: string;
 }
 
+interface PendingChatSend {
+  conversationId: string;
+  content: string;
+  draft: string;
+  attachment: DraftAttachment | null;
+}
+
+interface ChatSocketPayload {
+  event: string;
+  conversationId?: string;
+  data?: unknown;
+  message?: string;
+}
+
+function isChatSocketPayload(value: unknown): value is ChatSocketPayload {
+  return typeof value === 'object' && value !== null && 'event' in value &&
+    typeof value.event === 'string';
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return typeof message.id === 'string' &&
+    typeof message.conversationId === 'string' &&
+    typeof message.senderId === 'string' &&
+    typeof message.content === 'string' &&
+    typeof message.createdAt === 'string' &&
+    !Number.isNaN(Date.parse(message.createdAt));
+}
+
 export function ChatView() {
   const { currentUser, currentCompany, allUsers, showToast } = useApp();
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<ChatConnectionStatus>('disconnected');
+  const [isSending, setIsSending] = useState(false);
+  const [joinRequestPending, setJoinRequestPending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [memberId, setMemberId] = useState('');
@@ -220,12 +263,104 @@ export function ChatView() {
   const [pendingAttachment, setPendingAttachment] = useState<DraftAttachment | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
-  const selectedIdRef = useRef<string | undefined>(undefined);
+  const selectedIdRef = useRef<string | undefined>(selectedId);
+  const conversationsRef = useRef(conversations);
+  const currentUserIdRef = useRef(currentUser?.id);
+  const draftRef = useRef(draft);
+  const pendingAttachmentRef = useRef(pendingAttachment);
+  const showToastRef = useRef(showToast);
+  const markReadCompletedRef = useRef(new Set<string>());
+  const markReadInFlightRef = useRef(new Map<string, Promise<void>>());
+  const markReadAgainRef = useRef(new Set<string>());
+  const messageVersionsRef = useRef(new Map<string, number>());
+  const seenMessageIdsRef = useRef(new Set<string>());
+  const joinedConversationIdsRef = useRef(new Set<string>());
+  const requestedConversationIdsRef = useRef(new Set<string>());
+  const joinQueueRef = useRef<string[]>([]);
+  const joinInFlightRef = useRef<string | undefined>(undefined);
+  const queueJoinRef = useRef<(conversationId: string, prioritize?: boolean) => void>(() => {});
+  const processJoinQueueRef = useRef<() => void>(() => {});
+  const pendingSendRef = useRef<PendingChatSend | null>(null);
+  const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    conversationsRef.current = conversations;
+    selectedIdRef.current = selectedId;
+    currentUserIdRef.current = currentUser?.id;
+    draftRef.current = draft;
+    pendingAttachmentRef.current = pendingAttachment;
+    showToastRef.current = showToast;
+  }, [conversations, selectedId, currentUser?.id, draft, pendingAttachment, showToast]);
+
+  const markConversationRead = useCallback(function markConversationReadRequest(
+    conversationId: string,
+    force = false,
+  ) {
+    const inFlight = markReadInFlightRef.current.get(conversationId);
+    if (inFlight) {
+      if (force) markReadAgainRef.current.add(conversationId);
+      return;
+    }
+    if (!force && markReadCompletedRef.current.has(conversationId)) return;
+    const messageVersion = messageVersionsRef.current.get(conversationId) ?? 0;
+
+    const request = markChatConversationReadApi(conversationId)
+      .then(() => {
+        markReadCompletedRef.current.add(conversationId);
+        if (
+          messageVersionsRef.current.get(conversationId) === messageVersion ||
+          selectedIdRef.current === conversationId
+        ) {
+          setConversations((current) => clearConversationUnread(current, conversationId));
+        }
+      })
+      .catch((error: Error) => {
+        markReadCompletedRef.current.delete(conversationId);
+        showToastRef.current(error.message, 'error');
+      })
+      .finally(() => {
+        markReadInFlightRef.current.delete(conversationId);
+        const shouldMarkAgain = markReadAgainRef.current.delete(conversationId);
+        if (shouldMarkAgain && selectedIdRef.current === conversationId) {
+          void markConversationReadRequest(conversationId, true);
+        }
+      });
+
+    markReadInFlightRef.current.set(conversationId, request);
+  }, []);
+
+  const selectConversation = (conversationId?: string) => {
+    if (selectedIdRef.current !== conversationId) setMessages([]);
+    selectedIdRef.current = conversationId;
+    setSelectedId(conversationId);
+    if (!conversationId) {
+      setConnectionStatus('disconnected');
+    } else if (joinedConversationIdsRef.current.has(conversationId)) {
+      setConnectionStatus('ready');
+    } else {
+      setConnectionStatus(socketRef.current?.readyState === WebSocket.OPEN ? 'joining' : 'connecting');
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        queueJoinRef.current(conversationId, true);
+      }
+    }
+  };
+
+  function clearPendingSendTimer() {
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = undefined;
+  }
+
+  function resetJoinedRooms() {
+    joinedConversationIdsRef.current.clear();
+    requestedConversationIdsRef.current.clear();
+    joinQueueRef.current = [];
+    joinInFlightRef.current = undefined;
+  }
 
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId),
@@ -259,10 +394,6 @@ export function ChatView() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
-
   // Close emoji picker on click outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -285,62 +416,293 @@ export function ChatView() {
         const convs: ChatConversation[] = response.data || [];
         setConversations(convs);
         if (convs[0] && !selectedIdRef.current) {
+          selectedIdRef.current = convs[0].id;
           setSelectedId(convs[0].id);
         }
       })
-      .catch((error: Error) => showToast(error.message, 'error'))
+      .catch((error: Error) => showToastRef.current(error.message, 'error'))
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, []);
 
-  // Load messages and establish WebSocket for selected conversation
+  // Load messages and mark the selected conversation read.
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
-    setMessages([]);
     void getChatMessagesApi(selectedId)
-      .then((response) => {
-        if (!cancelled) setMessages(response.data || []);
+      .then((response: { data?: ChatMessage[] }) => {
+        if (!cancelled) setMessages((current) => mergeChatMessages(current, response.data || []));
       })
-      .catch((error: Error) => showToast(error.message, 'error'));
-
-    const socket = new WebSocket(websocketUrl());
-    socketRef.current = socket;
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ event: 'conversation:join', conversationId: selectedId }));
-    };
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as {
-        event: string;
-        data?: ChatMessage;
-        message?: string;
-      };
-      if (payload.event === 'message:new' && payload.data?.conversationId === selectedIdRef.current) {
-        setMessages((current) =>
-          current.some((m) => m.id === payload.data?.id) ? current : [...current, payload.data!]
-        );
-      }
-      if (payload.event === 'chat:error') {
-        showToast(payload.message || 'Chat error', 'error');
-      }
-    };
-    socket.onerror = () => {
-      showToast('Chat connection failed. Check that the backend is running.', 'error');
-    };
-
+      .catch((error: Error) => {
+        if (!cancelled) showToastRef.current(error.message, 'error');
+      });
+    markReadCompletedRef.current.delete(selectedId);
+    markConversationRead(selectedId);
     return () => {
       cancelled = true;
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ event: 'conversation:leave', conversationId: selectedId }));
-      }
-      socket.close();
-      if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [selectedId, showToast]);
+  }, [selectedId, markConversationRead]);
+
+  useEffect(() => {
+    for (const conversation of conversations) {
+      queueJoinRef.current(conversation.id);
+    }
+    if (selectedId) queueJoinRef.current(selectedId, true);
+  }, [conversations, selectedId]);
+
+  useEffect(() => {
+    if (loading || !currentUser?.id) return;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let joinPacingTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastJoinSentAt = 0;
+    let retryAttempt = 0;
+    let activeSocket: WebSocket | null = null;
+
+    const processJoinQueue = () => {
+      const socket = activeSocket;
+      if (
+        disposed ||
+        !socket ||
+        socket.readyState !== WebSocket.OPEN ||
+        joinInFlightRef.current ||
+        pendingSendRef.current
+      ) {
+        return;
+      }
+
+      const conversationId = joinQueueRef.current.length ? joinQueueRef.current.shift() : undefined;
+      if (!conversationId) {
+        return;
+      }
+
+      const pacingDelay = Math.max(0, 450 - (Date.now() - lastJoinSentAt));
+      if (pacingDelay > 0) {
+        joinQueueRef.current.unshift(conversationId);
+        if (!joinPacingTimer) {
+          joinPacingTimer = setTimeout(() => {
+            joinPacingTimer = undefined;
+            processJoinQueue();
+          }, pacingDelay);
+        }
+        return;
+      }
+
+      joinInFlightRef.current = conversationId;
+      requestedConversationIdsRef.current.add(conversationId);
+      setJoinRequestPending(true);
+      if (selectedIdRef.current === conversationId) setConnectionStatus('joining');
+      try {
+        socket.send(JSON.stringify({ event: 'conversation:join', conversationId }));
+        lastJoinSentAt = Date.now();
+      } catch (error) {
+        joinInFlightRef.current = undefined;
+        requestedConversationIdsRef.current.delete(conversationId);
+        setJoinRequestPending(false);
+        if (selectedIdRef.current === conversationId) setConnectionStatus('error');
+        showToastRef.current((error as Error).message, 'error');
+        processJoinQueue();
+      }
+    };
+
+    const queueJoin = (conversationId: string, prioritize = false) => {
+      if (
+        joinedConversationIdsRef.current.has(conversationId) ||
+        requestedConversationIdsRef.current.has(conversationId)
+      ) {
+        return;
+      }
+      const queuedIndex = joinQueueRef.current.indexOf(conversationId);
+      if (queuedIndex >= 0) {
+        if (prioritize && queuedIndex > 0) {
+          joinQueueRef.current.splice(queuedIndex, 1);
+          joinQueueRef.current.unshift(conversationId);
+        }
+        processJoinQueue();
+        return;
+      }
+      if (prioritize) joinQueueRef.current.unshift(conversationId);
+      else joinQueueRef.current.push(conversationId);
+      processJoinQueue();
+    };
+
+    queueJoinRef.current = queueJoin;
+    processJoinQueueRef.current = processJoinQueue;
+
+    const connect = () => {
+      if (disposed) return;
+      setConnectionStatus(selectedIdRef.current ? 'connecting' : 'disconnected');
+      try {
+        const socket = new WebSocket(websocketUrl());
+        activeSocket = socket;
+        socketRef.current = socket;
+        socket.onopen = () => {
+          if (disposed || activeSocket !== socket) return;
+          retryAttempt = 0;
+          resetJoinedRooms();
+          setJoinRequestPending(false);
+          setConnectionStatus(selectedIdRef.current ? 'joining' : 'disconnected');
+
+          const selectedConversationId = selectedIdRef.current;
+          if (selectedConversationId) queueJoin(selectedConversationId, true);
+          for (const conversation of conversationsRef.current) queueJoin(conversation.id);
+        };
+        socket.onmessage = (event) => {
+          if (disposed || activeSocket !== socket || typeof event.data !== 'string') return;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(event.data);
+          } catch {
+            showToastRef.current('Received an invalid chat response.', 'error');
+            return;
+          }
+          if (!isChatSocketPayload(payload)) return;
+
+          if (payload.event === 'conversation:joined' && payload.conversationId) {
+            const conversationId = payload.conversationId;
+            joinedConversationIdsRef.current.add(conversationId);
+            requestedConversationIdsRef.current.delete(conversationId);
+            if (joinInFlightRef.current === conversationId) {
+              joinInFlightRef.current = undefined;
+              setJoinRequestPending(false);
+            }
+            if (selectedIdRef.current === conversationId) setConnectionStatus('ready');
+            processJoinQueue();
+            return;
+          }
+
+          if (payload.event === 'message:new' && isChatMessage(payload.data)) {
+            const message = payload.data;
+            if (seenMessageIdsRef.current.has(message.id)) return;
+            seenMessageIdsRef.current.add(message.id);
+            if (seenMessageIdsRef.current.size > 2000) {
+              const oldestId = seenMessageIdsRef.current.values().next().value;
+              if (oldestId) seenMessageIdsRef.current.delete(oldestId);
+            }
+
+            setConversations((current) =>
+              updateConversationFromMessage(current, message, currentUserIdRef.current),
+            );
+            const isActiveConversation = selectedIdRef.current === message.conversationId;
+            if (isActiveConversation) {
+              setMessages((current) => mergeChatMessages(current, [message]));
+            }
+
+            if (message.senderId !== currentUserIdRef.current) {
+              messageVersionsRef.current.set(
+                message.conversationId,
+                (messageVersionsRef.current.get(message.conversationId) ?? 0) + 1,
+              );
+              markReadCompletedRef.current.delete(message.conversationId);
+              if (isActiveConversation) markConversationRead(message.conversationId, true);
+            }
+
+            const pendingSend = pendingSendRef.current;
+            if (
+              pendingSend &&
+              matchesPendingChatMessage(pendingSend, message, currentUserIdRef.current)
+            ) {
+              pendingSendRef.current = null;
+              clearPendingSendTimer();
+              setIsSending(false);
+              if (
+                selectedIdRef.current === pendingSend.conversationId &&
+                shouldClearSubmittedDraft(draftRef.current, pendingSend.draft)
+              ) {
+                draftRef.current = '';
+                setDraft('');
+                setShowEmojiPicker(false);
+                if (textareaRef.current) {
+                  textareaRef.current.style.height = '40px';
+                  textareaRef.current.focus();
+                }
+              }
+              if (pendingSend.attachment && pendingAttachmentRef.current === pendingSend.attachment) {
+                showToastRef.current(
+                  `Note: Message sent. Attachment "${pendingSend.attachment.file.name}" was not sent because chat file upload API is pending backend implementation (see BACKEND_TEAM_HANDOFF.md).`,
+                  'info',
+                );
+                if (pendingSend.attachment.previewUrl) {
+                  URL.revokeObjectURL(pendingSend.attachment.previewUrl);
+                }
+                setPendingAttachment(null);
+              }
+              processJoinQueue();
+            }
+            return;
+          }
+
+          if (payload.event === 'chat:error') {
+            showToastRef.current(payload.message || 'Chat error', 'error');
+            const failedJoinId = joinInFlightRef.current;
+            if (failedJoinId) {
+              joinInFlightRef.current = undefined;
+              requestedConversationIdsRef.current.delete(failedJoinId);
+              setJoinRequestPending(false);
+              if (selectedIdRef.current === failedJoinId) setConnectionStatus('error');
+              processJoinQueue();
+            } else if (pendingSendRef.current) {
+              pendingSendRef.current = null;
+              clearPendingSendTimer();
+              setIsSending(false);
+              processJoinQueue();
+            } else if (selectedIdRef.current) {
+              setConnectionStatus('error');
+            }
+          }
+        };
+        socket.onclose = () => {
+          if (disposed || activeSocket !== socket) return;
+          activeSocket = null;
+          if (socketRef.current === socket) socketRef.current = null;
+          joinedConversationIdsRef.current.clear();
+          requestedConversationIdsRef.current.clear();
+          joinQueueRef.current = [];
+          joinInFlightRef.current = undefined;
+          if (joinPacingTimer) clearTimeout(joinPacingTimer);
+          joinPacingTimer = undefined;
+          setJoinRequestPending(false);
+          setConnectionStatus('disconnected');
+          if (pendingSendRef.current) {
+            pendingSendRef.current = null;
+            clearPendingSendTimer();
+            setIsSending(false);
+            showToastRef.current('Chat disconnected before delivery was confirmed. Your draft was kept.', 'error');
+          }
+          retryAttempt += 1;
+          const delay = Math.min(1000 * 2 ** (retryAttempt - 1), 15000);
+          retryTimer = setTimeout(connect, delay);
+        };
+        socket.onerror = () => {
+          if (!disposed && activeSocket === socket) {
+            setConnectionStatus('disconnected');
+          }
+        };
+      } catch (error) {
+        showToastRef.current((error as Error).message, 'error');
+        retryAttempt += 1;
+        retryTimer = setTimeout(connect, Math.min(1000 * 2 ** (retryAttempt - 1), 15000));
+      }
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (joinPacingTimer) clearTimeout(joinPacingTimer);
+      queueJoinRef.current = () => {};
+      processJoinQueueRef.current = () => {};
+      clearPendingSendTimer();
+      if (activeSocket) {
+        activeSocket.close();
+      }
+      resetJoinedRooms();
+    };
+  }, [loading, currentUser?.id, markConversationRead]);
 
   // Cleanup pending object URL when component unmounts or attachment changes
   useEffect(() => {
@@ -367,7 +729,7 @@ export function ChatView() {
         if (existingIdx >= 0) return current;
         return [createdConv, ...current];
       });
-      setSelectedId(createdConv.id);
+      selectConversation(createdConv.id);
       setMemberId('');
       setShowCreate(false);
       showToast('Conversation ready', 'success');
@@ -380,32 +742,54 @@ export function ChatView() {
 
   function handleSendMessage(event?: FormEvent) {
     if (event) event.preventDefault();
-    const content = draft.trim();
-    if (!content || !selectedId || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    const conversationId = selectedIdRef.current;
+    const socket = socketRef.current;
+    const submittedDraft = draftRef.current;
+    const content = submittedDraft.trim();
+    if (
+      !content ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      !canSendChatMessage(
+        connectionStatus,
+        conversationId,
+        joinRequestPending,
+        isSending,
+      ) ||
+      !conversationId ||
+      !joinedConversationIdsRef.current.has(conversationId) ||
+      pendingSendRef.current
+    ) {
+      return;
+    }
 
-    // Send text message through active WebSocket
-    socketRef.current.send(
-      JSON.stringify({ event: 'message:send', conversationId: selectedId, content })
-    );
+    const pendingSend: PendingChatSend = {
+      conversationId,
+      content,
+      draft: submittedDraft,
+      attachment: pendingAttachmentRef.current,
+    };
+    pendingSendRef.current = pendingSend;
+    setIsSending(true);
+    try {
+      socket.send(JSON.stringify({ event: 'message:send', conversationId, content }));
+    } catch (error) {
+      pendingSendRef.current = null;
+      setIsSending(false);
+      showToast((error as Error).message, 'error');
+      return;
+    }
 
-    // If an attachment was queued in the composer, inform user transparently
-    if (pendingAttachment) {
-      showToast(
-        `Note: Message sent. Attachment "${pendingAttachment.file.name}" was not sent because chat file upload API is pending backend implementation (see BACKEND_TEAM_HANDOFF.md).`,
-        'info'
+    pendingSendTimerRef.current = setTimeout(() => {
+      if (pendingSendRef.current !== pendingSend) return;
+      pendingSendRef.current = null;
+      setIsSending(false);
+      showToastRef.current(
+        'Message delivery could not be confirmed. Your draft was kept; check the conversation before retrying.',
+        'error',
       );
-      if (pendingAttachment.previewUrl) {
-        URL.revokeObjectURL(pendingAttachment.previewUrl);
-      }
-      setPendingAttachment(null);
-    }
-
-    setDraft('');
-    setShowEmojiPicker(false);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '40px';
-      textareaRef.current.focus();
-    }
+      processJoinQueueRef.current();
+    }, 15000);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -421,13 +805,16 @@ export function ChatView() {
       const start = el.selectionStart ?? draft.length;
       const end = el.selectionEnd ?? draft.length;
       const newText = draft.slice(0, start) + emoji + draft.slice(end);
+      draftRef.current = newText;
       setDraft(newText);
       setTimeout(() => {
         el.focus();
         el.setSelectionRange(start + emoji.length, start + emoji.length);
       }, 0);
     } else {
-      setDraft((prev) => prev + emoji);
+      const newText = `${draftRef.current}${emoji}`;
+      draftRef.current = newText;
+      setDraft(newText);
     }
     setShowEmojiPicker(false);
   }
@@ -481,6 +868,18 @@ export function ChatView() {
       );
     });
   }, [conversations, searchQuery, currentUser?.id, allUsers]);
+
+  const sendStatusLabel = isSending
+    ? 'Sending...'
+    : connectionStatus === 'connecting' || connectionStatus === 'disconnected'
+      ? 'Reconnecting...'
+      : connectionStatus === 'joining'
+        ? 'Preparing...'
+        : connectionStatus === 'error'
+          ? 'Chat unavailable'
+          : joinRequestPending
+            ? 'Syncing chats...'
+            : 'Send';
 
   return (
     <div className="h-full flex overflow-hidden bg-canvas select-none">
@@ -612,7 +1011,7 @@ export function ChatView() {
               return (
                 <button
                   key={conv.id}
-                  onClick={() => setSelectedId(conv.id)}
+                  onClick={() => selectConversation(conv.id)}
                   className={`w-full text-left p-2.5 rounded-xl transition-all flex items-center gap-3 group relative ${
                     isSelected
                       ? 'bg-brand-subtle text-brand-text border border-brand-primary/30 shadow-xs'
@@ -683,7 +1082,7 @@ export function ChatView() {
               <div className="flex items-center gap-3 min-w-0">
                 {/* Mobile back button to conversation list */}
                 <button
-                  onClick={() => setSelectedId(undefined)}
+                  onClick={() => selectConversation(undefined)}
                   className="lg:hidden p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
                   title="Back to conversations"
                   aria-label="Back to conversations"
@@ -990,7 +1389,10 @@ export function ChatView() {
                 <textarea
                   ref={textareaRef}
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={(e) => {
+                    draftRef.current = e.target.value;
+                    setDraft(e.target.value);
+                  }}
                   onKeyDown={handleKeyDown}
                   maxLength={4000}
                   rows={1}
@@ -1003,13 +1405,21 @@ export function ChatView() {
                 {/* Control 5: Send Message Button */}
                 <button
                   type="submit"
-                  disabled={!draft.trim()}
+                  disabled={
+                    !draft.trim() ||
+                    !canSendChatMessage(
+                      connectionStatus,
+                      selectedId,
+                      joinRequestPending,
+                      isSending,
+                    )
+                  }
                   className="h-10 px-3.5 sm:px-4 rounded-xl bg-brand-primary hover:bg-brand-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs flex-shrink-0"
-                  title="Send message"
-                  aria-label="Send message"
+                  title={sendStatusLabel}
+                  aria-label={sendStatusLabel}
                 >
                   <Send size={14} />
-                  <span className="hidden sm:inline">Send</span>
+                  <span className="hidden sm:inline">{sendStatusLabel}</span>
                 </button>
               </form>
             </div>

@@ -144,6 +144,7 @@ async function request<T>(
             errData
           );
         }
+        if (retryResponse.status === 204) return undefined as T;
         return retryResponse.json();
       }
     }
@@ -158,6 +159,7 @@ async function request<T>(
       );
     }
 
+    if (response.status === 204) return undefined as T;
     return response.json();
   } catch (err: any) {
     if (err instanceof ApiError) throw err;
@@ -890,7 +892,7 @@ export interface ChatLastMessage {
 
 export interface ChatConversation {
   id: string;
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string | null;
@@ -922,8 +924,15 @@ export async function getChatConversationsApi(): Promise<any> {
   return request<any>('/api/chat/conversations', { method: 'GET' });
 }
 
+export async function markChatConversationReadApi(conversationId: string): Promise<void> {
+  await request<void>(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/read`,
+    { method: 'PATCH' },
+  );
+}
+
 export async function createChatConversationApi(payload: {
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string;
