@@ -269,7 +269,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-xs text-text-muted uppercase font-semibold tracking-wider">
                 Sprint Iteration
               </span>
-              {selectedSprint && (
+              {selectedSprint && selectedSprint.status?.toUpperCase() !== 'PLANNED' && (
                 <span
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                     selectedSprint.status === 'ACTIVE'
@@ -299,7 +299,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
             >
               {sprints.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.status})
+                  {s.status?.toUpperCase() === 'PLANNED' ? s.name : `${s.name} (${s.status})`}
                 </option>
               ))}
             </select>
