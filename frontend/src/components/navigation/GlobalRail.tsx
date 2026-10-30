@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
+import { SidebarTooltip } from '../ui/SidebarTooltip';
 
 interface NavItem {
   id: string;
@@ -66,14 +67,15 @@ export function GlobalRail({ isCollapsed = false, onToggleCollapse }: GlobalRail
       <div className="flex flex-col items-center w-full">
         {/* Brand Icon Header - Aligned vertically with WorkspaceSidebar header (h-14) */}
         <div className="h-14 w-full flex items-center justify-center border-b border-border/80 flex-shrink-0">
-          <button
-            onClick={() => navigate('/')}
-            className="w-8 h-8 rounded-lg bg-brand-primary/15 border border-brand-primary/30 flex items-center justify-center text-brand-primary hover:bg-brand-primary/25 transition-colors shadow-xs"
-            title="TaskFlow Pro"
-            aria-label="TaskFlow Pro Home"
-          >
-            <Layers size={18} strokeWidth={2.2} />
-          </button>
+          <SidebarTooltip label="TaskFlow Pro Home">
+            <button
+              onClick={() => navigate('/')}
+              className="w-8 h-8 rounded-lg bg-brand-primary/15 border border-brand-primary/30 flex items-center justify-center text-brand-primary hover:bg-brand-primary/25 transition-colors shadow-xs"
+              aria-label="TaskFlow Pro Home"
+            >
+              <Layers size={18} strokeWidth={2.2} />
+            </button>
+          </SidebarTooltip>
         </div>
 
         {/* Rail Items */}
@@ -83,28 +85,28 @@ export function GlobalRail({ isCollapsed = false, onToggleCollapse }: GlobalRail
             const Icon = item.icon;
 
             return (
-              <button
-                key={item.id}
-                onClick={() => navigate(item.route)}
-                className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors group ${
-                  isActive
-                    ? 'bg-brand-subtle text-brand-text border border-brand-primary/35 shadow-xs'
-                    : 'text-text-muted hover:text-text-primary hover:bg-sidebar-hover'
-                }`}
-                title={item.label}
-                aria-label={item.label}
-              >
-                <Icon size={19} strokeWidth={isActive ? 2.2 : 1.75} />
-                {item.badge != null && item.badge > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-white font-bold text-[9px] flex items-center justify-center">
-                    {item.badge}
-                  </span>
-                )}
-                {/* Active indicator bar */}
-                {isActive && (
-                  <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 bg-brand-primary rounded-r" />
-                )}
-              </button>
+              <SidebarTooltip key={item.id} label={item.label}>
+                <button
+                  onClick={() => navigate(item.route)}
+                  className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors group ${
+                    isActive
+                      ? 'bg-brand-subtle text-brand-text border border-brand-primary/35 shadow-xs'
+                      : 'text-text-muted hover:text-text-primary hover:bg-sidebar-hover'
+                  }`}
+                  aria-label={item.label}
+                >
+                  <Icon size={19} strokeWidth={isActive ? 2.2 : 1.75} />
+                  {item.badge != null && item.badge > 0 && (
+                    <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-white font-bold text-[9px] flex items-center justify-center">
+                      {item.badge}
+                    </span>
+                  )}
+                  {/* Active indicator bar */}
+                  {isActive && (
+                    <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 bg-brand-primary rounded-r" />
+                  )}
+                </button>
+              </SidebarTooltip>
             );
           })}
         </nav>
@@ -113,18 +115,19 @@ export function GlobalRail({ isCollapsed = false, onToggleCollapse }: GlobalRail
       {/* Bottom Rail Controls: Secondary Menu Collapse / Expand Button */}
       {onToggleCollapse && (
         <div className="flex flex-col items-center w-full px-1.5 pb-3">
-          <button
-            onClick={onToggleCollapse}
-            className="w-10 h-10 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors"
-            title={isCollapsed ? 'Expand navigation menu' : 'Collapse navigation menu'}
-            aria-label={isCollapsed ? 'Expand navigation menu' : 'Collapse navigation menu'}
-          >
-            {isCollapsed ? (
-              <PanelLeftOpen size={18} strokeWidth={1.8} />
-            ) : (
-              <PanelLeftClose size={18} strokeWidth={1.8} />
-            )}
-          </button>
+          <SidebarTooltip label={isCollapsed ? 'Expand navigation menu' : 'Collapse navigation menu'}>
+            <button
+              onClick={onToggleCollapse}
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors"
+              aria-label={isCollapsed ? 'Expand navigation menu' : 'Collapse navigation menu'}
+            >
+              {isCollapsed ? (
+                <PanelLeftOpen size={18} strokeWidth={1.8} />
+              ) : (
+                <PanelLeftClose size={18} strokeWidth={1.8} />
+              )}
+            </button>
+          </SidebarTooltip>
         </div>
       )}
     </aside>

@@ -10,13 +10,13 @@ import {
   Lock,
   PanelLeftClose,
   PanelLeftOpen,
-  Layers,
   X,
   LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import { canUserAccessProject } from '../../domain/permissions';
 import { getWorkflowForProject, isWorkflowStatusComplete } from '../../domain/workflow';
+import { SidebarTooltip } from '../ui/SidebarTooltip';
 
 interface NavItem {
   id: string;
@@ -110,17 +110,18 @@ export function WorkspaceSidebar({
           {isCollapsed ? (
             /* Collapsed Brand Icon */
             <div className="w-full flex items-center justify-center">
-              <button
-                onClick={() => {
-                  navigate('/');
-                  onClose?.();
-                }}
-                className="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center font-bold text-xs text-white shadow-xs hover:bg-brand-primary/90 transition-colors"
-                title="TaskFlow Pro Home"
-                aria-label="TaskFlow Pro Home"
-              >
-                TF
-              </button>
+              <SidebarTooltip label="TaskFlow Pro Home">
+                <button
+                  onClick={() => {
+                    navigate('/');
+                    onClose?.();
+                  }}
+                  className="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center font-bold text-xs text-white shadow-xs hover:bg-brand-primary/90 transition-colors"
+                  aria-label="TaskFlow Pro Home"
+                >
+                  TF
+                </button>
+              </SidebarTooltip>
             </div>
           ) : (
             /* Expanded Brand & Company Label */
@@ -131,7 +132,6 @@ export function WorkspaceSidebar({
                   onClose?.();
                 }}
                 className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
-                title="TaskFlow Pro Workspace"
               >
                 <div className="w-6 h-6 rounded-md bg-brand-primary flex items-center justify-center font-bold text-xs text-white shadow-xs flex-shrink-0">
                   TF
@@ -145,25 +145,27 @@ export function WorkspaceSidebar({
 
               {/* Desktop Collapse Button */}
               {onToggleCollapse && (
-                <button
-                  onClick={onToggleCollapse}
-                  className="hidden lg:flex p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors ml-1"
-                  title="Collapse navigation menu"
-                  aria-label="Collapse navigation menu"
-                >
-                  <PanelLeftClose size={16} />
-                </button>
+                <SidebarTooltip label="Collapse navigation menu">
+                  <button
+                    onClick={onToggleCollapse}
+                    className="hidden lg:flex p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors ml-1"
+                    aria-label="Collapse navigation menu"
+                  >
+                    <PanelLeftClose size={16} />
+                  </button>
+                </SidebarTooltip>
               )}
 
               {/* Mobile Drawer Close Button */}
-              <button
-                onClick={onClose}
-                className="lg:hidden p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors ml-1"
-                title="Close navigation"
-                aria-label="Close navigation"
-              >
-                <X size={16} />
-              </button>
+              <SidebarTooltip label="Close navigation">
+                <button
+                  onClick={onClose}
+                  className="lg:hidden p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors ml-1"
+                  aria-label="Close navigation"
+                >
+                  <X size={16} />
+                </button>
+              </SidebarTooltip>
             </div>
           )}
         </div>
@@ -179,30 +181,30 @@ export function WorkspaceSidebar({
               const Icon = item.icon;
 
               return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    navigate(item.route);
-                    onClose?.();
-                  }}
-                  className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors group ${
-                    isActive
-                      ? 'bg-brand-subtle text-brand-text border border-brand-primary/35 shadow-xs'
-                      : 'text-text-muted hover:text-text-primary hover:bg-sidebar-hover'
-                  }`}
-                  title={item.label}
-                  aria-label={item.label}
-                >
-                  <Icon size={19} strokeWidth={isActive ? 2.2 : 1.75} />
-                  {item.badge != null && item.badge > 0 && (
-                    <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-white font-bold text-[9px] flex items-center justify-center">
-                      {item.badge}
-                    </span>
-                  )}
-                  {isActive && (
-                    <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 bg-brand-primary rounded-r" />
-                  )}
-                </button>
+                <SidebarTooltip key={item.id} label={item.label}>
+                  <button
+                    onClick={() => {
+                      navigate(item.route);
+                      onClose?.();
+                    }}
+                    className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors group ${
+                      isActive
+                        ? 'bg-brand-subtle text-brand-text border border-brand-primary/35 shadow-xs'
+                        : 'text-text-muted hover:text-text-primary hover:bg-sidebar-hover'
+                    }`}
+                    aria-label={item.label}
+                  >
+                    <Icon size={19} strokeWidth={isActive ? 2.2 : 1.75} />
+                    {item.badge != null && item.badge > 0 && (
+                      <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-brand-primary text-white font-bold text-[9px] flex items-center justify-center">
+                        {item.badge}
+                      </span>
+                    )}
+                    {isActive && (
+                      <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 bg-brand-primary rounded-r" />
+                    )}
+                  </button>
+                </SidebarTooltip>
               );
             })}
           </nav>
@@ -227,7 +229,6 @@ export function WorkspaceSidebar({
                         ? 'bg-brand-subtle text-brand-text font-semibold border border-brand-primary/30 shadow-xs'
                         : 'text-text-secondary hover:text-text-primary hover:bg-sidebar-hover'
                     }`}
-                    title={item.label}
                     aria-label={item.label}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -257,14 +258,15 @@ export function WorkspaceSidebar({
               <div className="flex items-center justify-between px-2 py-1.5 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
                 <span>Projects ({visibleProjects.length})</span>
                 {currentUser.role !== 'Teammate' && (
-                  <button
-                    onClick={onOpenCreateProject}
-                    className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                    title="Create project"
-                    aria-label="Create project"
-                  >
-                    <Plus size={14} />
-                  </button>
+                  <SidebarTooltip label="Create project">
+                    <button
+                      onClick={onOpenCreateProject}
+                      className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                      aria-label="Create project"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </SidebarTooltip>
                 )}
               </div>
 
@@ -289,7 +291,6 @@ export function WorkspaceSidebar({
                             ? 'bg-brand-subtle text-brand-text font-medium border border-brand-primary/30 shadow-xs'
                             : 'text-text-secondary hover:text-text-primary hover:bg-sidebar-hover'
                         }`}
-                        title={proj.name}
                       >
                         <div className="flex items-center gap-2 min-w-0 pr-1">
                           <span
@@ -330,14 +331,15 @@ export function WorkspaceSidebar({
         {/* ========================================================= */}
         {isCollapsed && onToggleCollapse && (
           <div className="flex flex-col items-center w-full px-1.5 pb-3 pt-2 border-t border-border/80 flex-shrink-0">
-            <button
-              onClick={onToggleCollapse}
-              className="w-10 h-10 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors"
-              title="Expand navigation menu"
-              aria-label="Expand navigation menu"
-            >
-              <PanelLeftOpen size={18} strokeWidth={1.8} />
-            </button>
+            <SidebarTooltip label="Expand navigation menu">
+              <button
+                onClick={onToggleCollapse}
+                className="w-10 h-10 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-sidebar-hover transition-colors"
+                aria-label="Expand navigation menu"
+              >
+                <PanelLeftOpen size={18} strokeWidth={1.8} />
+              </button>
+            </SidebarTooltip>
           </div>
         )}
       </aside>

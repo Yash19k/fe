@@ -324,6 +324,38 @@ html, body {
   box-shadow: none;
 }
 
+/* Sidebar labels use a body-level portal to escape sidebar overflow clipping. */
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: calc(100vw - 16px);
+  padding: 6px 11px;
+  border: 1px solid #EAEAEA;
+  border-radius: 999px;
+  background: #FFFFFF;
+  color: #171717;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.sidebar-tooltip-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-tooltip {
+    transition: none;
+  }
+}
+
 /* Modal Backdrop */
 .modal-backdrop {
   position: fixed;
