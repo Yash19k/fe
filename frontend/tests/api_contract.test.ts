@@ -5,6 +5,11 @@ import {
   registerOrganizationApi,
   RegisterOrganizationInput,
   checkBackendHealth,
+  clearAuthToken,
+  currentUserApi,
+  getAuthToken,
+  refreshTokenApi,
+  setAuthToken,
 } from '../src/services/api';
 
 describe('Backend API Contract & Error Handling Tests', () => {
@@ -74,5 +79,178 @@ describe('Backend API Contract & Error Handling Tests', () => {
       assert.ok(err instanceof ApiError);
       assert.ok(err.message.length > 0);
     }
+  });
+
+  describe('refresh token handling', () => {
+    const originalFetch = globalThis.fetch;
+
+    test('stores the access token returned by the refresh endpoint', async () => {
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async (_input, init) => {
+        assert.equal(init?.method, 'POST');
+        assert.equal(init?.credentials, 'include');
+        return new Response(JSON.stringify({ token: 'new-access-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      try {
+        assert.equal(await refreshTokenApi(), 'new-access-token');
+        assert.equal(getAuthToken(), 'new-access-token');
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('retries an unauthorized API request with the refreshed access token', async () => {
+      setAuthToken('expired-access-token');
+      let requestCount = 0;
+      globalThis.fetch = async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/api/users/refresh')) {
+          return new Response(JSON.stringify({ token: 'new-access-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        requestCount += 1;
+        if (requestCount === 1) {
+          return new Response(JSON.stringify({ message: 'Unauthorized' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer new-access-token');
+        return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      try {
+        const response = await currentUserApi();
+        assert.equal(response.user.id, 'user-1');
+        assert.equal(requestCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('clears the access token when the refresh session is unauthorized', async () => {
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ code: 'INVALID_REFRESH_TOKEN' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      try {
+        assert.equal(await refreshTokenApi(), null);
+        assert.equal(getAuthToken(), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('preserves the access token when the refresh endpoint returns a server error', async () => {
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ message: 'Temporary server error' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      try {
+        await assert.rejects(refreshTokenApi(), (error: unknown) => {
+          assert.ok(error instanceof ApiError);
+          assert.equal(error.status, 503);
+          assert.equal(error.code, 'TOKEN_REFRESH_FAILED');
+          return true;
+        });
+        assert.equal(getAuthToken(), 'expired-access-token');
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('does not reuse an old access token when a successful response is malformed', async () => {
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      try {
+        await assert.rejects(refreshTokenApi(), (error: unknown) => {
+          assert.ok(error instanceof ApiError);
+          assert.equal(error.code, 'INVALID_REFRESH_RESPONSE');
+          return true;
+        });
+        assert.equal(getAuthToken(), 'expired-access-token');
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('shares one in-flight refresh request across concurrent callers', async () => {
+      let resolveResponse!: (response: Response) => void;
+      const responsePromise = new Promise<Response>((resolve) => {
+        resolveResponse = resolve;
+      });
+      let requestCount = 0;
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async () => {
+        requestCount += 1;
+        return responsePromise;
+      };
+
+      try {
+        const firstRefresh = refreshTokenApi();
+        const secondRefresh = refreshTokenApi();
+        resolveResponse(
+          new Response(JSON.stringify({ token: 'new-access-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+        assert.deepEqual(await Promise.all([firstRefresh, secondRefresh]), [
+          'new-access-token',
+          'new-access-token',
+        ]);
+        assert.equal(requestCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
+
+    test('preserves the access token when the refresh request cannot reach the server', async () => {
+      setAuthToken('expired-access-token');
+      globalThis.fetch = async () => {
+        throw new TypeError('Failed to fetch');
+      };
+
+      try {
+        await assert.rejects(refreshTokenApi(), (error: unknown) => {
+          assert.ok(error instanceof ApiError);
+          assert.equal(error.status, 0);
+          assert.equal(error.code, 'SERVER_UNREACHABLE');
+          return true;
+        });
+        assert.equal(getAuthToken(), 'expired-access-token');
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearAuthToken();
+      }
+    });
   });
 });

@@ -78,8 +78,8 @@ async function executeTokenRefresh(): Promise<string | null> {
   }
 
   refreshPromise = (async () => {
+    const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/users/refresh`;
     try {
-      const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/users/refresh`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,19 +87,40 @@ async function executeTokenRefresh(): Promise<string | null> {
       });
 
       if (!res.ok) {
-        clearAuthToken();
-        return null;
+        const responseData = await res.json().catch(() => null);
+        const errData =
+          responseData && typeof responseData === 'object' ? responseData : {};
+        if (res.status === 401) {
+          clearAuthToken();
+          return null;
+        }
+        throw new ApiError(
+          errData.message || `Token refresh failed with HTTP ${res.status}`,
+          res.status,
+          errData.code || 'TOKEN_REFRESH_FAILED',
+          errData
+        );
       }
 
       const data = await res.json().catch(() => null);
-      if (data?.token && typeof data.token === 'string') {
-        setAuthToken(data.token);
-        return data.token;
+      if (!data || typeof data.token !== 'string' || !data.token.trim()) {
+        throw new ApiError(
+          'Token refresh response did not include a valid access token.',
+          502,
+          'INVALID_REFRESH_RESPONSE'
+        );
       }
-      return getAuthToken();
-    } catch {
-      clearAuthToken();
-      return null;
+      setAuthToken(data.token);
+      return data.token;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(
+        error instanceof Error ? error.message : 'Token refresh request failed.',
+        0,
+        'SERVER_UNREACHABLE'
+      );
     } finally {
       refreshPromise = null;
     }
