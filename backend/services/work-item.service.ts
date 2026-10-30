@@ -26,6 +26,7 @@ import {
   validateRecurrence,
   type RecurrenceInput,
 } from "./recurrence.service";
+import { authorizeWorkItemCreationForActor } from "../middleware/project.permission";
 import { AppError } from "../errors/app.error";
 import { NotificationType } from "../entities/notification.entity";
 import { AuditLog } from "../entities/audit.log.entity";
@@ -427,9 +428,9 @@ export async function createWorkItemOrchestration(
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
-    const project = await assertAccessibleProject(
-      projectId,
+    const project = await authorizeWorkItemCreationForActor(
       actor,
+      projectId,
       manager,
     );
 

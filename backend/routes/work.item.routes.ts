@@ -41,8 +41,8 @@ const router = Router();
 router.post(
   "/",
   isLoggedIn,
-  requireProjectPermission("task:create"),
   validateCreateWorkItem,
+  requireProjectPermission("task:create"),
   asyncHandler(createWorkItem)
 );
 

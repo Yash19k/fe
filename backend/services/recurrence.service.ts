@@ -4,6 +4,8 @@ import { AppDataSource } from "../config/data.source";
 import { AppError } from "../errors/app.error";
 import { WorkItem, WorkItemPriority, WorkItemStatus, WorkItemType } from "../entities/work.item.entity";
 import { WorkItemAssignee } from "../entities/work.item-assignee.entity";
+import { Project } from "../entities/project.entity";
+import { User, UserStatus } from "../entities/user.entity";
 import {
   MonthlyPattern,
   RecurrenceFrequency,
@@ -11,6 +13,10 @@ import {
 } from "../entities/work.item.recurrence.entity";
 import { WorkItemOccurrence } from "../entities/work.item.occurrence.entity";
 import { OrganizationSla } from "../entities/organization.sla.entity";
+import {
+  getProjectMembership,
+  hasProjectPermission,
+} from "../middleware/project.permission";
 import {
   applySlaState,
   calculateSlaDeadline,
@@ -283,6 +289,40 @@ const processOneDueRecurrence = async (): Promise<boolean> => AppDataSource.tran
 
   const scheduledFor = getDateOnlyInTimezone(recurrence.nextRunAt as Date, recurrence.timezone || DEFAULT_RECURRENCE_TIMEZONE);
   const template = recurrence.workItem;
+
+  const project = await manager.getRepository(Project).findOne({
+    where: {
+      id: template.projectId,
+      organizationId: template.organizationId,
+    },
+    select: { id: true },
+  });
+  const owner = await manager.getRepository(User).findOne({
+    where: {
+      id: template.createdById,
+      organizationId: template.organizationId,
+      status: UserStatus.ACTIVE,
+    },
+    select: { id: true },
+  });
+  const membership = project && owner
+    ? await getProjectMembership(project.id, owner.id, manager)
+    : null;
+
+  if (
+    !project ||
+    !owner ||
+    !membership ||
+    !hasProjectPermission(membership.role, "task:create")
+  ) {
+    recurrence.isActive = false;
+    recurrence.nextRunAt = null;
+    await manager.getRepository(WorkItemRecurrence).save(recurrence);
+    console.warn(
+      `[Recurrence Scheduler] Deactivated recurrence ${recurrence.id}: its project, owner, or project membership is no longer valid.`,
+    );
+    return true;
+  }
 
   // Existing occurrence means this date has already been processed; still advance the rule.
   const existingOccurrence = await manager.getRepository(WorkItemOccurrence).findOne({
