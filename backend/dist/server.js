@@ -13,6 +13,7 @@ async function startServer() {
         console.log("Starting TaskFlow...");
         console.log("Connecting to PostgreSQL...");
         await data_source_1.AppDataSource.initialize();
+        (0, data_source_1.assertRequiredEntityMetadata)();
         console.log("Database connected successfully.");
         // Start background schedulers for automated SLA escalation and recurring tasks
         (0, scheduler_service_1.startScheduler)();

@@ -1207,6 +1207,19 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
   } else if (singleLabel) {
     const labelName = typeof singleLabel === 'string' ? singleLabel : singleLabel.name;
     if (labelName) labels = [labelName];
+  } else if (item.labelId || entity.labelId) {
+    const lid = item.labelId || entity.labelId;
+    if (typeof lid === 'string' && lid.length > 0) labels = [lid];
+  }
+
+  let tags: string[] = [];
+  const rawTags = item.tags || entity.tags;
+  if (Array.isArray(rawTags) && rawTags.length > 0) {
+    tags = rawTags
+      .map((t: any) => (typeof t === 'string' ? t : t.name || t.title || t.id))
+      .filter((name: any): name is string => typeof name === 'string' && name.length > 0);
+  } else if (labels.length > 0) {
+    tags = [...labels];
   }
 
   const rawSubtasks = entity.subtasks || item.subtasks || entity.children || item.children;
@@ -1237,6 +1250,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
       ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
     labels,
+    tags: tags.length > 0 ? tags : labels,
     businessGoal: entity.businessGoal ?? item.businessGoal ?? '',
     successCriteria: entity.successCriteria ?? item.successCriteria ?? '',
     acceptanceCriteria: entity.acceptanceCriteria ?? item.acceptanceCriteria ?? '',

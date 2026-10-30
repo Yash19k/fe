@@ -329,9 +329,9 @@ export function SettingsView() {
                     onChange={(e) => setAddRole(e.target.value)}
                     className="w-full h-9 rounded-lg bg-surface border border-border px-3 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
                   >
-                    <option value="Teammate">Teammate (Standard Contributor)</option>
-                    <option value="Manager">Manager (Project & Sprint Lead)</option>
-                    <option value="Admin">Admin (Workspace Administrator)</option>
+                    <option value="Teammate">Teammate</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Admin">Admin</option>
                   </select>
                 </div>
               </div>

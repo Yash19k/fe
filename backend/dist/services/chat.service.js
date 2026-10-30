@@ -146,7 +146,8 @@ async function listConversations(actor, page = 1, limit = 50) {
           AND current_member.user_id = :userId
       )
     `, { userId: actor.id })
-        .orderBy("COALESCE(conversation.last_message_at, conversation.created_at)", "DESC")
+        .addSelect("COALESCE(conversation.lastMessageAt, conversation.createdAt)", "conversationSortTimestamp")
+        .orderBy("conversationSortTimestamp", "DESC")
         .addOrderBy("conversation.id", "DESC")
         .skip((page - 1) * limit)
         .take(limit);

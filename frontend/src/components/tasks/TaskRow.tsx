@@ -19,11 +19,17 @@ import {
 
 export interface TaskRowProps {
   task: Task;
+  showStatus?: boolean;
   gridColsClassName?: string;
   className?: string;
 }
 
-export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProps) {
+export function TaskRow({
+  task,
+  showStatus = true,
+  gridColsClassName,
+  className = '',
+}: TaskRowProps) {
   const {
     openTaskDrawer,
     changeTaskStatus,
@@ -33,6 +39,8 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
     currentProject,
     currentWorkflow,
     showToast,
+    projectLabels,
+    labels,
   } = useApp();
   const workflow =
     getWorkflowForProject(workflows, task.projectId) ||
@@ -55,6 +63,41 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
   // Parent work item reference
   const parentTask = task.parentId ? tasks.find((t) => t.id === task.parentId) : null;
 
+  const itemTags = React.useMemo(() => {
+    const rawList: any[] = [];
+    if (Array.isArray(task.tags)) rawList.push(...task.tags);
+    if (Array.isArray(task.labels)) rawList.push(...task.labels);
+    if (rawList.length === 0) {
+      if ((task as any).label) rawList.push((task as any).label);
+      else if ((task as any).labelId) rawList.push((task as any).labelId);
+    }
+    if (rawList.length === 0) return [];
+
+    const available = [...(projectLabels || []), ...(labels || [])];
+    const resolved: { name: string; color: string }[] = [];
+    const seen = new Set<string>();
+
+    for (const item of rawList) {
+      if (!item) continue;
+      let name = '';
+      let color = '';
+      if (typeof item === 'string') {
+        const matched = available.find((l) => l.id === item || l.name === item);
+        name = matched ? matched.name : item;
+        color = matched?.color || '';
+      } else if (typeof item === 'object') {
+        name = item.name || item.title || item.id || '';
+        color = item.color || available.find((l) => l.id === item.id || l.name === name)?.color || '';
+      }
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        const resolvedColor = color || available.find((l) => l.name === name)?.color || '#3B82F6';
+        resolved.push({ name, color: resolvedColor });
+      }
+    }
+    return resolved;
+  }, [task.tags, task.labels, (task as any).label, (task as any).labelId, projectLabels, labels]);
+
   function handleToggleDone(e: React.MouseEvent) {
     e.stopPropagation();
     const targetStatus = isDone
@@ -67,7 +110,9 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
     void changeTaskStatus(task.id, targetStatus.name);
   }
 
-  const defaultGrid = 'grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px]';
+  const defaultGrid = showStatus
+    ? 'grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px]'
+    : 'grid-cols-[minmax(280px,1fr)_140px_110px_90px_80px]';
   const activeGrid = gridColsClassName || defaultGrid;
 
   return (
@@ -167,14 +212,16 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
       </div>
 
       {/* 4. Status Badge */}
-      <div className="flex items-center justify-center min-w-0">
-        <StatusBadge
-          status={task.status}
-          label={getStatusNameForTask(workflow, task)}
-          color={findWorkflowStatus(workflow, task.status)?.color}
-          size="sm"
-        />
-      </div>
+      {showStatus && (
+        <div className="flex items-center justify-center min-w-0">
+          <StatusBadge
+            status={task.status}
+            label={getStatusNameForTask(workflow, task)}
+            color={findWorkflowStatus(workflow, task.status)?.color}
+            size="sm"
+          />
+        </div>
+      )}
 
       {/* 5. Priority Badge */}
       <div className="flex items-center min-w-0">
@@ -183,16 +230,30 @@ export function TaskRow({ task, gridColsClassName, className = '' }: TaskRowProp
 
       {/* 6. Tags */}
       <div className="flex items-center gap-1 justify-end truncate">
-        {task.tags && task.tags.length > 0 ? (
-          task.tags.slice(0, 1).map((t) => (
+        {itemTags.length > 0 ? (
+          <>
             <span
-              key={t}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-text-muted truncate max-w-[80px]"
-              title={t}
+              className={`text-[10px] px-1.5 py-0.5 rounded border font-medium truncate ${
+                itemTags.length > 1 ? 'max-w-[55px]' : 'max-w-[75px]'
+              }`}
+              style={{
+                backgroundColor: `${itemTags[0].color}20`,
+                borderColor: `${itemTags[0].color}60`,
+                color: itemTags[0].color,
+              }}
+              title={itemTags[0].name}
             >
-              {t}
+              {itemTags[0].name}
             </span>
-          ))
+            {itemTags.length > 1 && (
+              <span
+                className="text-[9px] font-medium px-1 py-0.5 rounded bg-surface border border-border text-text-muted shrink-0"
+                title={itemTags.slice(1).map((t) => t.name).join(', ')}
+              >
+                +{itemTags.length - 1}
+              </span>
+            )}
+          </>
         ) : (
           <span className="text-[10px] text-text-muted/40 font-mono">-</span>
         )}

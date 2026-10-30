@@ -10,6 +10,7 @@ import { WORK_ITEM_TYPES, getWorkItemVersion, sanitizeWorkItemData } from '../do
 import { createNextRecurringTask } from '../domain/recurrence';
 import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
 import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
+import { diffBusinessDays } from '../domain/businessDays';
 import {
   AppContextValue,
   User,
@@ -1108,10 +1109,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
       if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
-      if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
-      if (updates.startDate !== undefined) backendUpdates.plannedStartDate = updates.startDate || null;
+      const finalDueDate = updates.dueDate !== undefined ? (updates.dueDate || null) : (target.dueDate || null);
+      const finalStartDate = updates.startDate !== undefined ? (updates.startDate || null) : (target.startDate || null);
+
+      if (updates.dueDate !== undefined) {
+        if (updates.dueDate || target.dueDate) {
+          backendUpdates.dueDate = updates.dueDate || null;
+        }
+      }
+      if (updates.startDate !== undefined) {
+        if (updates.startDate || target.startDate) {
+          backendUpdates.plannedStartDate = updates.startDate || null;
+        }
+      }
       if (updates.plannedDurationWorkingDays !== undefined) {
         backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
+      } else if (finalStartDate && finalDueDate) {
+        const computedDays = diffBusinessDays(finalStartDate, finalDueDate);
+        if (computedDays > 0) {
+          backendUpdates.plannedDurationWorkingDays = computedDays;
+        }
       }
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
       
@@ -2737,7 +2754,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     password: string;
     companyName?: string;
   }): Promise<boolean> => {
-    const orgName = (params.companyName || `${params.name.trim()}'s Workspace`).trim();
+    const orgName = (params.companyName !== undefined ? params.companyName : `${params.name.trim()}'s Workspace`).trim();
     const res = await registerOrganizationApi({
       user: {
         fullName: params.name.trim(),
@@ -2915,7 +2932,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(`Sprint "${savedSprint.name}" created`, 'success');
       return { success: true, sprint: savedSprint, workItems: returnedWorkItems };
     } catch (err: any) {
-      const errMsg = err?.message || 'Failed to create sprint on server';
+      const isZeroItems = workItemIds.length === 0;
+      const isValidationErr =
+        err?.message === 'Validation failed.' ||
+        err?.message === 'Validation failed' ||
+        err?.code === 'VALIDATION_ERROR';
+      const errMsg =
+        isZeroItems && isValidationErr
+          ? 'Please select at least one work item.'
+          : (err?.message || 'Failed to create sprint on server');
       showToast(errMsg, 'error');
       throw err;
     }

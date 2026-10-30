@@ -29,6 +29,7 @@ import { Dialog } from '../ui/Dialog';
 import { evaluateTaskSla } from '../../domain/sla';
 import { formatRecurrenceRule, generateNextOccurrences } from '../../domain/recurrence';
 import { isTaskBlocked, getBlockingTasks, getPredecessorTasks, getSuccessorTasks } from '../../domain/dependencyGraph';
+import { diffBusinessDays } from '../../domain/businessDays';
 import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../domain/workItems';
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
@@ -337,12 +338,42 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         updates.environment = draft.environment;
       }
 
+      if (draft.startDate && draft.dueDate) {
+        updates.plannedDurationWorkingDays = diffBusinessDays(draft.startDate, draft.dueDate);
+      }
+
       const result = await updateTask(task.id, updates, snapshotVersion);
       if (result?.conflict) return;
       if (result && !result.success && result.reason) {
         showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
-      } else if (result?.success && result.task?.version) {
-        setSnapshotVersion(result.task.version);
+      } else if (result?.success && result.task) {
+        if (result.task.version) {
+          setSnapshotVersion(result.task.version);
+        }
+        setDraft({
+          title: result.task.title || '',
+          description: result.task.description || '',
+          type: (result.task.type || WORK_ITEM_TYPES.TASK) as WorkItemType,
+          status: result.task.status || '',
+          priority: (result.task.priority || '') as Priority | '',
+          assigneeId: result.task.assigneeId || '',
+          assigneeIds: (result.task.assigneeIds && result.task.assigneeIds.length > 0)
+            ? [...result.task.assigneeIds]
+            : (result.task.assigneeId ? [result.task.assigneeId] : []),
+          labels: result.task.labels ? [...result.task.labels] : [],
+          startDate: toDateInputValue(result.task.startDate),
+          dueDate: toDateInputValue(result.task.dueDate),
+          estimateHours: result.task.estimateHours !== null && result.task.estimateHours !== undefined ? result.task.estimateHours : '',
+          parentId: result.task.parentId || '',
+          businessGoal: result.task.businessGoal || '',
+          successCriteria: result.task.successCriteria || '',
+          acceptanceCriteria: result.task.acceptanceCriteria || '',
+          severity: (result.task.severity || 'Medium') as BugSeverity,
+          stepsToReproduce: result.task.stepsToReproduce || '',
+          expectedBehavior: result.task.expectedBehavior || '',
+          actualBehavior: result.task.actualBehavior || '',
+          environment: result.task.environment || '',
+        });
       }
     } catch (err: any) {
       showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
@@ -581,7 +612,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               <option value="">No priority</option>
-              <option value="Urgent">Urgent</option>
               <option value="High">High</option>
               <option value="Medium">Medium</option>
               <option value="Low">Low</option>
@@ -720,74 +750,33 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         {/* --- TYPE-SPECIFIC FIELDS --- */}
 
         {/* 1. Epic Fields */}
-        {currentType === WORK_ITEM_TYPES.EPIC && (
+        {currentType === WORK_ITEM_TYPES.EPIC && childWorkItems.length > 0 && (
           <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border space-y-3 text-xs">
-            <h4 className="font-semibold text-text-primary uppercase tracking-wider text-[11px]">
-              Epic Specifications
-            </h4>
             <div>
-              <label className="text-text-muted block mb-1">Business Goal</label>
-              <input
-                type="text"
-                value={draft.businessGoal}
-                onChange={(e) => setDraft((prev) => ({ ...prev, businessGoal: e.target.value }))}
-                placeholder="Strategic goal or business value..."
-                className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-              />
-            </div>
-            <div>
-              <label className="text-text-muted block mb-1">Success Criteria</label>
-              <textarea
-                value={draft.successCriteria}
-                onChange={(e) => setDraft((prev) => ({ ...prev, successCriteria: e.target.value }))}
-                rows={2}
-                placeholder="Measurable outcomes..."
-                className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-              />
-            </div>
-            {childWorkItems.length > 0 && (
-              <div className="pt-2 border-t border-border">
-                <span className="text-[11px] text-text-muted block mb-1.5 font-medium">
-                  Associated Work Items ({childWorkItems.length})
-                </span>
-                <div className="space-y-1">
-                  {childWorkItems.map((child) => (
-                    <div
-                      key={child.id}
-                      onClick={() => openTaskDrawer(child.id)}
-                      className="flex items-center justify-between p-1.5 rounded bg-surface hover:bg-surface-hover cursor-pointer border border-border text-[11px]"
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
-                        <span className="truncate">{child.title}</span>
-                      </div>
-                      <StatusBadge
-                        status={child.status}
-                        label={getStatusNameForTask(currentWorkflow, child)}
-                        color={findWorkflowStatus(currentWorkflow, child.status)?.color}
-                        size="sm"
-                      />
+              <span className="text-[11px] text-text-muted block mb-1.5 font-medium">
+                Associated Work Items ({childWorkItems.length})
+              </span>
+              <div className="space-y-1">
+                {childWorkItems.map((child) => (
+                  <div
+                    key={child.id}
+                    onClick={() => openTaskDrawer(child.id)}
+                    className="flex items-center justify-between p-1.5 rounded bg-surface hover:bg-surface-hover cursor-pointer border border-border text-[11px]"
+                  >
+                    <div className="flex items-center gap-1.5 truncate">
+                      <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
+                      <span className="truncate">{child.title}</span>
                     </div>
-                  ))}
-                </div>
+                    <StatusBadge
+                      status={child.status}
+                      label={getStatusNameForTask(currentWorkflow, child)}
+                      color={findWorkflowStatus(currentWorkflow, child.status)?.color}
+                      size="sm"
+                    />
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* 2. Story Fields */}
-        {currentType === WORK_ITEM_TYPES.STORY && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border space-y-2 text-xs">
-            <h4 className="font-semibold text-text-primary uppercase tracking-wider text-[11px]">
-              Acceptance Criteria
-            </h4>
-            <textarea
-              value={draft.acceptanceCriteria}
-              onChange={(e) => setDraft((prev) => ({ ...prev, acceptanceCriteria: e.target.value }))}
-              rows={2}
-              placeholder="Given... When... Then... criteria"
-              className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-            />
+            </div>
           </div>
         )}
 
@@ -898,7 +887,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               <p className="text-[11px] text-text-muted">
                 <span>{slaInfo.label || 'SLA status unavailable'}</span>
                 {slaDeadline && (
-                  <span> · Deadline: {slaDeadline.toLocaleString()}</span>
+                  <span> · Deadline: {slaDeadline.toLocaleDateString()}</span>
                 )}
                 {slaInfo.remainingHours !== undefined && slaInfo.remainingHours !== null && !slaInfo.isBreached && (
                   <span> · {Math.ceil(slaInfo.remainingHours)}h remaining</span>
@@ -909,7 +898,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               </p>
               {task.sla?.escalatedAt && (
                 <p className="text-[11px] text-text-muted">
-                  Escalated {new Date(task.sla.escalatedAt).toLocaleString()}
+                  Escalated {new Date(task.sla.escalatedAt).toLocaleDateString()}
                   {task.sla.escalationReason ? ` · ${task.sla.escalationReason}` : ''}
                 </p>
               )}

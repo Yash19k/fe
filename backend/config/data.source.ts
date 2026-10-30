@@ -1,5 +1,6 @@
 
 import "reflect-metadata";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { DataSource } from "typeorm";
 import { config } from "./config";
@@ -59,6 +60,23 @@ const registeredEntities = [
   WorkItemTimeEntry,
 ];
 
+const migrationsDir = join(__dirname, "../migrations");
+const migrationFiles = existsSync(migrationsDir)
+  ? readdirSync(migrationsDir)
+      .filter((file) => (file.endsWith(".ts") || file.endsWith(".js")) && !file.endsWith(".d.ts"))
+      .sort()
+  : [];
+
+const loadedMigrations: any[] = [];
+for (const file of migrationFiles) {
+  const migrationModule = require(join(migrationsDir, file));
+  for (const exportedItem of Object.values(migrationModule)) {
+    if (typeof exportedItem === "function") {
+      loadedMigrations.push(exportedItem);
+    }
+  }
+}
+
 export const AppDataSource = new DataSource({
   type: "postgres",
   host: config.database.host,
@@ -69,9 +87,11 @@ export const AppDataSource = new DataSource({
 
   entities: registeredEntities,
 
-  migrations: [
-    join(__dirname, "../migrations/**/*{.ts,.js}").replace(/\\/g, "/"),
-  ],
+  migrations: loadedMigrations.length > 0
+    ? loadedMigrations
+    : [
+        join(__dirname, "../migrations/**/*{.ts,.js}").replace(/\\/g, "/"),
+      ],
 
   synchronize: config.database.synchronize,
   logging: config.database.logging,

@@ -286,7 +286,7 @@ export function ProjectTimelineView() {
                     {/* Section Label Header (Omitted for Discovery & Plan per presentation requirements) */}
                     {!isDiscoveryAndPlan && (
                       <div className="flex items-center h-8 bg-surface-active/40 border-b border-border/40">
-                        <div className="sticky left-0 z-20 w-64 sm:w-72 px-4 text-xs font-bold text-text-primary uppercase tracking-wider truncate border-r border-border flex-shrink-0 bg-surface-elevated/95 backdrop-blur-xs shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
+                        <div className="sticky left-0 z-20 w-64 sm:w-72 px-4 text-xs font-bold text-text-primary uppercase tracking-wider truncate border-r border-border flex-shrink-0 bg-surface-elevated shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                           {sec.name} ({sec.tasks.length})
                         </div>
                         {/* Background grid lines for section */}
@@ -321,22 +321,17 @@ export function ProjectTimelineView() {
                         {/* Task Title Left Column */}
                         <div
                           onClick={() => openTaskDrawer(task.id)}
-                          className="sticky left-0 z-10 w-64 sm:w-72 px-3 text-xs font-medium text-text-primary truncate border-r border-border flex-shrink-0 cursor-pointer bg-surface group-hover:bg-surface-hover/90 transition-colors group-hover:text-brand-primary flex items-center justify-between gap-1.5 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]"
+                          className="sticky left-0 z-10 w-64 sm:w-72 px-3 text-xs font-medium text-text-primary truncate border-r border-border flex-shrink-0 cursor-pointer bg-surface group-hover:bg-surface-hover transition-colors group-hover:text-brand-primary flex items-center justify-between gap-1.5 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]"
                           title={task.title}
                         >
                           <div className="flex items-center gap-1.5 min-w-0 truncate">
                             <WorkItemTypeBadge type={task.type} size="sm" showLabel={false} />
                             <span className="truncate">{task.title}</span>
                           </div>
-                          {isCritical && highlightCriticalPath && (
-                            <span className="text-[10px] text-rose-400 font-bold ml-1 flex-shrink-0">
-                              CPM
-                            </span>
-                          )}
                         </div>
 
                         {/* Timeline Date Grid Row with Task Bar */}
-                        <div className="relative flex h-full items-center">
+                        <div className="relative flex h-full items-center overflow-hidden">
                           {/* Background cell dividers */}
                           {timelineDates.map((d) => (
                             <div
