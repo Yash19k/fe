@@ -890,7 +890,7 @@ export interface ChatLastMessage {
 
 export interface ChatConversation {
   id: string;
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string | null;
@@ -923,7 +923,7 @@ export async function getChatConversationsApi(): Promise<any> {
 }
 
 export async function createChatConversationApi(payload: {
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string;
