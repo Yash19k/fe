@@ -642,8 +642,16 @@ export interface CreateSprintApiInput {
   workItemIds?: string[];
 }
 
-export async function getProjectSprintsApi(projectId: string): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints`, {
+export async function getProjectSprintsApi(
+  projectId: string,
+  page?: number,
+  limit?: number
+): Promise<any> {
+  const pagination =
+    page !== undefined || limit !== undefined
+      ? `?page=${page ?? 1}&limit=${limit ?? 10}`
+      : '';
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints${pagination}`, {
     method: 'GET',
   });
 }

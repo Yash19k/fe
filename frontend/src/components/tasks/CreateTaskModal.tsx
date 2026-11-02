@@ -11,12 +11,13 @@ import {
 import { getEligibleParents } from '../../domain/hierarchy';
 import { buildBackendRecurrence, formatRecurrenceRule } from '../../domain/recurrence';
 import { formatLocalDate } from '../../domain/businessDays';
-import { WorkItemType, Priority, BugSeverity, TaskAttachment } from '../../types';
+import { WorkItemType, Priority, BugSeverity, TaskAttachment, Sprint } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { LabelPicker } from '../ui/LabelPicker';
 import { toDateInputValue } from '../../utils/dateUtils';
 import { Repeat } from 'lucide-react';
 import { getInitialWorkflowStatus } from '../../domain/workflow';
+import { backendSprintToFrontend, getProjectSprintsApi } from '../../services/api';
 
 export interface CreateTaskModalProps {
   isOpen: boolean;
@@ -59,6 +60,10 @@ export function CreateTaskModal({
   const [assigneeId, setAssigneeId] = useState('');
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [selectedSprintId, setSelectedSprintId] = useState(initialSprintId || '');
+  const [availableSprints, setAvailableSprints] = useState<Sprint[]>([]);
+  const [isLoadingSprints, setIsLoadingSprints] = useState(false);
+  const [sprintLoadError, setSprintLoadError] = useState<string | null>(null);
   const [startDate, setStartDate] = useState(formatDateInputValue(initialStartDate));
   const [dueDate, setDueDate] = useState(formatDateInputValue(initialDueDate));
   const [estimateHours, setEstimateHours] = useState<number | string>('');
@@ -66,6 +71,71 @@ export function CreateTaskModal({
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [attachmentPickerKey, setAttachmentPickerKey] = useState(0);
   const [createdWorkItemId, setCreatedWorkItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isOpen || !currentProject?.id) {
+      setAvailableSprints([]);
+      setSelectedSprintId('');
+      setIsLoadingSprints(false);
+      setSprintLoadError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const projectId = currentProject.id;
+    setAvailableSprints([]);
+    setSelectedSprintId(initialSprintId || '');
+    setIsLoadingSprints(true);
+    setSprintLoadError(null);
+
+    async function loadProjectSprints() {
+      try {
+        const sprints: Sprint[] = [];
+        let page = 1;
+        let totalPages = 1;
+
+        do {
+          const response = await getProjectSprintsApi(projectId, page, 100);
+          if (!Array.isArray(response?.data)) {
+            throw new Error('The project sprints could not be loaded.');
+          }
+
+          sprints.push(
+            ...response.data
+              .map(backendSprintToFrontend)
+              .filter((sprint: Sprint) => sprint.projectId === projectId),
+          );
+          totalPages =
+            response.pagination?.totalPages ??
+            (response.data.length === 100 ? page + 1 : page);
+          page += 1;
+        } while (page <= totalPages);
+
+        if (cancelled) return;
+        setAvailableSprints(sprints);
+        setSelectedSprintId((current) =>
+          sprints.some((sprint) => sprint.id === current) ? current : '',
+        );
+      } catch (error) {
+        if (cancelled) return;
+        setAvailableSprints([]);
+        setSelectedSprintId('');
+        setSprintLoadError(
+          error instanceof Error ? error.message : 'The project sprints could not be loaded.',
+        );
+      } finally {
+        if (!cancelled) setIsLoadingSprints(false);
+      }
+    }
+
+    void loadProjectSprints();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, currentProject?.id, initialSprintId]);
 
   useEffect(() => {
     setStatus((previous) =>
@@ -219,7 +289,7 @@ export function CreateTaskModal({
         labels: selectedLabels,
         startDate: startDate || null,
         dueDate: dueDate || null,
-        sprintId: initialSprintId || null,
+        sprintId: selectedSprintId || null,
         estimateHours: estimateHours !== '' ? Number(estimateHours) : null,
         // Metadata only: never send temporary blob: preview URLs as persisted attachment URLs.
         attachments: attachments.map(({ id, name, size, type, uploadedAt }) => ({
@@ -298,6 +368,7 @@ export function CreateTaskModal({
     setAssigneeId('');
     setSelectedAssigneeIds([]);
     setSelectedLabels([]);
+    setSelectedSprintId('');
     setStartDate(formatDateInputValue(initialStartDate));
     setDueDate(formatDateInputValue(initialDueDate));
     setRecFrequency('none');
@@ -541,6 +612,30 @@ export function CreateTaskModal({
             onToggleLabel={handleToggleLabel}
             placeholder="+ Browse and select labels..."
           />
+        </div>
+
+        <div>
+          <Select
+            label="Add to Sprint"
+            value={selectedSprintId}
+            onChange={(e) => setSelectedSprintId(e.target.value)}
+            disabled={isSubmitting || isLoadingSprints}
+          >
+            <option value="">-- None (No Sprint) --</option>
+            {availableSprints.map((sprint) => (
+              <option key={sprint.id} value={sprint.id}>
+                {sprint.name}
+              </option>
+            ))}
+          </Select>
+          {isLoadingSprints && (
+            <p className="mt-1 text-xs text-text-muted">Loading sprints...</p>
+          )}
+          {sprintLoadError && (
+            <p role="alert" className="mt-1 text-xs text-rose-400">
+              {sprintLoadError}
+            </p>
+          )}
         </div>
 
         {/* Status, Priority, Start Date, Due Date */}
