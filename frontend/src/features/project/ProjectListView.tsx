@@ -344,15 +344,16 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
               {/* Task Rows */}
               {!isCollapsed && (
                 <div className="overflow-x-auto">
-                  <div className="min-w-[860px]">
+                  <div className="min-w-[920px]">
                     {/* Table Column Headers */}
-                    <div className="grid grid-cols-[minmax(280px,1fr)_140px_110px_90px_80px] gap-3 items-center px-4 py-2 border-b border-border/50 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/40 select-none">
+                    <div className="grid grid-cols-[minmax(280px,1fr)_140px_110px_110px_90px_80px] gap-3 items-center px-4 py-2 border-b border-border/50 text-[10px] font-semibold uppercase tracking-wider text-text-muted bg-surface/40 select-none">
                       <div className="flex items-center gap-2">
                         <span className="w-4 shrink-0" />
                         <span>Task Title</span>
                       </div>
                       <span>Assignee</span>
                       <span>Due Date</span>
+                      <span className="text-center">Status</span>
                       <span>Priority</span>
                       <span className="text-right">Tags</span>
                     </div>
@@ -363,7 +364,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
                           No work items in this group. Click &quot;+&quot; to add one.
                         </div>
                       ) : (
-                        group.tasks.map((t: Task) => <TaskRow key={t.id} task={t} showStatus={false} />)
+                        group.tasks.map((t: Task) => <TaskRow key={t.id} task={t} />)
                       )}
                     </div>
                   </div>

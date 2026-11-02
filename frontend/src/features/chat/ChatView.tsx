@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   MessageCircle,
   Plus,
@@ -8,9 +8,6 @@ import {
   Search,
   X,
   Smile,
-  Paperclip,
-  Image as ImageIcon,
-  FileText,
 } from 'lucide-react';
 import { useApp } from '../../hooks/useApp';
 import {
@@ -20,8 +17,18 @@ import {
   createChatConversationApi,
   getChatConversationsApi,
   getChatMessagesApi,
+  markChatConversationReadApi,
 } from '../../services/api';
 import type { User } from '../../types';
+import {
+  canSendChatMessage,
+  clearConversationUnread,
+  matchesPendingChatMessage,
+  mergeChatMessages,
+  shouldClearSubmittedDraft,
+  updateConversationFromMessage,
+  type ChatConnectionStatus,
+} from './chatState';
 
 function websocketUrl(): string {
   const url = new URL(API_BASE_URL);
@@ -67,6 +74,13 @@ function resolveConversationParticipant(
         avatarColor: '#7465F6',
       };
     }
+  }
+  if (conversation.type === 'GROUP') {
+    return {
+      displayName: 'Group chat',
+      initials: 'GC',
+      avatarColor: '#7465F6',
+    };
   }
 
   // 1. Identify the other participant's ID and email from conversation metadata
@@ -127,7 +141,7 @@ function resolveConversationParticipant(
 
   // Neutral fallback if no profile name is available (never fabricate or map email to initial)
   if (!resolvedDisplayName) {
-    resolvedDisplayName = conversation.type === 'DIRECT' ? 'Teammate' : 'Conversation';
+    resolvedDisplayName = conversation.type === 'DIRECT' ? 'Teammate' : 'Group chat';
   }
 
   // 4. Resolve Initials from the human display name
@@ -197,10 +211,43 @@ const EMOJI_PALETTE = [
   '📌', '📎', '✉️', '📢', '⏰', '💻', '📈', '❤️',
 ];
 
-interface DraftAttachment {
-  file: File;
-  type: 'file' | 'media';
-  previewUrl?: string;
+interface PendingChatSend {
+  conversationId: string;
+  content: string;
+  draft: string;
+  clientMessageId: string;
+}
+
+interface ConversationRemovedEvent {
+  conversationId: string;
+}
+
+interface ChatSocketPayload {
+  event: string;
+  conversationId?: string;
+  data?: unknown;
+  message?: string;
+}
+
+function isChatSocketPayload(value: unknown): value is ChatSocketPayload {
+  return typeof value === 'object' && value !== null && 'event' in value &&
+    typeof value.event === 'string';
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return typeof message.id === 'string' &&
+    typeof message.conversationId === 'string' &&
+    typeof message.senderId === 'string' &&
+    typeof message.content === 'string' &&
+    typeof message.createdAt === 'string' &&
+    !Number.isNaN(Date.parse(message.createdAt));
+}
+
+function isConversationRemoved(value: unknown): value is ConversationRemovedEvent {
+  if (typeof value !== 'object' || value === null) return false;
+  return typeof (value as Record<string, unknown>).conversationId === 'string';
 }
 
 export function ChatView() {
@@ -209,23 +256,144 @@ export function ChatView() {
   const [selectedId, setSelectedId] = useState<string>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<ChatConnectionStatus>('disconnected');
+  const [isSending, setIsSending] = useState(false);
+  const [joinRequestPending, setJoinRequestPending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [memberId, setMemberId] = useState('');
+  const [conversationType, setConversationType] = useState<'DIRECT' | 'GROUP'>('DIRECT');
+  const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
+  const [groupName, setGroupName] = useState('');
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
 
   // Composer controls state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [pendingAttachment, setPendingAttachment] = useState<DraftAttachment | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
-  const selectedIdRef = useRef<string | undefined>(undefined);
+  const selectedIdRef = useRef<string | undefined>(selectedId);
+  const conversationsRef = useRef(conversations);
+  const currentUserIdRef = useRef(currentUser?.id);
+  const draftRef = useRef(draft);
+  const conversationDraftsRef = useRef(new Map<string, string>());
+  const conversationPageRef = useRef(1);
+  const textRetryRef = useRef<PendingChatSend | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef(messages);
+  const loadingOlderMessagesRef = useRef(false);
+  const hasOlderMessagesRef = useRef(false);
+  const scrollAdjustmentRef = useRef<{ height: number; top: number; conversationId: string } | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const showToastRef = useRef(showToast);
+  const markReadCompletedRef = useRef(new Set<string>());
+  const markReadInFlightRef = useRef(new Map<string, Promise<void>>());
+  const markReadAgainRef = useRef(new Set<string>());
+  const messageVersionsRef = useRef(new Map<string, number>());
+  const seenMessageIdsRef = useRef(new Set<string>());
+  const joinedConversationIdsRef = useRef(new Set<string>());
+  const requestedConversationIdsRef = useRef(new Set<string>());
+  const removedConversationIdsRef = useRef(new Set<string>());
+  const joinQueueRef = useRef<string[]>([]);
+  const joinInFlightRef = useRef<string | undefined>(undefined);
+  const queueJoinRef = useRef<(conversationId: string, prioritize?: boolean) => void>(() => {});
+  const processJoinQueueRef = useRef<() => void>(() => {});
+  const pendingSendRef = useRef<PendingChatSend | null>(null);
+  const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const mediaInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    conversationsRef.current = conversations;
+    selectedIdRef.current = selectedId;
+    currentUserIdRef.current = currentUser?.id;
+    draftRef.current = draft;
+    messagesRef.current = messages;
+    showToastRef.current = showToast;
+  }, [conversations, selectedId, currentUser?.id, draft, messages, showToast]);
+
+  const markConversationRead = useCallback(function markConversationReadRequest(
+    conversationId: string,
+    force = false,
+  ) {
+    const inFlight = markReadInFlightRef.current.get(conversationId);
+    if (inFlight) {
+      if (force) markReadAgainRef.current.add(conversationId);
+      return;
+    }
+    if (!force && markReadCompletedRef.current.has(conversationId)) return;
+    const messageVersion = messageVersionsRef.current.get(conversationId) ?? 0;
+
+    const request = markChatConversationReadApi(conversationId)
+      .then(() => {
+        markReadCompletedRef.current.add(conversationId);
+        if (
+          messageVersionsRef.current.get(conversationId) === messageVersion ||
+          selectedIdRef.current === conversationId
+        ) {
+          setConversations((current) => clearConversationUnread(current, conversationId));
+        }
+      })
+      .catch((error: Error) => {
+        markReadCompletedRef.current.delete(conversationId);
+        showToastRef.current(error.message, 'error');
+      })
+      .finally(() => {
+        markReadInFlightRef.current.delete(conversationId);
+        const shouldMarkAgain = markReadAgainRef.current.delete(conversationId);
+        if (shouldMarkAgain && selectedIdRef.current === conversationId) {
+          void markConversationReadRequest(conversationId, true);
+        }
+      });
+
+    markReadInFlightRef.current.set(conversationId, request);
+  }, []);
+
+  const selectConversation = (conversationId?: string) => {
+    const previousConversationId = selectedIdRef.current;
+    if (previousConversationId && previousConversationId !== conversationId) {
+      if (draftRef.current) conversationDraftsRef.current.set(previousConversationId, draftRef.current);
+      else conversationDraftsRef.current.delete(previousConversationId);
+    }
+    if (selectedIdRef.current !== conversationId) setMessages([]);
+    selectedIdRef.current = conversationId;
+    setSelectedId(conversationId);
+    draftRef.current = conversationId ? conversationDraftsRef.current.get(conversationId) ?? '' : '';
+    setDraft(draftRef.current);
+    loadingOlderMessagesRef.current = false;
+    hasOlderMessagesRef.current = false;
+    setLoadingOlderMessages(false);
+    setHasOlderMessages(false);
+    scrollAdjustmentRef.current = null;
+    shouldAutoScrollRef.current = true;
+    if (!conversationId) {
+      setConnectionStatus('disconnected');
+    } else if (joinedConversationIdsRef.current.has(conversationId)) {
+      setConnectionStatus('ready');
+    } else {
+      setConnectionStatus(socketRef.current?.readyState === WebSocket.OPEN ? 'joining' : 'connecting');
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        queueJoinRef.current(conversationId, true);
+      }
+    }
+  };
+
+  function clearPendingSendTimer() {
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = undefined;
+  }
+
+  function resetJoinedRooms() {
+    joinedConversationIdsRef.current.clear();
+    requestedConversationIdsRef.current.clear();
+    joinQueueRef.current = [];
+    joinInFlightRef.current = undefined;
+  }
 
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId),
@@ -256,12 +424,16 @@ export function ChatView() {
 
   // Scroll to bottom when messages update
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const scrollAdjustment = scrollAdjustmentRef.current;
+    const container = messagesContainerRef.current;
+    if (scrollAdjustment && container && scrollAdjustment.conversationId === selectedIdRef.current) {
+      container.scrollTop = scrollAdjustment.top + (container.scrollHeight - scrollAdjustment.height);
+      scrollAdjustmentRef.current = null;
+    } else if (shouldAutoScrollRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    shouldAutoScrollRef.current = false;
   }, [messages]);
-
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
 
   // Close emoji picker on click outside
   useEffect(() => {
@@ -283,92 +455,477 @@ export function ChatView() {
       .then((response) => {
         if (cancelled) return;
         const convs: ChatConversation[] = response.data || [];
+        conversationPageRef.current = 1;
+        setHasMoreConversations(convs.length === 50);
         setConversations(convs);
         if (convs[0] && !selectedIdRef.current) {
+          selectedIdRef.current = convs[0].id;
           setSelectedId(convs[0].id);
         }
       })
-      .catch((error: Error) => showToast(error.message, 'error'))
+      .catch((error: Error) => showToastRef.current(error.message, 'error'))
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, []);
 
-  // Load messages and establish WebSocket for selected conversation
+  // Load messages and mark the selected conversation read.
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
-    setMessages([]);
+    loadingOlderMessagesRef.current = false;
+    hasOlderMessagesRef.current = false;
+    setLoadingOlderMessages(false);
+    setHasOlderMessages(false);
     void getChatMessagesApi(selectedId)
       .then((response) => {
-        if (!cancelled) setMessages(response.data || []);
+        if (!cancelled) {
+          const page = response.data || [];
+          hasOlderMessagesRef.current = page.length === 50;
+          setHasOlderMessages(hasOlderMessagesRef.current);
+          setMessages((current) => mergeChatMessages(current, page));
+        }
       })
-      .catch((error: Error) => showToast(error.message, 'error'));
-
-    const socket = new WebSocket(websocketUrl());
-    socketRef.current = socket;
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ event: 'conversation:join', conversationId: selectedId }));
-    };
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as {
-        event: string;
-        data?: ChatMessage;
-        message?: string;
-      };
-      if (payload.event === 'message:new' && payload.data?.conversationId === selectedIdRef.current) {
-        setMessages((current) =>
-          current.some((m) => m.id === payload.data?.id) ? current : [...current, payload.data!]
-        );
-      }
-      if (payload.event === 'chat:error') {
-        showToast(payload.message || 'Chat error', 'error');
-      }
-    };
-    socket.onerror = () => {
-      showToast('Chat connection failed. Check that the backend is running.', 'error');
-    };
-
+      .catch((error: Error) => {
+        if (!cancelled) showToastRef.current(error.message, 'error');
+      });
+    markReadCompletedRef.current.delete(selectedId);
+    markConversationRead(selectedId);
     return () => {
       cancelled = true;
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ event: 'conversation:leave', conversationId: selectedId }));
-      }
-      socket.close();
-      if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [selectedId, showToast]);
+  }, [selectedId, markConversationRead]);
 
-  // Cleanup pending object URL when component unmounts or attachment changes
+  async function loadOlderMessages() {
+    const conversationId = selectedIdRef.current;
+    const oldestMessage = messagesRef.current[0];
+    if (
+      !conversationId ||
+      !oldestMessage ||
+      loadingOlderMessagesRef.current ||
+      !hasOlderMessagesRef.current
+    ) return;
+
+    loadingOlderMessagesRef.current = true;
+    setLoadingOlderMessages(true);
+    try {
+      const response = await getChatMessagesApi(
+        conversationId,
+        50,
+        oldestMessage.createdAt,
+        oldestMessage.id,
+      );
+      if (selectedIdRef.current !== conversationId) return;
+      const olderMessages = response.data || [];
+      hasOlderMessagesRef.current = olderMessages.length === 50;
+      setHasOlderMessages(hasOlderMessagesRef.current);
+      if (olderMessages.length) {
+        const container = messagesContainerRef.current;
+        if (container) {
+          scrollAdjustmentRef.current = {
+            height: container.scrollHeight,
+            top: container.scrollTop,
+            conversationId,
+          };
+        }
+        shouldAutoScrollRef.current = false;
+        setMessages((current) => mergeChatMessages(current, olderMessages));
+      }
+    } catch (error) {
+      if (selectedIdRef.current === conversationId) {
+        showToastRef.current((error as Error).message, 'error');
+      }
+    } finally {
+      if (selectedIdRef.current === conversationId) {
+        loadingOlderMessagesRef.current = false;
+        setLoadingOlderMessages(false);
+      }
+    }
+  }
+
+  function handleMessagesScroll() {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    shouldAutoScrollRef.current =
+      container.scrollHeight - container.clientHeight - container.scrollTop < 80;
+    if (container.scrollTop < 24) void loadOlderMessages();
+  }
+
+  async function loadMoreConversations() {
+    if (loadingMoreConversations) return;
+    setLoadingMoreConversations(true);
+    const requestedPage = conversationPageRef.current + 1;
+    try {
+      const response = await getChatConversationsApi(requestedPage);
+      const page = response.data || [];
+      conversationPageRef.current = requestedPage;
+      setHasMoreConversations(page.length === 50);
+      setConversations((current) => {
+        const seen = new Set(current.map((conversation) => conversation.id));
+        return [...current, ...page.filter((conversation) => !seen.has(conversation.id))];
+      });
+    } catch (error) {
+      showToastRef.current((error as Error).message, 'error');
+    } finally {
+      setLoadingMoreConversations(false);
+    }
+  }
+
   useEffect(() => {
-    return () => {
-      if (pendingAttachment?.previewUrl) {
-        URL.revokeObjectURL(pendingAttachment.previewUrl);
+    for (const conversation of conversations) {
+      queueJoinRef.current(conversation.id);
+    }
+    if (selectedId) queueJoinRef.current(selectedId, true);
+  }, [conversations, selectedId]);
+
+  useEffect(() => {
+    if (loading || !currentUser?.id) return;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let joinPacingTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastJoinSentAt = 0;
+    let retryAttempt = 0;
+    let activeSocket: WebSocket | null = null;
+
+    const processJoinQueue = () => {
+      const socket = activeSocket;
+      if (
+        disposed ||
+        !socket ||
+        socket.readyState !== WebSocket.OPEN ||
+        joinInFlightRef.current ||
+        pendingSendRef.current
+      ) {
+        return;
+      }
+
+      const conversationId = joinQueueRef.current.length ? joinQueueRef.current.shift() : undefined;
+      if (!conversationId) {
+        return;
+      }
+
+      const pacingDelay = Math.max(0, 450 - (Date.now() - lastJoinSentAt));
+      if (pacingDelay > 0) {
+        joinQueueRef.current.unshift(conversationId);
+        if (!joinPacingTimer) {
+          joinPacingTimer = setTimeout(() => {
+            joinPacingTimer = undefined;
+            processJoinQueue();
+          }, pacingDelay);
+        }
+        return;
+      }
+
+      joinInFlightRef.current = conversationId;
+      requestedConversationIdsRef.current.add(conversationId);
+      setJoinRequestPending(true);
+      if (selectedIdRef.current === conversationId) setConnectionStatus('joining');
+      try {
+        socket.send(JSON.stringify({ event: 'conversation:join', conversationId }));
+        lastJoinSentAt = Date.now();
+      } catch (error) {
+        joinInFlightRef.current = undefined;
+        requestedConversationIdsRef.current.delete(conversationId);
+        setJoinRequestPending(false);
+        if (selectedIdRef.current === conversationId) setConnectionStatus('error');
+        showToastRef.current((error as Error).message, 'error');
+        processJoinQueue();
       }
     };
-  }, [pendingAttachment]);
+
+    const queueJoin = (conversationId: string, prioritize = false) => {
+      if (
+        joinedConversationIdsRef.current.has(conversationId) ||
+        requestedConversationIdsRef.current.has(conversationId)
+      ) {
+        return;
+      }
+      const queuedIndex = joinQueueRef.current.indexOf(conversationId);
+      if (queuedIndex >= 0) {
+        if (prioritize && queuedIndex > 0) {
+          joinQueueRef.current.splice(queuedIndex, 1);
+          joinQueueRef.current.unshift(conversationId);
+        }
+        processJoinQueue();
+        return;
+      }
+      if (prioritize) joinQueueRef.current.unshift(conversationId);
+      else joinQueueRef.current.push(conversationId);
+      processJoinQueue();
+    };
+
+    queueJoinRef.current = queueJoin;
+    processJoinQueueRef.current = processJoinQueue;
+
+    const connect = () => {
+      if (disposed) return;
+      setConnectionStatus(selectedIdRef.current ? 'connecting' : 'disconnected');
+      try {
+        const socket = new WebSocket(websocketUrl());
+        activeSocket = socket;
+        socketRef.current = socket;
+        socket.onopen = () => {
+          if (disposed || activeSocket !== socket) return;
+          retryAttempt = 0;
+          resetJoinedRooms();
+          setJoinRequestPending(false);
+          setConnectionStatus(selectedIdRef.current ? 'joining' : 'disconnected');
+
+          const selectedConversationId = selectedIdRef.current;
+          if (selectedConversationId) queueJoin(selectedConversationId, true);
+          for (const conversation of conversationsRef.current) queueJoin(conversation.id);
+        };
+        socket.onmessage = (event) => {
+          if (disposed || activeSocket !== socket || typeof event.data !== 'string') return;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(event.data);
+          } catch {
+            showToastRef.current('Received an invalid chat response.', 'error');
+            return;
+          }
+          if (!isChatSocketPayload(payload)) return;
+
+          if (payload.event === 'conversation:joined' && payload.conversationId) {
+            const conversationId = payload.conversationId;
+            removedConversationIdsRef.current.delete(conversationId);
+            joinedConversationIdsRef.current.add(conversationId);
+            requestedConversationIdsRef.current.delete(conversationId);
+            if (joinInFlightRef.current === conversationId) {
+              joinInFlightRef.current = undefined;
+              setJoinRequestPending(false);
+            }
+            if (selectedIdRef.current === conversationId) setConnectionStatus('ready');
+            if (selectedIdRef.current === conversationId) {
+              void getChatMessagesApi(conversationId)
+                .then((response) => {
+                  if (selectedIdRef.current === conversationId) {
+                    const page = response.data || [];
+                    hasOlderMessagesRef.current = page.length === 50;
+                    setHasOlderMessages(hasOlderMessagesRef.current);
+                    setMessages((current) => mergeChatMessages(current, page));
+                  }
+                })
+                .catch((error: Error) => showToastRef.current(error.message, 'error'));
+            }
+            processJoinQueue();
+            return;
+          }
+
+          if (payload.event === 'message:new' && isChatMessage(payload.data)) {
+            const message = payload.data;
+            console.info(JSON.stringify({
+              scope: 'chat',
+              event: 'message_new_received',
+              conversationId: message.conversationId,
+              messageId: message.id,
+            }));
+            if (seenMessageIdsRef.current.has(message.id)) return;
+            seenMessageIdsRef.current.add(message.id);
+            if (seenMessageIdsRef.current.size > 2000) {
+              const oldestId = seenMessageIdsRef.current.values().next().value;
+              if (oldestId) seenMessageIdsRef.current.delete(oldestId);
+            }
+
+            setConversations((current) =>
+              updateConversationFromMessage(current, message, currentUserIdRef.current),
+            );
+            const isActiveConversation = selectedIdRef.current === message.conversationId;
+            if (isActiveConversation) {
+              setMessages((current) => mergeChatMessages(current, [message]));
+            }
+
+            if (message.senderId !== currentUserIdRef.current) {
+              messageVersionsRef.current.set(
+                message.conversationId,
+                (messageVersionsRef.current.get(message.conversationId) ?? 0) + 1,
+              );
+              markReadCompletedRef.current.delete(message.conversationId);
+              if (isActiveConversation) markConversationRead(message.conversationId, true);
+            }
+
+            const pendingSend = pendingSendRef.current ?? textRetryRef.current;
+            if (
+              pendingSend &&
+              matchesPendingChatMessage(pendingSend, message, currentUserIdRef.current)
+            ) {
+              pendingSendRef.current = null;
+              textRetryRef.current = null;
+              clearPendingSendTimer();
+              setIsSending(false);
+              const storedDraft = conversationDraftsRef.current.get(pendingSend.conversationId);
+              const storedText = storedDraft ??
+                (selectedIdRef.current === pendingSend.conversationId ? draftRef.current : '');
+              if (shouldClearSubmittedDraft(storedText, pendingSend.draft)) {
+                conversationDraftsRef.current.delete(pendingSend.conversationId);
+                if (selectedIdRef.current === pendingSend.conversationId) {
+                  draftRef.current = '';
+                  setDraft('');
+                }
+              }
+              if (selectedIdRef.current === pendingSend.conversationId) {
+                setShowEmojiPicker(false);
+                if (textareaRef.current) {
+                  textareaRef.current.style.height = '40px';
+                  textareaRef.current.focus();
+                }
+              }
+              processJoinQueue();
+            }
+            return;
+          }
+
+          if (
+            payload.event === 'conversation:removed' &&
+            (payload.conversationId || isConversationRemoved(payload.data))
+          ) {
+            const conversationId = payload.conversationId ??
+              (isConversationRemoved(payload.data) ? payload.data.conversationId : '');
+            if (!conversationId) return;
+            removedConversationIdsRef.current.add(conversationId);
+            if (joinInFlightRef.current === conversationId) {
+              joinInFlightRef.current = undefined;
+              setJoinRequestPending(false);
+            }
+            if (pendingSendRef.current?.conversationId === conversationId) {
+              pendingSendRef.current = null;
+              clearPendingSendTimer();
+              setIsSending(false);
+            }
+            if (textRetryRef.current?.conversationId === conversationId) {
+              textRetryRef.current = null;
+            }
+            if (selectedIdRef.current === conversationId) {
+              hasOlderMessagesRef.current = false;
+              loadingOlderMessagesRef.current = false;
+              scrollAdjustmentRef.current = null;
+              setHasOlderMessages(false);
+              setLoadingOlderMessages(false);
+              shouldAutoScrollRef.current = true;
+              setShowEmojiPicker(false);
+            }
+            conversationDraftsRef.current.delete(conversationId);
+            joinedConversationIdsRef.current.delete(conversationId);
+            requestedConversationIdsRef.current.delete(conversationId);
+            joinQueueRef.current = joinQueueRef.current.filter((id) => id !== conversationId);
+            setConversations((current) => current.filter((conversation) => conversation.id !== conversationId));
+            processJoinQueue();
+            if (selectedIdRef.current === conversationId) {
+              selectedIdRef.current = undefined;
+              setSelectedId(undefined);
+              setMessages([]);
+              draftRef.current = '';
+              setDraft('');
+              setConnectionStatus('disconnected');
+            }
+            showToastRef.current('You were removed from this conversation.', 'error');
+            return;
+          }
+
+          if (payload.event === 'chat:error') {
+            showToastRef.current(payload.message || 'Chat error', 'error');
+            const failedJoinId = joinInFlightRef.current;
+            if (failedJoinId) {
+              joinInFlightRef.current = undefined;
+              requestedConversationIdsRef.current.delete(failedJoinId);
+              setJoinRequestPending(false);
+              if (selectedIdRef.current === failedJoinId) setConnectionStatus('error');
+              processJoinQueue();
+            } else if (pendingSendRef.current) {
+              pendingSendRef.current = null;
+              clearPendingSendTimer();
+              setIsSending(false);
+              processJoinQueue();
+            } else if (selectedIdRef.current) {
+              setConnectionStatus('error');
+            }
+          }
+        };
+        socket.onclose = () => {
+          if (disposed || activeSocket !== socket) return;
+          activeSocket = null;
+          if (socketRef.current === socket) socketRef.current = null;
+          joinedConversationIdsRef.current.clear();
+          requestedConversationIdsRef.current.clear();
+          joinQueueRef.current = [];
+          joinInFlightRef.current = undefined;
+          if (joinPacingTimer) clearTimeout(joinPacingTimer);
+          joinPacingTimer = undefined;
+          setJoinRequestPending(false);
+          setConnectionStatus('disconnected');
+          if (pendingSendRef.current) {
+            pendingSendRef.current = null;
+            clearPendingSendTimer();
+            setIsSending(false);
+            showToastRef.current('Chat disconnected before delivery was confirmed. Your draft was kept.', 'error');
+          }
+          retryAttempt += 1;
+          const delay = Math.min(1000 * 2 ** (retryAttempt - 1), 15000);
+          retryTimer = setTimeout(connect, delay);
+        };
+        socket.onerror = () => {
+          if (!disposed && activeSocket === socket) {
+            setConnectionStatus('disconnected');
+          }
+        };
+      } catch (error) {
+        showToastRef.current((error as Error).message, 'error');
+        retryAttempt += 1;
+        retryTimer = setTimeout(connect, Math.min(1000 * 2 ** (retryAttempt - 1), 15000));
+      }
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (joinPacingTimer) clearTimeout(joinPacingTimer);
+      queueJoinRef.current = () => {};
+      processJoinQueueRef.current = () => {};
+      clearPendingSendTimer();
+      if (activeSocket) {
+        activeSocket.close();
+      }
+      resetJoinedRooms();
+    };
+  }, [loading, currentUser?.id, markConversationRead]);
 
   async function createConversation(event: FormEvent) {
     event.preventDefault();
-    if (!currentCompany?.id || !memberId) return;
+    const selectedMemberIds = conversationType === 'DIRECT' ? [memberId] : groupMemberIds;
+    if (
+      !currentCompany?.id ||
+      selectedMemberIds.some((id) => !id) ||
+      new Set(selectedMemberIds).size !== selectedMemberIds.length ||
+      (conversationType === 'GROUP' && selectedMemberIds.length < 2)
+    ) return;
     setIsSubmitting(true);
     try {
       const response = await createChatConversationApi({
         organizationId: currentCompany.id,
-        type: 'DIRECT',
-        memberIds: [memberId],
+        type: conversationType,
+        ...(conversationType === 'DIRECT'
+          ? { memberIds: selectedMemberIds }
+          : {
+              memberIds: selectedMemberIds,
+              name: groupName.trim() || null,
+            }),
       });
       const createdConv = response.data;
+      removedConversationIdsRef.current.delete(createdConv.id);
       setConversations((current) => {
         const existingIdx = current.findIndex((c) => c.id === createdConv.id);
         if (existingIdx >= 0) return current;
         return [createdConv, ...current];
       });
-      setSelectedId(createdConv.id);
+      selectConversation(createdConv.id);
       setMemberId('');
+      setGroupMemberIds([]);
+      setGroupName('');
+      setConversationType('DIRECT');
       setShowCreate(false);
       showToast('Conversation ready', 'success');
     } catch (error) {
@@ -378,34 +935,83 @@ export function ChatView() {
     }
   }
 
+  function updateDraftText(text: string) {
+    draftRef.current = text;
+    setDraft(text);
+    const conversationId = selectedIdRef.current;
+    if (!conversationId) return;
+    if (text) conversationDraftsRef.current.set(conversationId, text);
+    else conversationDraftsRef.current.delete(conversationId);
+  }
+
   function handleSendMessage(event?: FormEvent) {
     if (event) event.preventDefault();
-    const content = draft.trim();
-    if (!content || !selectedId || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    const conversationId = selectedIdRef.current;
+    if (!conversationId) return;
+    const socket = socketRef.current;
+    const submittedDraft = conversationId === selectedIdRef.current
+      ? draftRef.current
+      : conversationDraftsRef.current.get(conversationId) ?? '';
+    const content = submittedDraft.trim();
+    if (
+      !content ||
+      isSending ||
+      pendingSendRef.current
+    ) {
+      return;
+    }
 
-    // Send text message through active WebSocket
-    socketRef.current.send(
-      JSON.stringify({ event: 'message:send', conversationId: selectedId, content })
-    );
+    if (
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      !canSendChatMessage(
+        connectionStatus,
+        conversationId,
+        joinRequestPending,
+        isSending,
+      ) ||
+      !joinedConversationIdsRef.current.has(conversationId)
+    ) {
+      return;
+    }
 
-    // If an attachment was queued in the composer, inform user transparently
-    if (pendingAttachment) {
-      showToast(
-        `Note: Message sent. Attachment "${pendingAttachment.file.name}" was not sent because chat file upload API is pending backend implementation (see BACKEND_TEAM_HANDOFF.md).`,
-        'info'
+    const existingRetry = textRetryRef.current;
+    const pendingSend: PendingChatSend = {
+      conversationId,
+      content,
+      draft: submittedDraft,
+      clientMessageId: existingRetry?.conversationId === conversationId &&
+          existingRetry.content === content
+        ? existingRetry.clientMessageId
+        : crypto.randomUUID(),
+    };
+    textRetryRef.current = pendingSend;
+    pendingSendRef.current = pendingSend;
+    setIsSending(true);
+    try {
+      socket.send(JSON.stringify({
+        event: 'message:send',
+        conversationId,
+        content,
+        clientMessageId: pendingSend.clientMessageId,
+      }));
+    } catch (error) {
+      pendingSendRef.current = null;
+      setIsSending(false);
+      showToast((error as Error).message, 'error');
+      return;
+    }
+
+    pendingSendTimerRef.current = setTimeout(() => {
+      if (pendingSendRef.current !== pendingSend) return;
+      pendingSendRef.current = null;
+      setIsSending(false);
+      showToastRef.current(
+        'Message delivery could not be confirmed. Your draft was kept; check the conversation before retrying.',
+        'error',
       );
-      if (pendingAttachment.previewUrl) {
-        URL.revokeObjectURL(pendingAttachment.previewUrl);
-      }
-      setPendingAttachment(null);
-    }
-
-    setDraft('');
-    setShowEmojiPicker(false);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '40px';
-      textareaRef.current.focus();
-    }
+      processJoinQueueRef.current();
+    }, 15000);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -421,51 +1027,16 @@ export function ChatView() {
       const start = el.selectionStart ?? draft.length;
       const end = el.selectionEnd ?? draft.length;
       const newText = draft.slice(0, start) + emoji + draft.slice(end);
-      setDraft(newText);
+      updateDraftText(newText);
       setTimeout(() => {
         el.focus();
         el.setSelectionRange(start + emoji.length, start + emoji.length);
       }, 0);
     } else {
-      setDraft((prev) => prev + emoji);
+      const newText = `${draftRef.current}${emoji}`;
+      updateDraftText(newText);
     }
     setShowEmojiPicker(false);
-  }
-
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (pendingAttachment?.previewUrl) {
-      URL.revokeObjectURL(pendingAttachment.previewUrl);
-    }
-    setPendingAttachment({ file, type: 'file' });
-    e.target.value = '';
-    showToast(
-      `File "${file.name}" selected. Chat attachments require backend API integration (see BACKEND_TEAM_HANDOFF.md).`,
-      'info'
-    );
-  }
-
-  function handleMediaSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (pendingAttachment?.previewUrl) {
-      URL.revokeObjectURL(pendingAttachment.previewUrl);
-    }
-    const previewUrl = URL.createObjectURL(file);
-    setPendingAttachment({ file, type: 'media', previewUrl });
-    e.target.value = '';
-    showToast(
-      `Media "${file.name}" selected. Chat media uploads require backend API integration (see BACKEND_TEAM_HANDOFF.md).`,
-      'info'
-    );
-  }
-
-  function removeAttachment() {
-    if (pendingAttachment?.previewUrl) {
-      URL.revokeObjectURL(pendingAttachment.previewUrl);
-    }
-    setPendingAttachment(null);
   }
 
   // Filter conversations by search term
@@ -481,6 +1052,18 @@ export function ChatView() {
       );
     });
   }, [conversations, searchQuery, currentUser?.id, allUsers]);
+
+  const sendStatusLabel = isSending
+    ? 'Sending...'
+    : connectionStatus === 'connecting' || connectionStatus === 'disconnected'
+      ? 'Reconnecting...'
+      : connectionStatus === 'joining'
+        ? 'Preparing...'
+        : connectionStatus === 'error'
+          ? 'Chat unavailable'
+          : joinRequestPending
+            ? 'Syncing chats...'
+            : 'Send';
 
   return (
     <div className="h-full flex overflow-hidden bg-canvas select-none">
@@ -531,27 +1114,78 @@ export function ChatView() {
               </button>
             </div>
             <select
-              value={memberId}
-              onChange={(e) => setMemberId(e.target.value)}
+              value={conversationType}
+              onChange={(event) => {
+                setConversationType(event.target.value as 'DIRECT' | 'GROUP');
+                setMemberId('');
+                setGroupMemberIds([]);
+              }}
               className="w-full rounded-lg border border-border bg-canvas px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand-primary"
-              required
+              aria-label="Conversation type"
             >
-              <option value="">Select a teammate...</option>
-              {allUsers
-                .filter((u) => u.id !== currentUser.id)
-                .map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.displayName || u.fullName || u.name || 'Teammate'}{' '}
-                    {u.email ? `(${u.email})` : ''} — {u.role || 'Member'}
-                  </option>
-                ))}
+              <option value="DIRECT">Direct message</option>
+              <option value="GROUP">Group conversation</option>
             </select>
+            {conversationType === 'GROUP' && (
+              <input
+                type="text"
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                maxLength={150}
+                placeholder="Group name (optional)"
+                aria-label="Group name"
+                className="w-full rounded-lg border border-border bg-canvas px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand-primary"
+              />
+            )}
+            {conversationType === 'DIRECT' ? (
+              <select
+                value={memberId}
+                onChange={(e) => setMemberId(e.target.value)}
+                className="w-full rounded-lg border border-border bg-canvas px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand-primary"
+                required
+              >
+                <option value="">Select a teammate...</option>
+                {allUsers
+                  .filter((u) => u.id !== currentUser.id)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.displayName || u.fullName || u.name || 'Teammate'}{' '}
+                      {u.email ? `(${u.email})` : ''} — {u.role || 'Member'}
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <label className="block space-y-1 text-[11px] text-text-muted">
+                <span>Choose at least two teammates</span>
+                <select
+                  multiple
+                  value={groupMemberIds}
+                  onChange={(event) => setGroupMemberIds(
+                    Array.from(event.target.selectedOptions, (option) => option.value),
+                  )}
+                  className="h-28 w-full rounded-lg border border-border bg-canvas px-2 py-1.5 text-xs text-text-primary focus:outline-none focus:border-brand-primary"
+                  aria-label="Group participants"
+                  required
+                >
+                  {allUsers
+                    .filter((user) => user.id !== currentUser.id)
+                    .map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName || user.fullName || user.name || 'Teammate'}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
             <button
               className="w-full rounded-lg bg-brand-primary hover:bg-brand-primary/90 text-white py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
               type="submit"
-              disabled={!memberId || isSubmitting}
+              disabled={
+                isSubmitting ||
+                (conversationType === 'DIRECT' ? !memberId : groupMemberIds.length < 2)
+              }
             >
-              {isSubmitting ? 'Starting chat...' : 'Start Conversation'}
+              {isSubmitting ? 'Starting chat...' : `Start ${conversationType === 'GROUP' ? 'Group' : 'Conversation'}`}
             </button>
           </form>
         )}
@@ -599,12 +1233,23 @@ export function ChatView() {
                   Start chat
                 </button>
               )}
+              {!loading && hasMoreConversations && (
+                <button
+                  type="button"
+                  onClick={() => void loadMoreConversations()}
+                  disabled={loadingMoreConversations}
+                  className="w-full rounded-lg px-3 py-2 text-[11px] text-brand-primary hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {loadingMoreConversations ? 'Loading conversations...' : 'Load more conversations'}
+                </button>
+              )}
             </div>
           ) : (
             filteredConversations.map((conv) => {
               const isSelected = selectedId === conv.id;
               const participant = resolveConversationParticipant(conv, currentUser?.id, allUsers);
-              const preview = conv.lastMessage?.content;
+              const preview = conv.lastMessage?.content ||
+              (conv.lastMessage ? 'Message without text' : '');
               const timeFormatted = conv.lastMessage?.createdAt
                 ? formatMessageTimestamp(conv.lastMessage.createdAt)
                 : '';
@@ -612,7 +1257,7 @@ export function ChatView() {
               return (
                 <button
                   key={conv.id}
-                  onClick={() => setSelectedId(conv.id)}
+                  onClick={() => selectConversation(conv.id)}
                   className={`w-full text-left p-2.5 rounded-xl transition-all flex items-center gap-3 group relative ${
                     isSelected
                       ? 'bg-brand-subtle text-brand-text border border-brand-primary/30 shadow-xs'
@@ -683,7 +1328,7 @@ export function ChatView() {
               <div className="flex items-center gap-3 min-w-0">
                 {/* Mobile back button to conversation list */}
                 <button
-                  onClick={() => setSelectedId(undefined)}
+                  onClick={() => selectConversation(undefined)}
                   className="lg:hidden p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
                   title="Back to conversations"
                   aria-label="Back to conversations"
@@ -708,7 +1353,11 @@ export function ChatView() {
                     >
                       {selectedParticipant.displayName}
                     </h2>
-                    {selectedParticipant.role && (
+                    {selected?.type !== 'DIRECT' ? (
+                      <span className="text-[10px] text-text-muted">
+                        {selected?.members?.length ?? 0} participants
+                      </span>
+                    ) : selectedParticipant.role && (
                       <span className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-surface-elevated border border-border text-text-muted">
                         {selectedParticipant.role}
                       </span>
@@ -724,7 +1373,25 @@ export function ChatView() {
             </header>
 
             {/* Message History Container with Avatars beside Message Bubbles */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3"
+            >
+              {loadingOlderMessages && (
+                <div className="py-2 text-center text-[11px] text-text-muted" role="status">
+                  Loading older messages...
+                </div>
+              )}
+              {!loadingOlderMessages && hasOlderMessages && messages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void loadOlderMessages()}
+                  className="mx-auto block rounded-lg px-3 py-1.5 text-[11px] text-brand-primary hover:bg-surface-hover"
+                >
+                  Load older messages
+                </button>
+              )}
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center p-8 text-center text-text-muted space-y-3">
                   <div
@@ -819,7 +1486,7 @@ export function ChatView() {
                               : 'bg-surface border border-border text-text-primary rounded-bl-xs'
                           }`}
                         >
-                          {message.content}
+                          <p>{message.content || 'This message has no text.'}</p>
                         </div>
 
                         {/* Timestamp */}
@@ -859,40 +1526,6 @@ export function ChatView() {
             {/* 3. MESSAGE COMPOSER WITH CONTROLS                         */}
             {/* ========================================================= */}
             <div className="border-t border-border bg-surface flex-shrink-0 relative">
-              {/* Optional Attachment Preview Pill */}
-              {pendingAttachment && (
-                <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-elevated border border-border text-xs text-text-primary max-w-sm shadow-xs animate-fadeIn">
-                    {pendingAttachment.previewUrl ? (
-                      <img
-                        src={pendingAttachment.previewUrl}
-                        alt="attachment preview"
-                        className="w-7 h-7 rounded object-cover border border-border flex-shrink-0"
-                      />
-                    ) : (
-                      <FileText size={16} className="text-brand-primary flex-shrink-0" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium truncate">
-                        {pendingAttachment.file.name}
-                      </p>
-                      <p className="text-[9px] text-text-muted">
-                        {(pendingAttachment.file.size / 1024).toFixed(0)} KB • Draft Attachment
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={removeAttachment}
-                      className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
-                      title="Remove attachment"
-                      aria-label="Remove attachment"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {/* Emoji Picker Popover */}
               {showEmojiPicker && (
                 <div
@@ -927,23 +1560,6 @@ export function ChatView() {
                 </div>
               )}
 
-              {/* Hidden file inputs for Attach File & Attach Media */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={handleFileSelect}
-                aria-label="File upload input"
-              />
-              <input
-                ref={mediaInputRef}
-                type="file"
-                accept="image/*,video/*"
-                className="hidden"
-                onChange={handleMediaSelect}
-                aria-label="Media upload input"
-              />
-
               {/* Main Composer Controls Bar */}
               <form
                 onSubmit={handleSendMessage}
@@ -964,33 +1580,11 @@ export function ChatView() {
                   <Smile size={18} />
                 </button>
 
-                {/* Control 2: File Attachment Button */}
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="h-10 w-10 rounded-xl flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
-                  title="Attach file"
-                  aria-label="Attach file"
-                >
-                  <Paperclip size={18} />
-                </button>
-
-                {/* Control 3: Media Attachment Button */}
-                <button
-                  type="button"
-                  onClick={() => mediaInputRef.current?.click()}
-                  className="h-10 w-10 rounded-xl flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
-                  title="Attach media"
-                  aria-label="Attach media"
-                >
-                  <ImageIcon size={18} />
-                </button>
-
                 {/* Control 4: Auto-resizing Multiline Message Textarea */}
                 <textarea
                   ref={textareaRef}
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={(e) => updateDraftText(e.target.value)}
                   onKeyDown={handleKeyDown}
                   maxLength={4000}
                   rows={1}
@@ -1003,13 +1597,22 @@ export function ChatView() {
                 {/* Control 5: Send Message Button */}
                 <button
                   type="submit"
-                  disabled={!draft.trim()}
+                  disabled={
+                    !draft.trim() ||
+                    isSending ||
+                    !canSendChatMessage(
+                      connectionStatus,
+                      selectedId,
+                      joinRequestPending,
+                      isSending,
+                    )
+                  }
                   className="h-10 px-3.5 sm:px-4 rounded-xl bg-brand-primary hover:bg-brand-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs flex-shrink-0"
-                  title="Send message"
-                  aria-label="Send message"
+                  title={sendStatusLabel}
+                  aria-label={sendStatusLabel}
                 >
                   <Send size={14} />
-                  <span className="hidden sm:inline">Send</span>
+                  <span className="hidden sm:inline">{sendStatusLabel}</span>
                 </button>
               </form>
             </div>

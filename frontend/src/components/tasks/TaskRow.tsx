@@ -196,19 +196,21 @@ export function TaskRow({
 
       {/* 3. Due Date */}
       <div className="flex items-center min-w-0 overflow-hidden" title={task.dueDate ? dateInfo.label : 'No due date'}>
-        <span
-          className={`truncate text-xs ${
-            !task.dueDate || dateInfo.label === '-'
-              ? 'text-text-muted/40 font-mono'
-              : dateInfo.isOverdue
+        {!task.dueDate || dateInfo.label === '-' ? (
+          <span className="text-[11px] text-text-muted/40 font-mono">-</span>
+        ) : (
+          <span
+            className={`truncate text-xs ${
+              dateInfo.isOverdue
                 ? 'text-rose-400 font-semibold'
                 : dateInfo.isDueSoon
                   ? 'text-amber-400 font-medium'
                   : 'text-text-secondary'
-          }`}
-        >
-          {dateInfo.label}
-        </span>
+            }`}
+          >
+            {dateInfo.label}
+          </span>
+        )}
       </div>
 
       {/* 4. Status Badge */}

@@ -4,6 +4,7 @@ import { useApp } from '../../hooks/useApp';
 import { NotificationPopover } from './NotificationPopover';
 import { Avatar } from '../ui/Avatar';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { SidebarTooltip } from '../ui/SidebarTooltip';
 
 export interface TopbarProps {
   onToggleSidebar?: () => void;
@@ -55,14 +56,15 @@ export function Topbar({
         </button>
 
         {isSidebarCollapsed && (
-          <button
-            onClick={onToggleSidebarCollapse}
-            className="hidden lg:flex items-center gap-1.5 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-            title="Expand navigation menu"
-            aria-label="Expand navigation menu"
-          >
-            <PanelLeftOpen size={18} />
-          </button>
+          <SidebarTooltip label="Expand navigation menu">
+            <button
+              onClick={onToggleSidebarCollapse}
+              className="hidden lg:flex items-center gap-1.5 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+              aria-label="Expand navigation menu"
+            >
+              <PanelLeftOpen size={18} />
+            </button>
+          </SidebarTooltip>
         )}
 
         {/* Global Search trigger bar */}

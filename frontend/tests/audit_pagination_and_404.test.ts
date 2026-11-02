@@ -217,26 +217,18 @@ describe('TaskFlow Pro — Audit Log Pagination & 404 Not Found Tests', () => {
     });
   });
 
-  describe('BACKEND_TEAM_HANDOFF.md Compliance', () => {
-    test('BACKEND_TEAM_HANDOFF.md contains all required sections from Section 8', () => {
-      const handoffFile = fs.readFileSync(path.join(__dirname, '../../BACKEND_TEAM_HANDOFF.md'), 'utf8');
+  describe('Chat backend requirement documentation', () => {
+    test('documents the current message acknowledgement gap and proposed contract', () => {
+      const requirements = fs.readFileSync(
+        path.join(__dirname, '../../docs/CHAT_BACKEND_REQUIREMENTS.md'),
+        'utf8'
+      );
 
-      assert.ok(handoffFile.includes('# Backend Team Handoff'), 'Must have # Backend Team Handoff title');
-      assert.ok(handoffFile.includes('## Issue'), 'Must have ## Issue section');
-      assert.ok(handoffFile.includes('## Current API Behavior'), 'Must have ## Current API Behavior section');
-      assert.ok(handoffFile.includes('## Missing Capability'), 'Must have ## Missing Capability section');
-      assert.ok(handoffFile.includes('## Expected Behavior'), 'Must have ## Expected Behavior section');
-      assert.ok(handoffFile.includes('## Recommended Implementation'), 'Must have ## Recommended Implementation section');
-      assert.ok(handoffFile.includes('## Frontend Impact'), 'Must have ## Frontend Impact section');
-    });
-
-    test('BACKEND_TEAM_HANDOFF.md documents Issue 2: Notifications 500 Internal Server Error', () => {
-      const handoffFile = fs.readFileSync(path.join(__dirname, '../../BACKEND_TEAM_HANDOFF.md'), 'utf8');
-
-      assert.ok(handoffFile.includes('GET /api/notifications'), 'Must mention GET /api/notifications');
-      assert.ok(handoffFile.includes('500 (Internal Server Error)'), 'Must mention 500 Internal Server Error');
-      assert.ok(handoffFile.includes('notification.controller.ts'), 'Must reference notification controller');
-      assert.ok(handoffFile.includes('migration'), 'Must reference database migration');
+      assert.ok(requirements.includes('## Current behavior'), 'Must document current chat behavior');
+      assert.ok(requirements.includes('## Missing capability'), 'Must identify the missing acknowledgement capability');
+      assert.ok(requirements.includes('## Proposed contract'), 'Must document the proposed acknowledgement contract');
+      assert.ok(requirements.includes('clientMessageId'), 'Must specify the message correlation ID');
+      assert.ok(requirements.includes('## Frontend workaround'), 'Must document the current frontend limitation');
     });
   });
 
@@ -302,4 +294,3 @@ describe('TaskFlow Pro — Audit Log Pagination & 404 Not Found Tests', () => {
     });
   });
 });
-

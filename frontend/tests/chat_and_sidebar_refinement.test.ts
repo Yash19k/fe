@@ -200,22 +200,16 @@ describe('TaskFlow Pro — Chat UI Refinement & Sidebar Consolidation Tests', ()
   });
 
   // =========================================================================
-  // ISSUE 5: Emoji, File, and Media Controls
+  // ISSUE 5: Emoji and Message Controls
   // =========================================================================
-  describe('Issue 5: Emoji, File, and Media Controls', () => {
-    test('renders emoji, attach file, and attach media buttons in composer', () => {
+  describe('Issue 5: Emoji and Message Controls', () => {
+    test('renders the emoji picker without chat attachment controls', () => {
       assert.ok(
         chatViewContent.includes('title="Emoji"') || chatViewContent.includes('aria-label="Emoji"'),
         'Must render Emoji button'
       );
-      assert.ok(
-        chatViewContent.includes('title="Attach file"') || chatViewContent.includes('aria-label="Attach file"'),
-        'Must render Attach File button'
-      );
-      assert.ok(
-        chatViewContent.includes('title="Attach media"') || chatViewContent.includes('aria-label="Attach media"'),
-        'Must render Attach Media button'
-      );
+      assert.equal(chatViewContent.includes('aria-label="Attach files"'), false);
+      assert.equal(chatViewContent.includes('type="file"'), false);
     });
 
     test('provides functional emoji picker inserting emoji at cursor position', () => {
@@ -229,25 +223,5 @@ describe('TaskFlow Pro — Chat UI Refinement & Sidebar Consolidation Tests', ()
       );
     });
 
-    test('displays pending attachment preview with removal button', () => {
-      assert.ok(
-        chatViewContent.includes('pendingAttachment') && chatViewContent.includes('removeAttachment'),
-        'Must support draft attachment preview and removal'
-      );
-    });
-
-    test('documents missing backend attachment APIs in BACKEND_TEAM_HANDOFF.md', () => {
-      const handoffPath = path.resolve(__dirname, '../../BACKEND_TEAM_HANDOFF.md');
-      assert.ok(fs.existsSync(handoffPath), 'BACKEND_TEAM_HANDOFF.md must exist in root');
-      const handoffContent = fs.readFileSync(handoffPath, 'utf8');
-      assert.ok(
-        handoffContent.includes('Issue 3: Chat Message File and Media Attachment API & Storage Missing'),
-        'Must document missing backend chat attachment capability'
-      );
-      assert.ok(
-        handoffContent.includes('chat_messages'),
-        'Must reference existing chat_messages table constraints'
-      );
-    });
   });
 });

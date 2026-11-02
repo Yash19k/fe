@@ -4,7 +4,15 @@ import { WebSocket, WebSocketServer } from "ws";
 import { AppDataSource } from "../config/data.source";
 import { config } from "../config/config";
 import { User, UserStatus } from "../entities/user.entity";
-import { canAccessConversation, saveMessage, ChatActor, registerRoomEvictor } from "../services/chat.service";
+import {
+  broadcastChatMessage,
+  canAccessConversation,
+  saveMessage,
+  ChatActor,
+  registerChatMessageBroadcaster,
+  registerRoomEvictor,
+  type ChatMessageResponse,
+} from "../services/chat.service";
 
 interface AccessPayload extends JwtPayload {
   userId: string;
@@ -21,6 +29,7 @@ interface ClientEvent {
   event: "conversation:join" | "conversation:leave" | "message:send";
   conversationId?: string;
   content?: string;
+  clientMessageId?: string;
 }
 
 const conversationIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -102,7 +111,59 @@ if (room.size === 0) rooms.delete(conversationId);
 }
 
 registerRoomEvictor(evictUserFromConversationRoom);
+async function broadcastToConversationRoom(
+  conversationId: string,
+  event: string,
+  data: unknown,
+): Promise<number> {
+  const room = rooms.get(conversationId);
+  if (!room) return 0;
+  let emittedCount = 0;
+  await Promise.all(Array.from(room).map(async (memberSocket) => {
+    if (memberSocket.readyState !== WebSocket.OPEN) return;
+    const authorized =
+      (await isActiveActor(memberSocket.actor)) &&
+      (await canAccessConversation(memberSocket.actor, conversationId));
+    if (!authorized) {
+      memberSocket.joined.delete(conversationId);
+      room.delete(memberSocket);
+      try {
+        memberSocket.send(JSON.stringify({
+          event: "conversation:removed",
+          conversationId,
+          message: "You no longer have access to this conversation.",
+        }));
+      } catch {
+        memberSocket.close();
+      }
+      return;
+    }
 
+    try {
+      memberSocket.send(JSON.stringify({ event, data }));
+      emittedCount += 1;
+    } catch {
+      memberSocket.close();
+    }
+  }));
+  if (room.size === 0) rooms.delete(conversationId);
+  return emittedCount;
+}
+
+registerChatMessageBroadcaster(async (message: ChatMessageResponse) => {
+  const recipientCount = await broadcastToConversationRoom(
+    message.conversationId,
+    "message:new",
+    message,
+  );
+  console.info(JSON.stringify({
+    scope: "chat",
+    event: "message_new_broadcast_complete",
+    conversationId: message.conversationId,
+    messageId: message.id,
+    recipientCount,
+  }));
+});
 export function attachChatWebSocket(server: HttpServer) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
@@ -198,24 +259,24 @@ export function attachChatWebSocket(server: HttpServer) {
           sendError(socket, "Join the conversation before sending messages.");
           return;
         }
-        if (typeof event.content !== "string" || event.content.trim().length === 0 || event.content.length > 4000) {
+        if (
+          typeof event.content !== "string" ||
+          event.content.trim().length === 0 ||
+          event.content.length > 4000 ||
+          (event.clientMessageId !== undefined &&
+            (typeof event.clientMessageId !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.clientMessageId)))
+        ) {
           sendError(socket, "Message content must be between 1 and 4000 characters.");
           return;
         }
-        const message = await saveMessage(socket.actor, conversationId, event.content);
-        const payload = JSON.stringify({
-          event: "message:new",
-          data: {
-            id: message.id,
-            conversationId: message.conversationId,
-            senderId: message.senderId,
-            content: message.content,
-            createdAt: message.createdAt.toISOString(),
-          },
-        });
-        for (const memberSocket of rooms.get(conversationId) ?? []) {
-          if (memberSocket.readyState === WebSocket.OPEN) memberSocket.send(payload);
-        }
+        const message = await saveMessage(
+          socket.actor,
+          conversationId,
+          event.content,
+          event.clientMessageId,
+        );
+        await broadcastChatMessage(message);
       })().catch(() => sendError(socket, "Unable to process the chat event."));
     });
     socket.on("close", leaveAllRooms);

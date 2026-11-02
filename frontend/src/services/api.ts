@@ -165,6 +165,7 @@ async function request<T>(
             errData
           );
         }
+        if (retryResponse.status === 204) return undefined as T;
         return retryResponse.json();
       }
     }
@@ -179,6 +180,7 @@ async function request<T>(
       );
     }
 
+    if (response.status === 204) return undefined as T;
     return response.json();
   } catch (err: any) {
     if (err instanceof ApiError) throw err;
@@ -928,6 +930,7 @@ export interface ChatMessage {
   id: string;
   conversationId: string;
   senderId: string;
+  clientMessageId?: string;
   content: string;
   createdAt: string;
   sender?: {
@@ -939,8 +942,16 @@ export interface ChatMessage {
   } | null;
 }
 
-export async function getChatConversationsApi(): Promise<any> {
-  return request<any>('/api/chat/conversations', { method: 'GET' });
+export async function getChatConversationsApi(page = 1, limit = 50): Promise<{ success: boolean; data: ChatConversation[] }> {
+  const query = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return request<{ success: boolean; data: ChatConversation[] }>(`/api/chat/conversations?${query}`, { method: 'GET' });
+}
+
+export async function markChatConversationReadApi(conversationId: string): Promise<void> {
+  await request<void>(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/read`,
+    { method: 'PATCH' },
+  );
 }
 
 export async function createChatConversationApi(payload: {
@@ -951,8 +962,8 @@ export async function createChatConversationApi(payload: {
   participantId?: string;
   memberIds?: string[];
   recipientUserIds?: string[];
-}): Promise<any> {
-  return request<any>('/api/chat/conversations', {
+}): Promise<{ success: boolean; data: ChatConversation }> {
+  return request<{ success: boolean; data: ChatConversation }>('/api/chat/conversations', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -961,11 +972,16 @@ export async function createChatConversationApi(payload: {
 export async function getChatMessagesApi(
   conversationId: string,
   limit = 50,
-  before?: string
-): Promise<any> {
-  let url = `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`;
-  if (before) url += `&before=${encodeURIComponent(before)}`;
-  return request<any>(url, { method: 'GET' });
+  before?: string,
+  beforeId?: string,
+): Promise<{ success: boolean; data: ChatMessage[] }> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before) query.set('before', before);
+  if (beforeId) query.set('beforeId', beforeId);
+  return request<{ success: boolean; data: ChatMessage[] }>(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?${query}`,
+    { method: 'GET' },
+  );
 }
 
 // Helpers & Converters
