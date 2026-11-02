@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteFromCloudinary = exports.uploadToCloudinary = void 0;
+exports.getPrivateCloudinaryUrl = getPrivateCloudinaryUrl;
 const cloudinary_1 = require("cloudinary");
 const app_error_1 = require("../errors/app.error");
 function getCloudinaryClient() {
@@ -18,66 +19,115 @@ function getCloudinaryClient() {
     });
     return cloudinary_1.v2;
 }
-const uploadToCloudinary = (file, folder) => {
+function logCloudinaryUploadFailure(error) {
+    const providerError = typeof error === "object" && error !== null
+        ? error
+        : undefined;
+    const providerCode = typeof providerError?.code === "string" &&
+        /^[a-z0-9_.-]{1,64}$/i.test(providerError.code)
+        ? providerError.code
+        : undefined;
+    const httpCode = providerError?.http_code;
+    console.error(JSON.stringify({
+        scope: "cloudinary",
+        event: "upload_failed",
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        ...(typeof httpCode === "number" && Number.isInteger(httpCode) ? { httpCode } : {}),
+        ...(providerCode ? { providerCode } : {}),
+    }));
+}
+function cloudinaryUploadError(error) {
+    const providerError = typeof error === "object" && error !== null
+        ? error
+        : undefined;
+    switch (providerError?.http_code) {
+        case 401:
+            return new app_error_1.AppError("Cloudinary rejected the configured credentials. Verify the server's Cloudinary cloud name, API key, and API secret.", 502, "CLOUDINARY_AUTH_FAILED");
+        case 403:
+            return new app_error_1.AppError("Cloudinary denied this upload. Verify the account permissions and upload access settings.", 502, "CLOUDINARY_ACCESS_DENIED");
+        case 429:
+            return new app_error_1.AppError("Cloudinary is temporarily rate-limiting uploads. Please retry shortly.", 503, "CLOUDINARY_RATE_LIMITED");
+        default:
+            return new app_error_1.AppError("Unable to upload attachment to Cloudinary.", 502, "CLOUDINARY_UPLOAD_FAILED");
+    }
+}
+const uploadToCloudinary = (file, folder, options = {}) => {
     const client = getCloudinaryClient();
-    const resourceType = file.mimetype.startsWith("image/")
-        ? "image"
-        : file.mimetype.startsWith("video/")
-            ? "video"
-            : "raw";
+    const resourceType = options.resourceType ??
+        (file.mimetype.startsWith("image/")
+            ? "image"
+            : file.mimetype.startsWith("video/")
+                ? "video"
+                : "raw");
+    const uploadOptions = {
+        folder,
+        resource_type: resourceType,
+        type: options.deliveryType ?? "upload",
+        use_filename: !options.publicId,
+        unique_filename: true,
+        overwrite: false,
+        ...(options.publicId ? { public_id: options.publicId } : {}),
+    };
+    const toAsset = (result) => {
+        if (!result?.public_id ||
+            !result.secure_url ||
+            !result.resource_type ||
+            !Number.isFinite(result.bytes)) {
+            throw new app_error_1.AppError("Cloudinary returned incomplete upload metadata.", 502, "BAD_GATEWAY");
+        }
+        return {
+            publicId: result.public_id,
+            secureUrl: result.secure_url,
+            resourceType: result.resource_type,
+            bytes: result.bytes,
+            format: result.format,
+            width: result.width,
+            height: result.height,
+        };
+    };
     if (file.path) {
         return client.uploader
-            .upload(file.path, {
-            folder,
-            resource_type: resourceType,
-            use_filename: true,
-            unique_filename: true,
-            overwrite: false,
-        })
-            .then((result) => {
-            if (!result?.public_id ||
-                !result.secure_url ||
-                !result.resource_type ||
-                !Number.isFinite(result.bytes)) {
-                throw new app_error_1.AppError("Cloudinary returned incomplete upload metadata", 502, "BAD_GATEWAY");
-            }
-            return {
-                publicId: result.public_id,
-                secureUrl: result.secure_url,
-                resourceType: result.resource_type,
-                bytes: result.bytes,
-            };
+            .upload(file.path, uploadOptions)
+            .then(toAsset)
+            .catch((error) => {
+            if (error instanceof app_error_1.AppError)
+                throw error;
+            logCloudinaryUploadFailure(error);
+            throw cloudinaryUploadError(error);
         });
     }
     return new Promise((resolve, reject) => {
-        const stream = client.uploader.upload_stream({
-            folder,
-            resource_type: resourceType,
-            use_filename: true,
-            unique_filename: true,
-            overwrite: false,
-        }, (error, result) => {
-            if (error)
-                return reject(error);
-            if (!result?.public_id ||
-                !result.secure_url ||
-                !result.resource_type ||
-                !Number.isFinite(result.bytes)) {
-                return reject(new app_error_1.AppError("Cloudinary returned incomplete upload metadata", 502, "BAD_GATEWAY"));
+        const stream = client.uploader.upload_stream(uploadOptions, (error, result) => {
+            if (error) {
+                logCloudinaryUploadFailure(error);
+                reject(cloudinaryUploadError(error));
+                return;
             }
-            resolve({
-                publicId: result.public_id,
-                secureUrl: result.secure_url,
-                resourceType: result.resource_type,
-                bytes: result.bytes,
-            });
+            try {
+                resolve(toAsset(result));
+            }
+            catch (validationError) {
+                reject(validationError);
+            }
         });
         stream.end(file.buffer);
     });
 };
 exports.uploadToCloudinary = uploadToCloudinary;
-const deleteFromCloudinary = (publicId, resourceType) => {
+const deleteFromCloudinary = (publicId, resourceType, deliveryType = "upload") => {
     const client = getCloudinaryClient();
-    return client.uploader.destroy(publicId, { resource_type: resourceType });
+    return client.uploader.destroy(publicId, {
+        resource_type: resourceType,
+        type: deliveryType,
+    });
 };
 exports.deleteFromCloudinary = deleteFromCloudinary;
+function getPrivateCloudinaryUrl(publicId, format, resourceType, download) {
+    const client = getCloudinaryClient();
+    return client.utils.private_download_url(publicId, format, {
+        resource_type: resourceType,
+        type: "authenticated",
+        expires_at: Math.floor(Date.now() / 1000) + 300,
+        attachment: download,
+    });
+}

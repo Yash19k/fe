@@ -15,7 +15,7 @@ const member_invitation_entity_1 = require("../entities/member-invitation.entity
 const organization_entity_1 = require("../entities/organization.entity");
 const user_entity_1 = require("../entities/user.entity");
 const app_error_1 = require("../errors/app.error");
-const auth_session_service_1 = require("./auth-session.service");
+const auth_session_service_1 = require("./auth.session.service");
 const mail_service_1 = require("./mail.service");
 function hashToken(token) {
     return (0, crypto_1.createHash)("sha256").update(token).digest("hex");

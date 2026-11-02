@@ -5,9 +5,10 @@ exports.resetPasswordController = resetPasswordController;
 const user_validator_1 = require("../validations/user.validator");
 const password_reset_service_1 = require("../services/password-reset.service");
 const app_error_1 = require("../errors/app.error");
+const config_1 = require("../config/config");
 const authCookieOptions = {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: config_1.config.cookieSameSite,
     secure: process.env.NODE_ENV === "production",
     path: "/",
 };

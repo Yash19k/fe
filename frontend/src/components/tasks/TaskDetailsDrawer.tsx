@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
-  Clock,
   Trash2,
   CheckCircle2,
   AlertTriangle,
@@ -29,6 +28,7 @@ import { Dialog } from '../ui/Dialog';
 import { evaluateTaskSla } from '../../domain/sla';
 import { formatRecurrenceRule, generateNextOccurrences } from '../../domain/recurrence';
 import { isTaskBlocked, getBlockingTasks, getPredecessorTasks, getSuccessorTasks } from '../../domain/dependencyGraph';
+import { diffBusinessDays } from '../../domain/businessDays';
 import { WORK_ITEM_TYPES, WORK_ITEM_TYPE_LIST, BUG_SEVERITIES } from '../../domain/workItems';
 import { getEligibleParents, getChildWorkItems } from '../../domain/hierarchy';
 import { Task, WorkItemType, Priority, BugSeverity } from '../../types';
@@ -53,7 +53,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     toggleSubtask,
     deleteSubtask,
     addComment,
-    logTimeEntry,
     addDependency,
     removeDependency,
     escalateTask,
@@ -77,14 +76,12 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   const [newCommentText, setNewCommentText] = useState('');
   const [selectedPredId, setSelectedPredId] = useState('');
 
-  // Live timer state
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [timerSeconds, setTimerSeconds] = useState(0);
-
   // Recurrence state
-  const [recFrequency, setRecFrequency] = useState<string>(task.recurrenceRule?.frequency || 'none');
-  const [recInterval, setRecInterval] = useState<number | string>(task.recurrenceRule?.interval || 1);
-  const [recWeekdaysOnly, setRecWeekdaysOnly] = useState<boolean>(Boolean(task.recurrenceRule?.weekdaysOnly));
+  const recurrenceRule = task.recurrenceRule;
+  const hasRecurrenceData = task.recurrence !== undefined || recurrenceRule !== undefined;
+  const recFrequency = hasRecurrenceData ? recurrenceRule?.frequency || 'none' : null;
+  const recInterval = recurrenceRule?.interval || 1;
+  const recWeekdaysOnly = Boolean(recurrenceRule?.weekdaysOnly);
 
   // --- DRAFT STATE FOR EXPLICIT SAVE & CANCEL (Section 15) ---
   const initialDraft = useMemo(() => ({
@@ -192,19 +189,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     draft.dueDate <= draft.startDate
       ? 'Due date must be later than start date.'
       : null;
-
-  // Live timer tick
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (isTimerRunning) {
-      interval = setInterval(() => {
-        setTimerSeconds((prev) => prev + 1);
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isTimerRunning]);
 
   const currentType = draft.type;
   const slaInfo = evaluateTaskSla(task, undefined, currentWorkflow);
@@ -337,12 +321,42 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         updates.environment = draft.environment;
       }
 
+      if (draft.startDate && draft.dueDate) {
+        updates.plannedDurationWorkingDays = diffBusinessDays(draft.startDate, draft.dueDate);
+      }
+
       const result = await updateTask(task.id, updates, snapshotVersion);
       if (result?.conflict) return;
       if (result && !result.success && result.reason) {
         showToast(toUserFriendlyErrorMessage(result.reason, 'Failed to save work item changes'), 'error');
-      } else if (result?.success && result.task?.version) {
-        setSnapshotVersion(result.task.version);
+      } else if (result?.success && result.task) {
+        if (result.task.version) {
+          setSnapshotVersion(result.task.version);
+        }
+        setDraft({
+          title: result.task.title || '',
+          description: result.task.description || '',
+          type: (result.task.type || WORK_ITEM_TYPES.TASK) as WorkItemType,
+          status: result.task.status || '',
+          priority: (result.task.priority || '') as Priority | '',
+          assigneeId: result.task.assigneeId || '',
+          assigneeIds: (result.task.assigneeIds && result.task.assigneeIds.length > 0)
+            ? [...result.task.assigneeIds]
+            : (result.task.assigneeId ? [result.task.assigneeId] : []),
+          labels: result.task.labels ? [...result.task.labels] : [],
+          startDate: toDateInputValue(result.task.startDate),
+          dueDate: toDateInputValue(result.task.dueDate),
+          estimateHours: result.task.estimateHours !== null && result.task.estimateHours !== undefined ? result.task.estimateHours : '',
+          parentId: result.task.parentId || '',
+          businessGoal: result.task.businessGoal || '',
+          successCriteria: result.task.successCriteria || '',
+          acceptanceCriteria: result.task.acceptanceCriteria || '',
+          severity: (result.task.severity || 'Medium') as BugSeverity,
+          stepsToReproduce: result.task.stepsToReproduce || '',
+          expectedBehavior: result.task.expectedBehavior || '',
+          actualBehavior: result.task.actualBehavior || '',
+          environment: result.task.environment || '',
+        });
       }
     } catch (err: any) {
       showToast(toUserFriendlyErrorMessage(err, 'Failed to save work item changes'), 'error');
@@ -401,25 +415,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     if (!selectedPredId) return;
     addDependency(selectedPredId, task.id);
     setSelectedPredId('');
-  }
-
-  function handleStopTimer() {
-    setIsTimerRunning(false);
-    if (timerSeconds >= 10) {
-      const minutes = Math.max(1, Math.round(timerSeconds / 60));
-      logTimeEntry(task.id, minutes, 'Live working session');
-    }
-    setTimerSeconds(0);
-  }
-
-  function handleSaveRecurrence() {
-    const rule = {
-      frequency: recFrequency,
-      interval: Number(recInterval) || 1,
-      weekdaysOnly: recWeekdaysOnly,
-      endCondition: 'never',
-    };
-    updateTask(task.id, { recurrenceRule: rule }, snapshotVersion);
   }
 
   return (
@@ -581,7 +576,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               className="w-full h-7 rounded bg-surface border border-border px-1.5 text-xs text-text-primary focus:outline-none"
             >
               <option value="">No priority</option>
-              <option value="Urgent">Urgent</option>
               <option value="High">High</option>
               <option value="Medium">Medium</option>
               <option value="Low">Low</option>
@@ -720,74 +714,33 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
         {/* --- TYPE-SPECIFIC FIELDS --- */}
 
         {/* 1. Epic Fields */}
-        {currentType === WORK_ITEM_TYPES.EPIC && (
+        {currentType === WORK_ITEM_TYPES.EPIC && childWorkItems.length > 0 && (
           <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border space-y-3 text-xs">
-            <h4 className="font-semibold text-text-primary uppercase tracking-wider text-[11px]">
-              Epic Specifications
-            </h4>
             <div>
-              <label className="text-text-muted block mb-1">Business Goal</label>
-              <input
-                type="text"
-                value={draft.businessGoal}
-                onChange={(e) => setDraft((prev) => ({ ...prev, businessGoal: e.target.value }))}
-                placeholder="Strategic goal or business value..."
-                className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-              />
-            </div>
-            <div>
-              <label className="text-text-muted block mb-1">Success Criteria</label>
-              <textarea
-                value={draft.successCriteria}
-                onChange={(e) => setDraft((prev) => ({ ...prev, successCriteria: e.target.value }))}
-                rows={2}
-                placeholder="Measurable outcomes..."
-                className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-              />
-            </div>
-            {childWorkItems.length > 0 && (
-              <div className="pt-2 border-t border-border">
-                <span className="text-[11px] text-text-muted block mb-1.5 font-medium">
-                  Associated Work Items ({childWorkItems.length})
-                </span>
-                <div className="space-y-1">
-                  {childWorkItems.map((child) => (
-                    <div
-                      key={child.id}
-                      onClick={() => openTaskDrawer(child.id)}
-                      className="flex items-center justify-between p-1.5 rounded bg-surface hover:bg-surface-hover cursor-pointer border border-border text-[11px]"
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
-                        <span className="truncate">{child.title}</span>
-                      </div>
-                      <StatusBadge
-                        status={child.status}
-                        label={getStatusNameForTask(currentWorkflow, child)}
-                        color={findWorkflowStatus(currentWorkflow, child.status)?.color}
-                        size="sm"
-                      />
+              <span className="text-[11px] text-text-muted block mb-1.5 font-medium">
+                Associated Work Items ({childWorkItems.length})
+              </span>
+              <div className="space-y-1">
+                {childWorkItems.map((child) => (
+                  <div
+                    key={child.id}
+                    onClick={() => openTaskDrawer(child.id)}
+                    className="flex items-center justify-between p-1.5 rounded bg-surface hover:bg-surface-hover cursor-pointer border border-border text-[11px]"
+                  >
+                    <div className="flex items-center gap-1.5 truncate">
+                      <WorkItemTypeBadge type={child.type} size="sm" showLabel={false} />
+                      <span className="truncate">{child.title}</span>
                     </div>
-                  ))}
-                </div>
+                    <StatusBadge
+                      status={child.status}
+                      label={getStatusNameForTask(currentWorkflow, child)}
+                      color={findWorkflowStatus(currentWorkflow, child.status)?.color}
+                      size="sm"
+                    />
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* 2. Story Fields */}
-        {currentType === WORK_ITEM_TYPES.STORY && (
-          <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border space-y-2 text-xs">
-            <h4 className="font-semibold text-text-primary uppercase tracking-wider text-[11px]">
-              Acceptance Criteria
-            </h4>
-            <textarea
-              value={draft.acceptanceCriteria}
-              onChange={(e) => setDraft((prev) => ({ ...prev, acceptanceCriteria: e.target.value }))}
-              rows={2}
-              placeholder="Given... When... Then... criteria"
-              className="w-full rounded-lg bg-surface border border-border px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-            />
+            </div>
           </div>
         )}
 
@@ -898,7 +851,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               <p className="text-[11px] text-text-muted">
                 <span>{slaInfo.label || 'SLA status unavailable'}</span>
                 {slaDeadline && (
-                  <span> · Deadline: {slaDeadline.toLocaleString()}</span>
+                  <span> · Deadline: {slaDeadline.toLocaleDateString()}</span>
                 )}
                 {slaInfo.remainingHours !== undefined && slaInfo.remainingHours !== null && !slaInfo.isBreached && (
                   <span> · {Math.ceil(slaInfo.remainingHours)}h remaining</span>
@@ -909,7 +862,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
               </p>
               {task.sla?.escalatedAt && (
                 <p className="text-[11px] text-text-muted">
-                  Escalated {new Date(task.sla.escalatedAt).toLocaleString()}
+                  Escalated {new Date(task.sla.escalatedAt).toLocaleDateString()}
                   {task.sla.escalationReason ? ` · ${task.sla.escalationReason}` : ''}
                 </p>
               )}
@@ -937,7 +890,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 ? [{ id: 'subtasks', label: `Subtasks (${completedSubtasks}/${subtasksList.length})`, icon: CheckCircle2 }]
                 : []),
               { id: 'dependencies', label: `Dependencies (${predecessors.length + successors.length})`, icon: Network },
-              { id: 'time', label: `Time (${task.actualHours}/${task.estimateHours}h)`, icon: Clock },
               { id: 'recurrence', label: 'Recurrence', icon: Repeat },
               { id: 'comments', label: `Comments (${task.comments?.length || 0})`, icon: MessageSquare },
             ].map((t) => {
@@ -1145,52 +1097,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
             </div>
           )}
 
-          {/* Time Tracking Tab */}
-          {activeTab === 'time' && (
-            <div className="pt-3 space-y-4 text-xs">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-surface-elevated border border-border">
-                <div>
-                  <span className="text-text-muted text-[11px] block">Tracked vs Estimated</span>
-                  <p className="text-sm font-bold text-text-primary">
-                    {task.actualHours || 0}h / {task.estimateHours || 0}h
-                  </p>
-                </div>
-                <div>
-                  {isTimerRunning ? (
-                    <Button variant="danger" size="sm" onClick={handleStopTimer}>
-                      Stop ({Math.floor(timerSeconds / 60)}:{String(timerSeconds % 60).padStart(2, '0')})
-                    </Button>
-                  ) : (
-                    <Button variant="secondary" size="sm" onClick={() => setIsTimerRunning(true)}>
-                      Start Timer
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Logged Sessions */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] text-text-muted block font-medium">Logged Sessions</span>
-                {(task.timeEntries || []).length === 0 ? (
-                  <p className="text-text-muted italic">No time logs recorded yet.</p>
-                ) : (
-                  (task.timeEntries || []).map((te) => (
-                    <div
-                      key={te.id}
-                      className="flex items-center justify-between p-2 rounded bg-surface-elevated border border-border text-[11px]"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Clock size={12} className="text-brand-primary" />
-                        <span className="text-text-secondary">{te.note || 'Logged work'}</span>
-                      </div>
-                      <span className="font-mono text-text-primary">{te.durationMinutes}m</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Recurrence Tab */}
           {activeTab === 'recurrence' && (
             <div className="pt-3 space-y-3 text-xs">
@@ -1198,10 +1104,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <div>
                   <label className="text-text-muted block mb-1">Frequency</label>
                   <select
-                    value={recFrequency}
-                    onChange={(e) => setRecFrequency(e.target.value)}
+                    value={recFrequency || 'unavailable'}
+                    disabled
                     className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
                   >
+                    {!recFrequency && <option value="unavailable">Unavailable</option>}
                     <option value="none">One-time (Does not repeat)</option>
                     <option value="daily">Daily</option>
                     <option value="weekly_monday">Weekly on Monday</option>
@@ -1218,22 +1125,28 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                     type="number"
                     min="1"
                     max="30"
-                    value={recInterval}
-                    onChange={(e) => setRecInterval(e.target.value)}
-                    disabled={recFrequency === 'weekly_monday' || recFrequency === 'monthly_first_day' || recFrequency === 'monthly_last_friday'}
+                    value={hasRecurrenceData ? recInterval : ''}
+                    disabled
+                    placeholder="Unavailable"
                     className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none disabled:opacity-50"
                   />
                 </div>
               </div>
 
-              {recFrequency !== 'none' && (
+              {!hasRecurrenceData && (
+                <p className="text-[11px] text-text-muted">
+                  Recurrence data is not included in the backend task retrieval response.
+                </p>
+              )}
+
+              {hasRecurrenceData && recFrequency !== 'none' && (
                 <div className="space-y-2.5">
                   {recFrequency === 'daily' && (
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary">
+                    <label className="flex items-center gap-2 text-xs text-text-secondary">
                       <input
                         type="checkbox"
                         checked={recWeekdaysOnly}
-                        onChange={(e) => setRecWeekdaysOnly(e.target.checked)}
+                        disabled
                         className="w-3.5 h-3.5 rounded border-border text-brand-primary"
                       />
                       <span>Weekdays only (skip Saturday & Sunday)</span>
@@ -1243,7 +1156,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                   <div className="p-2.5 rounded-lg bg-surface-elevated border border-border space-y-1">
                     <span className="text-[11px] text-text-muted block">Schedule Summary</span>
                     <p className="text-xs font-semibold text-brand-primary">
-                      {formatRecurrenceRule({ frequency: recFrequency, interval: Number(recInterval), weekdaysOnly: recWeekdaysOnly })}
+                      {formatRecurrenceRule(recurrenceRule)}
+                    </p>
+                    <p className="text-[11px] text-text-secondary">
+                      Starts {task.recurrence?.startsOn || 'date unavailable'}
+                      {' · Ends '}
+                      {task.recurrence?.endsOn || 'never'}
+                      {' · '}
+                      {task.recurrence?.timezone || 'timezone unavailable'}
                     </p>
                   </div>
 
@@ -1255,11 +1175,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                         {generateNextOccurrences(
                           {
                             ...task,
-                            recurrenceRule: {
-                              frequency: recFrequency,
-                              interval: Number(recInterval),
-                              weekdaysOnly: recWeekdaysOnly,
-                            },
+                            recurrenceRule,
                           },
                           3
                         ).map((occ) => (
@@ -1274,9 +1190,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 </div>
               )}
 
-              <Button variant="primary" size="sm" onClick={handleSaveRecurrence}>
-                Save Recurrence
-              </Button>
+              <p className="text-[11px] text-text-muted">
+                Recurrence editing is unavailable because the backend does not support recurrence updates.
+              </p>
             </div>
           )}
 

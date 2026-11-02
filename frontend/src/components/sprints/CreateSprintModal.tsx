@@ -156,10 +156,18 @@ export function CreateSprintModal({ isOpen, onClose }: CreateSprintModalProps) {
       if (res.success) {
         handleClose();
       } else {
-        setServerError(res.reason || 'Failed to create sprint. Please try again.');
+        const errorMsg =
+          selectedTaskIds.size === 0
+            ? 'Please select at least one work item.'
+            : (res.reason || 'Failed to create sprint. Please try again.');
+        setServerError(errorMsg);
       }
     } catch (err: any) {
-      setServerError(err.message || 'An unexpected error occurred while creating sprint.');
+      const errorMsg =
+        selectedTaskIds.size === 0
+          ? 'Please select at least one work item.'
+          : (err?.message || 'An unexpected error occurred while creating sprint.');
+      setServerError(errorMsg);
     } finally {
       setIsSubmitting(false);
     }

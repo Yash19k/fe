@@ -1,4 +1,4 @@
-import { IsNull, QueryFailedError } from "typeorm";
+import { QueryFailedError } from "typeorm";
 import { AppDataSource } from "../config/data.source";
 import { ChatConversation, ChatConversationType } from "../entities/chat-conversation.entity";
 import { ChatConversationMember } from "../entities/chat-conversation-member.entity";
@@ -9,6 +9,56 @@ import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
 
 export interface ChatActor { id: string; organizationId?: string; role: string; }
+export interface ChatMessageResponse {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  clientMessageId?: string | null;
+  content: string;
+  createdAt: string;
+  sender?: { id: string; fullName: string | null; email: string } | null;
+}
+
+type ChatMessageBroadcaster = (message: ChatMessageResponse) => Promise<void> | void;
+let messageBroadcaster: ChatMessageBroadcaster | null = null;
+
+export function registerChatMessageBroadcaster(broadcaster: ChatMessageBroadcaster): void {
+  messageBroadcaster = broadcaster;
+}
+
+export async function broadcastChatMessage(message: ChatMessageResponse): Promise<void> {
+  if (!messageBroadcaster) return;
+  try {
+    await messageBroadcaster(message);
+  } catch (error) {
+    console.error(JSON.stringify({
+      scope: "chat",
+      event: "message_new_broadcast_failed",
+      conversationId: message.conversationId,
+      messageId: message.id,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
+  }
+}
+
+export function serializeChatMessage(message: ChatMessage): ChatMessageResponse {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    senderId: message.senderId,
+    ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
+    content: message.content,
+    createdAt: message.createdAt.toISOString(),
+    sender: message.sender
+      ? {
+          id: message.sender.id,
+          fullName: message.sender.fullName,
+          email: message.sender.email,
+        }
+      : null,
+  };
+}
+
 export interface CreateConversationInput {
   organizationId?: string;
   participantId?: string;
@@ -72,6 +122,9 @@ export async function createConversation(actor: ChatActor, input: CreateConversa
   if (input.type === ChatConversationType.DIRECT &&
       (input.projectId || memberIds.length !== 2 || memberIds[0] === memberIds[1])) {
     throw new AppError("A direct conversation must contain exactly one other user.", 400, "INVALID_DIRECT_CONVERSATION");
+  }
+  if (input.type === ChatConversationType.GROUP && memberIds.length < 3) {
+    throw new AppError("A group conversation must include at least two other participants.", 400, "INVALID_GROUP_CONVERSATION");
   }
   const validUsers = await AppDataSource.getRepository(User).find({
     where: memberIds.map((id) => ({ id, organizationId: actor.organizationId, status: UserStatus.ACTIVE })),
@@ -190,16 +243,10 @@ export async function listConversations(
     .addOrderBy("message.id", "DESC")
     .getMany();
 
-  const lastMessageMap = new Map<string, { id: string; content: string; createdAt: Date; senderId: string }>();
+  const lastMessageMap = new Map<string, ChatMessage>();
   for (const msg of latestMessages) {
-    lastMessageMap.set(msg.conversationId, {
-      id: msg.id,
-      content: msg.content,
-      createdAt: msg.createdAt,
-      senderId: msg.senderId,
-    });
+    lastMessageMap.set(msg.conversationId, msg);
   }
-
   const unreadCountMap = new Map<string, number>();
   const unreadCounts = await messages()
     .createQueryBuilder("message")
@@ -227,7 +274,10 @@ export async function listConversations(
   return result.map((conversation) => {
     const currentMember = conversation.members.find((member) => member.userId === actor.id);
     const other = conversation.members.find((member) => member.userId !== actor.id)?.user;
-    const lastMessage = lastMessageMap.get(conversation.id) || null;
+    const lastMessageEntity = lastMessageMap.get(conversation.id);
+    const lastMessage = lastMessageEntity
+      ? serializeChatMessage(lastMessageEntity)
+      : null;
     const unreadCount = unreadCountMap.get(conversation.id) || 0;
 
     return {
@@ -277,27 +327,87 @@ export async function removeMember(actor: ChatActor, conversationId: string, use
   }
 }
 
-export async function getMessages(actor: ChatActor, conversationId: string, limit: number, before?: Date) {
+export async function getMessages(
+  actor: ChatActor,
+  conversationId: string,
+  limit: number,
+  before?: Date,
+  beforeId?: string,
+) {
   if (!(await canAccessConversation(actor, conversationId))) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
   const query = messages().createQueryBuilder("message")
-    .leftJoinAndSelect("message.sender", "sender")
+    .leftJoin("message.sender", "sender")
     .addSelect(["sender.id", "sender.fullName", "sender.email"])
     .where("message.conversation_id = :conversationId", { conversationId })
     .andWhere("message.deleted_at IS NULL");
-  if (before) query.andWhere("message.created_at < :before", { before });
-  const page = await query.orderBy("message.created_at", "DESC").addOrderBy("message.id", "DESC").take(Math.min(limit, 100)).getMany();
-  return page.reverse();
+  if (before) {
+    if (beforeId) {
+      query.andWhere(
+        "(date_trunc('milliseconds', message.created_at) < :before OR " +
+          "(date_trunc('milliseconds', message.created_at) = :before AND message.id < :beforeId))",
+        { before, beforeId },
+      );
+    } else {
+      query.andWhere("date_trunc('milliseconds', message.created_at) < :before", { before });
+    }
+  }
+  const page = await query
+    .addSelect(
+      "date_trunc('milliseconds', message.createdAt)",
+      "messageCreatedAtMillis",
+    )
+    .orderBy("messageCreatedAtMillis", "DESC")
+    .addOrderBy("message.id", "DESC")
+    .take(Math.min(limit, 100))
+    .getMany();
+  return page.reverse().map(serializeChatMessage);
 }
 
-export async function saveMessage(actor: ChatActor, conversationId: string, content: string) {
+export async function saveMessage(
+  actor: ChatActor,
+  conversationId: string,
+  content: string,
+  clientMessageId?: string,
+) {
   const normalized = content.trim();
   if (!normalized || normalized.length > 4000) throw new AppError("Message content must be between 1 and 4000 characters.", 400, "INVALID_MESSAGE");
   if (!(await canAccessConversation(actor, conversationId))) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-  return AppDataSource.transaction(async (manager) => {
-    const message = await manager.save(ChatMessage, { conversationId, senderId: actor.id, content: normalized });
-    await manager.update(ChatConversation, { id: conversationId }, { lastMessageAt: message.createdAt });
-    return message;
-  });
+  const findByClientId = () => clientMessageId
+    ? messages().findOne({
+        where: { conversationId, senderId: actor.id, clientMessageId },
+        relations: { sender: true },
+      })
+    : Promise.resolve(null);
+  const existing = await findByClientId();
+  if (existing) return serializeChatMessage(existing);
+
+  try {
+    const message = await AppDataSource.transaction(async (manager) => {
+      const created = await manager.save(ChatMessage, {
+        conversationId,
+        senderId: actor.id,
+        content: normalized,
+        clientMessageId: clientMessageId ?? null,
+      });
+      await manager.update(ChatConversation, { id: conversationId }, { lastMessageAt: created.createdAt });
+      return created;
+    });
+    const savedMessage = await messages().findOne({
+      where: { id: message.id },
+      relations: { sender: true },
+    });
+    if (!savedMessage) throw new AppError("Message could not be loaded after saving.", 500, "CHAT_MESSAGE_LOAD_FAILED");
+    return serializeChatMessage(savedMessage);
+  } catch (error) {
+    const driverError = error instanceof QueryFailedError
+      ? (error as QueryFailedError & { driverError?: { code?: string } }).driverError
+      : undefined;
+    if (driverError?.code === "23505" && clientMessageId) {
+      const concurrentlySaved = await findByClientId();
+      if (concurrentlySaved) return serializeChatMessage(concurrentlySaved);
+    }
+    throw error;
+  }
 }
 
 export async function markConversationRead(actor: ChatActor, conversationId: string) {

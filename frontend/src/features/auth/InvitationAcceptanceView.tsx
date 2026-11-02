@@ -139,18 +139,6 @@ export function InvitationAcceptanceView() {
             </Button>
           </form>
         )}
-
-        {!accepted && (
-          <div className="text-center text-xs text-text-muted">
-            <button
-              type="button"
-              onClick={() => navigate('/login')}
-              className="text-brand-primary hover:underline font-semibold"
-            >
-              Back to Sign In
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

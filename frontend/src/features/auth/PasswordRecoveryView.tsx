@@ -1,34 +1,63 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Layers } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ThemeToggle } from '../../components/ui/ThemeToggle';
 import { requestPasswordResetApi, resetPasswordApi } from '../../services/api';
-import { useApp } from '../../hooks/useApp';
 
 interface PasswordRecoveryViewProps {
   mode: 'forgot' | 'reset';
 }
 
 export function PasswordRecoveryView({ mode }: PasswordRecoveryViewProps) {
-  const { navigate } = useApp();
   const [email, setEmail] = useState('');
+  const [isEmailValid, setIsEmailValid] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(() => Date.now());
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const submissionLock = useRef(false);
 
   const isForgotMode = mode === 'forgot';
   const token = new URLSearchParams(window.location.hash.split('?')[1] || '').get('token') || '';
+  const emailKey = email.trim().toLowerCase();
+  const cooldownUntil = cooldowns[emailKey];
+  const remainingSeconds = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
+    : 0;
+  const isCooldownActive = remainingSeconds > 0;
+  const hasActiveCooldown = Object.values(cooldowns).some((expiresAt) => expiresAt > now);
+
+  useEffect(() => {
+    if (!hasActiveCooldown) return;
+
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [hasActiveCooldown]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setSuccess(null);
 
-    if (isForgotMode && !email.trim()) {
-      setError('Enter your account email address.');
+    const submittedEmailKey = email.trim().toLowerCase();
+    if (isForgotMode) {
+      if (!email.trim()) {
+        setError('Enter your account email address.');
+        return;
+      }
+      if (!emailInputRef.current?.validity.valid) {
+        setError('Enter a valid email address.');
+        return;
+      }
+      if (cooldowns[submittedEmailKey] > Date.now() || submissionLock.current) {
+        return;
+      }
+    } else if (submissionLock.current) {
       return;
     }
 
@@ -47,11 +76,20 @@ export function PasswordRecoveryView({ mode }: PasswordRecoveryViewProps) {
       }
     }
 
+    submissionLock.current = true;
     setIsSubmitting(true);
     try {
       if (isForgotMode) {
         const response = await requestPasswordResetApi(email.trim());
-        setSuccess(response.message);
+        const acceptedAt = Date.now();
+        setCooldowns((current) => ({
+          ...current,
+          [submittedEmailKey]: acceptedAt + 30_000,
+        }));
+        setNow(acceptedAt);
+        if (emailInputRef.current?.value.trim().toLowerCase() === submittedEmailKey) {
+          setSuccess(response.message);
+        }
       } else {
         const response = await resetPasswordApi({
           token,
@@ -67,6 +105,7 @@ export function PasswordRecoveryView({ mode }: PasswordRecoveryViewProps) {
           : 'Unable to complete your request. Please try again.',
       );
     } finally {
+      submissionLock.current = false;
       setIsSubmitting(false);
     }
   }
@@ -110,8 +149,14 @@ export function PasswordRecoveryView({ mode }: PasswordRecoveryViewProps) {
               type="email"
               autoComplete="email"
               placeholder="name@taskflow.pro"
+              ref={emailInputRef}
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setIsEmailValid(event.currentTarget.validity.valid);
+                setError(null);
+                setSuccess(null);
+              }}
               required
             />
           ) : (
@@ -135,24 +180,27 @@ export function PasswordRecoveryView({ mode }: PasswordRecoveryViewProps) {
             </>
           )}
 
-          <Button variant="primary" size="lg" className="w-full" type="submit" disabled={isSubmitting}>
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
+            type="submit"
+            disabled={isSubmitting || (isForgotMode && (!isEmailValid || isCooldownActive))}
+          >
             {isSubmitting
               ? 'Please wait...'
               : isForgotMode
-                ? 'Send Reset Instructions'
+                ? cooldownUntil
+                  ? 'Resend Instructions'
+                  : 'Send Reset Instructions'
                 : 'Reset Password'}
           </Button>
+          {isForgotMode && isCooldownActive && (
+            <p role="status" aria-live="polite" className="text-center text-xs text-text-muted">
+              Resend available in 00:{String(remainingSeconds).padStart(2, '0')}
+            </p>
+          )}
         </form>
-
-        <div className="text-center text-xs text-text-muted">
-          <button
-            type="button"
-            onClick={() => navigate('/login')}
-            className="text-brand-primary hover:underline font-semibold"
-          >
-            Back to Sign In
-          </button>
-        </div>
       </div>
     </div>
   );

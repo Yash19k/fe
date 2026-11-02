@@ -26,6 +26,7 @@ import {
   validateRecurrence,
   type RecurrenceInput,
 } from "./recurrence.service";
+import { authorizeWorkItemCreationForActor } from "../middleware/project.permission";
 import { AppError } from "../errors/app.error";
 import { NotificationType } from "../entities/notification.entity";
 import { AuditLog } from "../entities/audit.log.entity";
@@ -109,11 +110,45 @@ export interface UpdateWorkItemInput {
   assigneeIds?: string[] | null;
   labelId?: string | null;
   labels?: string[] | null;
+  recurrence?: RecurrenceInput | null;
 }
 
 function dateOnly(value: string | Date | null | undefined): string | null {
   if (value == null) return null;
   return getProjectDate(value);
+}
+
+function configureRecurrenceRule(
+  rule: WorkItemRecurrence,
+  workItem: WorkItem,
+  input: RecurrenceInput,
+): WorkItemRecurrence {
+  rule.workItem = workItem;
+  rule.frequency = input.frequency;
+  rule.interval = input.interval ?? 1;
+  rule.daysOfWeek =
+    input.frequency === RecurrenceFrequency.WEEKLY
+      ? input.daysOfWeek ?? []
+      : null;
+  rule.monthlyPattern =
+    input.frequency === RecurrenceFrequency.MONTHLY
+      ? input.monthlyPattern ?? null
+      : null;
+  rule.dayOfMonth =
+    input.frequency === RecurrenceFrequency.MONTHLY &&
+    input.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
+      ? input.dayOfMonth ?? null
+      : null;
+  rule.startsOn = input.startsOn;
+  rule.endsOn = input.endsOn ?? null;
+  rule.timezone = DEFAULT_RECURRENCE_TIMEZONE;
+  rule.timeOfDay = RECURRENCE_TIME_OF_DAY;
+  rule.weekdaysOnly =
+    input.frequency === RecurrenceFrequency.DAILY &&
+    Boolean(input.weekdaysOnly);
+  rule.nextRunAt = getInitialOccurrenceRunAt(rule);
+  rule.isActive = rule.nextRunAt !== null;
+  return rule;
 }
 
 function assertWorkItemDateRange(
@@ -427,9 +462,9 @@ export async function createWorkItemOrchestration(
   }
 
   const result = await AppDataSource.transaction(async (manager) => {
-    const project = await assertAccessibleProject(
-      projectId,
+    const project = await authorizeWorkItemCreationForActor(
       actor,
+      projectId,
       manager,
     );
 
@@ -611,37 +646,11 @@ export async function createWorkItemOrchestration(
 
     if (recurrence) {
       const recurrenceRepository = manager.getRepository(WorkItemRecurrence);
-      const timezone = DEFAULT_RECURRENCE_TIMEZONE;
-      const recurrenceRule = recurrenceRepository.create({
-        workItem: savedWorkItem,
-        frequency: recurrence.frequency,
-        interval: recurrence.interval ?? 1,
-        daysOfWeek:
-          recurrence.frequency === RecurrenceFrequency.WEEKLY
-            ? recurrence.daysOfWeek ?? []
-            : null,
-        monthlyPattern:
-          recurrence.frequency === RecurrenceFrequency.MONTHLY
-            ? recurrence.monthlyPattern ?? null
-            : null,
-        dayOfMonth:
-          recurrence.frequency === RecurrenceFrequency.MONTHLY &&
-          recurrence.monthlyPattern === MonthlyPattern.DAY_OF_MONTH
-            ? recurrence.dayOfMonth ?? null
-            : null,
-        startsOn: recurrence.startsOn,
-        endsOn: recurrence.endsOn ?? null,
-        nextRunAt: null,
-        timezone,
-        timeOfDay: RECURRENCE_TIME_OF_DAY,
-        weekdaysOnly:
-          recurrence.frequency === RecurrenceFrequency.DAILY &&
-          Boolean(recurrence.weekdaysOnly),
-        isActive: true,
-      });
-
-      recurrenceRule.nextRunAt = getInitialOccurrenceRunAt(recurrenceRule);
-      recurrenceRule.isActive = recurrenceRule.nextRunAt !== null;
+      const recurrenceRule = configureRecurrenceRule(
+        recurrenceRepository.create(),
+        savedWorkItem,
+        recurrence,
+      );
       savedRecurrence = await recurrenceRepository.save(recurrenceRule);
     }
 
@@ -706,6 +715,15 @@ export async function updateWorkItemOrchestration(
     if (!reference) {
       throw new AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
     }
+    const recurrenceRepository = manager.getRepository(WorkItemRecurrence);
+    const recurrenceRule = body.recurrence !== undefined
+      ? await recurrenceRepository
+          .createQueryBuilder("recurrence")
+          .where('"recurrence"."work_item_id" = :workItemId', { workItemId })
+          .setLock("pessimistic_write")
+          .getOne()
+      : null;
+
     if (touchesSchedule) {
       await lockProjectSchedule(
         manager,
@@ -944,7 +962,37 @@ export async function updateWorkItemOrchestration(
       applySlaState(workItem, new Date(), orgPolicy);
     }
 
+    if (body.recurrence !== undefined) {
+      if (body.recurrence !== null) {
+        validateRecurrence(body.recurrence, workItem.type);
+      }
+      workItem.updatedAt = new Date(
+        Math.max(Date.now(), workItem.updatedAt.getTime() + 1),
+      );
+    }
+
     const savedWorkItem = await manager.getRepository(WorkItem).save(workItem);
+    let savedRecurrence: WorkItemRecurrence | null = recurrenceRule;
+    if (body.recurrence === null) {
+      if (recurrenceRule) {
+        recurrenceRule.isActive = false;
+        recurrenceRule.nextRunAt = null;
+        savedRecurrence = await recurrenceRepository.save(recurrenceRule);
+      }
+    } else if (body.recurrence !== undefined) {
+      savedRecurrence = await recurrenceRepository.save(
+        configureRecurrenceRule(
+          recurrenceRule ?? recurrenceRepository.create(),
+          savedWorkItem,
+          body.recurrence,
+        ),
+      );
+    } else {
+      savedRecurrence = await recurrenceRepository.findOne({
+        where: { workItem: { id: savedWorkItem.id } },
+      });
+    }
+
     const rescheduledTasks = touchesSchedule
       ? await rescheduleAfterTaskEdit(manager, actor, savedWorkItem)
       : [];
@@ -1086,6 +1134,7 @@ export async function updateWorkItemOrchestration(
       assigneeIds: currentAssigneeIds,
       assigneeId: currentAssigneeIds[0] || null,
       assignees: currentAssignments.map((a) => a.user).filter(Boolean),
+      recurrence: savedRecurrence,
       previousAssigneeIds,
     };
   });
@@ -1136,5 +1185,6 @@ export async function updateWorkItemOrchestration(
     assigneeIds: result.assigneeIds,
     assigneeId: result.assigneeId,
     assignees: result.assignees,
+    recurrence: result.recurrence,
   };
 }

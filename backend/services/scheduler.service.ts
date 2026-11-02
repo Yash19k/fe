@@ -27,8 +27,8 @@ function logSchedulerFailure(schedulerName: string, error: unknown): void {
 
   const suppressedCount = previous?.suppressedCount ?? 0;
   console.error(
-    `[${schedulerName}] Job failed${suppressedCount > 0 ? ` (${suppressedCount} repeated failures suppressed)` : ""}:`,
-    error,
+    `[${schedulerName}] Job failed${suppressedCount > 0 ? ` (${suppressedCount} repeated failures suppressed)` : ""}.`,
+    { name: error instanceof Error ? error.name : "UnknownError" },
   );
   schedulerErrorLogs.set(schedulerName, {
     lastLoggedAt: now,

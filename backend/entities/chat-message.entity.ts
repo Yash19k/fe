@@ -5,14 +5,20 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from "typeorm";
 import { ChatConversation } from "./chat-conversation.entity";
 import { User } from "./user.entity";
 
+
 @Entity("chat_messages")
 @Index("IDX_chat_messages_conversation_created", ["conversationId", "createdAt"])
+@Index("UQ_chat_messages_client_message", ["conversationId", "senderId", "clientMessageId"], {
+  unique: true,
+  where: '"client_message_id" IS NOT NULL',
+})
 export class ChatMessage {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
@@ -22,6 +28,9 @@ export class ChatMessage {
 
   @Column({ name: "sender_id", type: "uuid" })
   senderId!: string;
+
+  @Column({ name: "client_message_id", type: "uuid", nullable: true })
+  clientMessageId!: string | null;
 
   @Column({ type: "varchar", length: 4000 })
   content!: string;
@@ -45,4 +54,5 @@ export class ChatMessage {
   @ManyToOne(() => User, { onDelete: "RESTRICT" })
   @JoinColumn({ name: "sender_id" })
   sender!: User;
+
 }

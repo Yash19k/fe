@@ -207,3 +207,40 @@ task-update responses include any rescheduled successors. The dependency GET
 response retains predecessor IDs in `data` and also returns canonical edge
 rows in `dependencies`. DELETE accepts either an edge UUID or the predecessor
 work-item ID used by existing callers.
+
+## Work-item recurrence API
+
+`GET /api/work-items/:workItemId` and
+`GET /api/work-items/project/:projectId` include `recurrence` for each task.
+It is the saved recurrence configuration (including `nextRunAt`, `isActive`,
+and the recurrence settings), or `null` when the task has no recurrence.
+
+Recurrence settings can be replaced through the existing versioned PATCH
+endpoint. The `recurrence` object uses the same fields and validation as task
+creation:
+
+```http
+PATCH /api/work-items/:workItemId
+Content-Type: application/json
+
+{
+  "version": 4,
+  "recurrence": {
+    "frequency": "WEEKLY",
+    "interval": 1,
+    "daysOfWeek": [1, 3],
+    "startsOn": "2030-01-07",
+    "endsOn": "2030-03-31",
+    "timezone": "Asia/Kolkata",
+    "weekdaysOnly": false
+  }
+}
+```
+
+Omit `recurrence` to leave the existing configuration unchanged. Send
+`"recurrence": null` to disable it; the rule remains saved with
+`isActive: false` and `nextRunAt: null`. This preserves occurrence history and
+already generated tasks. Sending a recurrence object updates the existing rule
+or creates one when none exists, recalculates its next run, and returns it in
+the updated task response. A rule with no future eligible occurrence is saved
+inactive with a null `nextRunAt`.

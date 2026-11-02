@@ -1,7 +1,7 @@
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
-import { config } from "../config/config";
+import { config, isAllowedOrigin } from "../config/config";
 import { AppDataSource } from "../config/data.source";
 import { User, UserStatus } from "../entities/user.entity";
 import { getWhiteboard, updateWhiteboard } from "../services/whiteboard.service";
@@ -137,7 +137,7 @@ export function attachWhiteboardSocket(server: HttpServer): Server {
     maxHttpBufferSize: 1_000_000,
     cors: {
       origin: (origin, callback) => {
-        if (!origin || config.corsOrigins.includes(origin)) callback(null, true);
+        if (isAllowedOrigin(origin)) callback(null, true);
         else callback(new Error("Origin is not allowed by CORS"));
       },
       credentials: true,

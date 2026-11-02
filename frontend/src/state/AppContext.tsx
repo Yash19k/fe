@@ -7,9 +7,9 @@ import { calculateScheduleImpact, applyScheduleChanges } from '../domain/schedul
 import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject } from '../domain/permissions';
 import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, getWorkItemVersion, sanitizeWorkItemData } from '../domain/workItems';
-import { createNextRecurringTask } from '../domain/recurrence';
 import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
 import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
+import { diffBusinessDays } from '../domain/businessDays';
 import {
   AppContextValue,
   User,
@@ -55,8 +55,6 @@ import {
   getOrganizationUsersApi,
   getWorkItemCommentsApi,
   addWorkItemCommentApi,
-  getWorkItemTimeEntriesApi,
-  addWorkItemTimeEntryApi,
   getWorkItemDependenciesApi,
   addWorkItemDependencyApi,
   deleteWorkItemDependencyApi,
@@ -81,8 +79,9 @@ import {
   normalizeRole,
   toBackendRole,
   toBackendProjectRole,
-  getAuthToken,
   clearAuthToken,
+  refreshTokenApi,
+  setAuthFailureHandler,
   isPersistedWorkItemId,
   isUuid,
   toUserFriendlyErrorMessage,
@@ -103,12 +102,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<Label[]>(initial.labels || []);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
-  const [isInitializingAuth, setIsInitializingAuth] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return Boolean(getAuthToken() || localStorage.getItem(STORAGE_KEYS.CURRENT_USER));
-    }
-    return false;
-  });
+  const [isInitializingAuth, setIsInitializingAuth] = useState<boolean>(true);
 
   // Navigation & UI state
   const [activeRoute, setActiveRoute] = useState<string>(() => {
@@ -226,6 +220,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [workflowLoadByProjectId, setWorkflowLoadByProjectId] = useState<
     Record<string, { isLoading: boolean; error: string | null }>
   >({});
+
+  const clearAuthenticatedState = useCallback(() => {
+    clearAuthToken();
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem(STORAGE_KEYS.COMPANY);
+    } catch {}
+    setCurrentUser(emptyUser);
+    setCurrentCompany(null);
+    setProjects([]);
+    setTasks([]);
+    setWorkflows([]);
+    setSprints([]);
+    setLabels([]);
+    setAllUsers([]);
+    setAuditLog([]);
+    setNotifications([]);
+    setCurrentProjectId('');
+    lastLoadedProjectIdRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    setAuthFailureHandler(clearAuthenticatedState);
+    return () => setAuthFailureHandler(null);
+  }, [clearAuthenticatedState]);
 
   // Parallelized project asset loader
   const fetchProjectAssets = useCallback(async (projId: string, force: boolean = false) => {
@@ -482,31 +501,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     async function initBackend() {
       try {
-        const token = getAuthToken();
-        const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-        if (!token && !savedUser) {
-          setCurrentUser(emptyUser);
-          setCurrentCompany(null);
-          if (!isCancelled) {
-            setIsInitializingAuth(false);
-            setIsLoadingBackend(false);
-          }
-          return;
-        }
-
         let authRes: any = null;
         try {
+          const token = await refreshTokenApi();
+          if (!token) {
+            if (!isCancelled) clearAuthenticatedState();
+            return;
+          }
           authRes = await currentUserApi();
         } catch (authErr: any) {
-          if (authErr?.code === 'SERVER_UNREACHABLE' || authErr?.status === 0) {
-            console.warn('TaskFlow: Server unreachable during boot auth verification');
-          } else {
-            clearAuthToken();
-            try {
-              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-              localStorage.removeItem(STORAGE_KEYS.COMPANY);
-            } catch {}
-          }
+          console.warn(
+            authErr?.code === 'SERVER_UNREACHABLE' || authErr?.status === 0
+              ? 'TaskFlow: Server unreachable during boot auth verification'
+              : 'TaskFlow: Authentication could not be restored during boot'
+          );
+          if (!isCancelled) clearAuthenticatedState();
           authRes = null;
         }
 
@@ -597,12 +606,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (resolvedProjectId && !isCancelled) {
             await fetchProjectAssets(resolvedProjectId);
           }
-        } else if (!isCancelled) {
-          setCurrentUser(emptyUser);
-          setCurrentCompany(null);
-        }
+        } else if (!isCancelled) clearAuthenticatedState();
       } catch (err: any) {
         console.warn('TaskFlow: Backend initialization notice:', err?.message);
+        if (!isCancelled) clearAuthenticatedState();
       } finally {
         if (!isCancelled) {
           setIsInitializingAuth(false);
@@ -615,7 +622,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isCancelled = true;
     };
-  }, [fetchProjectAssets]);
+  }, [clearAuthenticatedState, fetchProjectAssets]);
 
   useEffect(() => {
     if (!currentProjectId || isInitializingAuth || !currentUser?.id) return;
@@ -894,6 +901,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           sanitized.status || getInitialWorkflowStatus(targetWorkflow)?.name || '',
         ),
         dueDate: sanitized.dueDate || null,
+        ...(sanitized.recurrence ? { recurrence: sanitized.recurrence } : {}),
         assignees: (
           Array.isArray(sanitized.assigneeIds)
             ? sanitized.assigneeIds
@@ -1108,10 +1116,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (updates.status !== undefined) backendUpdates.status = frontendStatusToBackend(updates.status);
       if (updates.type !== undefined) backendUpdates.type = frontendTypeToBackend(updates.type);
       if (updates.priority !== undefined) backendUpdates.priority = frontendPriorityToBackend(updates.priority);
-      if (updates.dueDate !== undefined) backendUpdates.dueDate = updates.dueDate || null;
-      if (updates.startDate !== undefined) backendUpdates.plannedStartDate = updates.startDate || null;
+      const finalDueDate = updates.dueDate !== undefined ? (updates.dueDate || null) : (target.dueDate || null);
+      const finalStartDate = updates.startDate !== undefined ? (updates.startDate || null) : (target.startDate || null);
+
+      if (updates.dueDate !== undefined) {
+        if (updates.dueDate || target.dueDate) {
+          backendUpdates.dueDate = updates.dueDate || null;
+        }
+      }
+      if (updates.startDate !== undefined) {
+        if (updates.startDate || target.startDate) {
+          backendUpdates.plannedStartDate = updates.startDate || null;
+        }
+      }
       if (updates.plannedDurationWorkingDays !== undefined) {
         backendUpdates.plannedDurationWorkingDays = updates.plannedDurationWorkingDays;
+      } else if (finalStartDate && finalDueDate) {
+        const computedDays = diffBusinessDays(finalStartDate, finalDueDate);
+        if (computedDays > 0) {
+          backendUpdates.plannedDurationWorkingDays = computedDays;
+        }
       }
       if (updates.parentId !== undefined) backendUpdates.parentWorkItemId = isPersistedWorkItemId(updates.parentId) ? updates.parentId : null;
       
@@ -1411,14 +1435,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     const isComplete = isWorkflowStatusComplete(currentWorkflow, newStatus);
-    const wasComplete = isWorkflowStatusComplete(currentWorkflow, target.status);
-    const nextRecurring =
-      isComplete && !wasComplete
-        ? createNextRecurringTask(
-            target,
-            getInitialWorkflowStatus(currentWorkflow)?.name || target.status,
-          )
-        : null;
 
     setTasks((prev) => {
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
@@ -1433,22 +1449,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return t;
         });
       }
-      if (nextRecurring) {
-        nextList = [nextRecurring, ...nextList];
-      }
       return nextList;
     });
 
     recordAudit('status_changed', 'task', taskId, `Changed status of "${target.title}" from "${target.status}" to "${newStatus}"`, previousValue, { status: newStatus }, true, target.projectId);
     broadcastEvent('TASK_UPDATED', updated);
 
-    if (nextRecurring) {
-      recordAudit('created', 'task', nextRecurring.id, `Generated next recurring occurrence of "${target.title}" for ${nextRecurring.dueDate || nextRecurring.startDate}`, null, nextRecurring, false, target.projectId);
-      broadcastEvent('TASK_CREATED', nextRecurring);
-      if (!isPersistedWorkItemId(taskId)) {
-        showToast(`Completed "${target.title}". Next occurrence scheduled for ${nextRecurring.dueDate || nextRecurring.startDate}.`, 'success');
-      }
-    } else if (!isPersistedWorkItemId(taskId)) {
+    if (!isPersistedWorkItemId(taskId)) {
       showToast(`Status updated to ${newStatus}`, 'success');
     }
 
@@ -1796,12 +1803,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       startDate: parentTask.startDate,
       dueDate: parentTask.dueDate,
       estimateHours: 2,
-      actualHours: 0,
       dependencyIds: [],
       tags: parentTask.tags || [],
       subtasks: [],
       comments: [],
-      timeEntries: [],
       recurrenceRule: { frequency: 'none' },
       sla: { isBreached: false, isApproaching: false, isEscalated: false },
       version: 1,
@@ -2049,63 +2054,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw err;
     }
   }, [currentUser?.id, recordAudit, showToast]);
-
-  const logTimeEntry = useCallback((taskId: string, durationMinutes: number, description: string = '') => {
-    const hours = Number((durationMinutes / 60).toFixed(2));
-    const entry = {
-      id: `te-${Date.now()}`,
-      userId: currentUser?.id || '',
-      durationMinutes: Number(durationMinutes),
-      hours,
-      description: description.trim(),
-      note: description.trim(),
-      date: new Date().toISOString().split('T')[0],
-      startTime: new Date().toISOString(),
-    };
-
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId) {
-          const existing = t.timeEntries || [];
-          const actualHours = Number(((existing.reduce((sum, e) => sum + (e.durationMinutes ?? (e.hours ? e.hours * 60 : 0)), 0) + entry.durationMinutes) / 60).toFixed(1));
-          return {
-            ...t,
-            actualHours,
-            timeEntries: [...existing, entry],
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      })
-    );
-    showToast(`Logged ${durationMinutes} minutes`, 'success');
-
-    if (isPersistedWorkItemId(taskId)) {
-      addWorkItemTimeEntryApi(taskId, {
-        hours,
-        durationMinutes,
-        note: description.trim(),
-        date: entry.date,
-      }).then((res) => {
-        const serverEntry = res?.data;
-        if (serverEntry?.id) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === taskId
-                ? {
-                    ...t,
-                    timeEntries: (t.timeEntries || []).map((te) => (te.id === entry.id ? { ...te, id: serverEntry.id } : te)),
-                  }
-                : t
-            )
-          );
-        }
-      }).catch((err) => {
-        console.warn('TaskFlow: Backend time entry save notice:', err.message);
-      });
-    }
-  }, [currentUser?.id, showToast]);
 
   const escalateTask = useCallback(async (taskId: string, reason?: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.TRIGGER_ESCALATION)) {
@@ -2711,25 +2659,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutApi().catch(() => null);
-    clearAuthToken();
-    try {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-      localStorage.removeItem(STORAGE_KEYS.COMPANY);
-    } catch {}
-    setCurrentUser(emptyUser);
-    setCurrentCompany(null);
-    setProjects([]);
-    setTasks([]);
-    setSprints([]);
-    setLabels([]);
-    setAllUsers([]);
-    setAuditLog([]);
-    setNotifications([]);
-    setCurrentProjectId('');
-    lastLoadedProjectIdRef.current = null;
+    clearAuthenticatedState();
     showToast('Signed out successfully', 'info');
     navigate('/login');
-  }, [navigate, showToast]);
+  }, [clearAuthenticatedState, navigate, showToast]);
 
   const register = useCallback(async (params: {
     name: string;
@@ -2737,7 +2670,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     password: string;
     companyName?: string;
   }): Promise<boolean> => {
-    const orgName = (params.companyName || `${params.name.trim()}'s Workspace`).trim();
+    const orgName = (params.companyName !== undefined ? params.companyName : `${params.name.trim()}'s Workspace`).trim();
     const res = await registerOrganizationApi({
       user: {
         fullName: params.name.trim(),
@@ -2915,7 +2848,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(`Sprint "${savedSprint.name}" created`, 'success');
       return { success: true, sprint: savedSprint, workItems: returnedWorkItems };
     } catch (err: any) {
-      const errMsg = err?.message || 'Failed to create sprint on server';
+      const isZeroItems = workItemIds.length === 0;
+      const isValidationErr =
+        err?.message === 'Validation failed.' ||
+        err?.message === 'Validation failed' ||
+        err?.code === 'VALIDATION_ERROR';
+      const errMsg =
+        isZeroItems && isValidationErr
+          ? 'Please select at least one work item.'
+          : (err?.message || 'Failed to create sprint on server');
       showToast(errMsg, 'error');
       throw err;
     }
@@ -3022,7 +2963,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addComment,
     pendingSignupPassword,
     setPendingSignupPassword,
-    logTimeEntry,
     escalateTask,
     simulateExternalTaskEdit,
     auditLog,
@@ -3104,7 +3044,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addComment,
     pendingSignupPassword,
     setPendingSignupPassword,
-    logTimeEntry,
     escalateTask,
     simulateExternalTaskEdit,
     auditLog,

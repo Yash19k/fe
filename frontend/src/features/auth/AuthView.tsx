@@ -30,6 +30,24 @@ export function classifyAuthError(err: any): string {
     return 'Invalid email or password.';
   }
 
+  const rawMessage = typeof err?.message === 'string' ? err.message : (typeof err === 'string' ? err : '');
+
+  // Friendly mappings for signup validation errors
+  if (/user\.fullName/i.test(rawMessage)) {
+    if (/length|character/i.test(rawMessage)) {
+      return 'Full Name must be at least 2 characters.';
+    }
+    return 'Full Name is required.';
+  }
+
+  if (/user\.email/i.test(rawMessage)) {
+    return 'Please enter a valid email address.';
+  }
+
+  if (/organization\.name|user\.companyName|companyName/i.test(rawMessage)) {
+    return 'Company / Workspace Name is required.';
+  }
+
   if (
     err?.message &&
     typeof err.message === 'string' &&
@@ -72,8 +90,21 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
     const errs: Record<string, string> = {};
 
-    if (isSignup && !name.trim()) errs.name = 'Full name is required';
-    if (!email.trim() || !email.includes('@')) errs.email = 'Valid email is required';
+    if (isSignup) {
+      if (!name.trim()) {
+        errs.name = 'Full Name is required.';
+      } else if (name.trim().length < 2) {
+        errs.name = 'Full Name must be at least 2 characters.';
+      }
+
+      if (!companyName.trim()) {
+        errs.company = 'Company / Workspace Name is required.';
+      }
+    }
+
+    if (!email.trim() || !email.includes('@')) {
+      errs.email = isSignup ? 'Please enter a valid email address.' : 'Valid email is required';
+    }
     if (!password || password.length < 8) errs.password = 'Password must be at least 8 characters';
     if (isSignup && password !== confirmPassword) errs.confirm = 'Passwords do not match';
 
@@ -105,7 +136,30 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
           navigate('/onboarding/company');
         }
       } catch (err: any) {
-        setAuthError(classifyAuthError(err));
+        const friendlyMessage = classifyAuthError(err);
+        const raw = String(err?.message || '');
+        const isEmailError =
+          /user\.email/i.test(raw) ||
+          friendlyMessage === 'Please enter a valid email address.';
+
+        if (/user\.fullName/i.test(raw)) {
+          const nameMsg = /length|character/i.test(raw)
+            ? 'Full Name must be at least 2 characters.'
+            : 'Full Name is required.';
+          setErrors((prev) => ({ ...prev, name: nameMsg }));
+        }
+        if (isEmailError) {
+          setErrors((prev) => ({ ...prev, email: 'Please enter a valid email address.' }));
+        }
+        if (/organization\.name|user\.companyName|companyName/i.test(raw)) {
+          setErrors((prev) => ({ ...prev, company: 'Company / Workspace Name is required.' }));
+        }
+
+        if (isEmailError) {
+          setAuthError(null);
+        } else {
+          setAuthError(friendlyMessage);
+        }
       } finally {
         setIsSubmitting(false);
       }
@@ -161,7 +215,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
         {/* Standard Auth Form */}
         <form onSubmit={handleAuthSubmit} className="space-y-4">
-          {authError && (
+          {authError && authError !== 'Please enter a valid email address.' && (
             <div
               role="alert"
               aria-live="polite"

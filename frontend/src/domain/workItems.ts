@@ -42,8 +42,8 @@ export function sanitizeWorkItemData<T extends Record<string, any>>(data: T): T 
 
   // Common fields are always retained:
   // id, type, title, description, projectId, sectionId, status, priority,
-  // assigneeId, creatorId, startDate, dueDate, estimateHours, actualHours,
-  // tags, comments, timeEntries, dependencyIds, recurrenceRule, sla, version, etc.
+  // assigneeId, creatorId, startDate, dueDate, estimateHours,
+  // tags, comments, dependencyIds, recurrenceRule, sla, version, etc.
 
   // 1. Hierarchy parent normalization
   if (type === WORK_ITEM_TYPES.EPIC) {

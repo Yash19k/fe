@@ -3,10 +3,11 @@ import type { Request, Response } from "express";
 import { authForgotPasswordSchema, authResetPasswordSchema } from "../validations/user.validator";
 import { requestPasswordReset, resetPassword } from "../services/password-reset.service";
 import { AppError } from "../errors/app.error";
+import { config } from "../config/config";
 
 const authCookieOptions = {
   httpOnly: true,
-  sameSite: "lax" as const,
+  sameSite: config.cookieSameSite,
   secure: process.env.NODE_ENV === "production",
   path: "/",
 };

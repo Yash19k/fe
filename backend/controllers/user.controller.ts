@@ -17,7 +17,7 @@ import {
   setAccessCookie,
   setAuthCookies,
   setRefreshCookie,
-} from "../services/auth-session.service";
+} from "../services/auth.session.service";
 
 const userRepository = AppDataSource.getRepository(User);
 const organizationRepository = AppDataSource.getRepository(Organization);

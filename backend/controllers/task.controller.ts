@@ -12,6 +12,7 @@ import { WorkItemComment } from "../entities/work.item.comment.entity";
 import { WorkItemTimeEntry } from "../entities/work.item.time.entry.entity";
 import { WorkItemAttachment } from "../entities/work.item.attachment.entity";
 import { WorkItemDependency } from "../entities/work.item.dependency.entity";
+import { WorkItemRecurrence } from "../entities/work.item.recurrence.entity";
 import { ProjectLabel } from "../entities/project.label.entity";
 import { AuditLog } from "../entities/audit.log.entity";
 import { uploadAndPersistWorkItemAttachments } from "../services/work.item.attachment.service";
@@ -64,6 +65,27 @@ function requireWorkItemId(req: Request): string {
     );
   }
   return workItemId;
+}
+
+function recurrenceResponse(recurrence: WorkItemRecurrence | null) {
+  if (!recurrence) return null;
+  return {
+    id: recurrence.id,
+    frequency: recurrence.frequency,
+    interval: recurrence.interval,
+    daysOfWeek: recurrence.daysOfWeek,
+    monthlyPattern: recurrence.monthlyPattern,
+    dayOfMonth: recurrence.dayOfMonth,
+    startsOn: recurrence.startsOn,
+    endsOn: recurrence.endsOn,
+    timezone: recurrence.timezone,
+    timeOfDay: recurrence.timeOfDay,
+    weekdaysOnly: recurrence.weekdaysOnly,
+    isActive: recurrence.isActive,
+    nextRunAt: recurrence.nextRunAt,
+    createdAt: recurrence.createdAt,
+    updatedAt: recurrence.updatedAt,
+  };
 }
 
 // ==========================================
@@ -119,7 +141,10 @@ export const updateWorkItem = async (
   res.status(200).json({
     success: true,
     message: "Work item updated successfully",
-    data: result,
+    data: {
+      ...result,
+      recurrence: recurrenceResponse(result.recurrence),
+    },
   });
 };
 
@@ -129,7 +154,7 @@ export const getWorkItemById = async (
 ): Promise<void> => {
   const actor = await getActiveActor(requireUserId(req));
   const workItem = await getAccessibleWorkItem(requireWorkItemId(req), actor);
-  const [assignments, label] = await Promise.all([
+  const [assignments, label, recurrence] = await Promise.all([
     AppDataSource.getRepository(WorkItemAssignee).find({
       where: { workItemId: workItem.id },
       relations: { user: true },
@@ -139,6 +164,9 @@ export const getWorkItemById = async (
           where: { id: workItem.labelId, projectId: workItem.projectId },
         })
       : Promise.resolve(null),
+    AppDataSource.getRepository(WorkItemRecurrence).findOne({
+      where: { workItem: { id: workItem.id } },
+    }),
   ]);
   const assigneeIds = assignments.map((assignment) => assignment.userId);
 
@@ -146,6 +174,7 @@ export const getWorkItemById = async (
     success: true,
     data: {
       ...workItem,
+      recurrence: recurrenceResponse(recurrence),
       label,
       labels: label ? [label] : [],
       assignments,
@@ -204,9 +233,18 @@ export const getProjectWorkItems = async (
   }
 
   const [workItems, total] = await query.getManyAndCount();
+  const recurrenceByWorkItem = new Map<string, WorkItemRecurrence>();
   if (workItems.length > 0) {
     const workItemIds = workItems.map((workItem) => workItem.id);
-    const [assignments, comments, timeEntries, children, attachments, dependencies] =
+    const [
+      assignments,
+      comments,
+      timeEntries,
+      children,
+      attachments,
+      dependencies,
+      recurrenceRules,
+    ] =
       await Promise.all([
         AppDataSource.getRepository(WorkItemAssignee).find({
           where: { workItemId: In(workItemIds) },
@@ -228,7 +266,19 @@ export const getProjectWorkItems = async (
           where: { workItemId: In(workItemIds) },
           order: { id: "ASC" },
         }),
+        AppDataSource.getRepository(WorkItemRecurrence)
+          .createQueryBuilder("recurrence")
+          .leftJoin("recurrence.workItem", "workItem")
+          .addSelect("workItem.id")
+          .where("workItem.id IN (:...workItemIds)", { workItemIds })
+          .getMany(),
       ]);
+
+    for (const recurrence of recurrenceRules) {
+      if (recurrence.workItem) {
+        recurrenceByWorkItem.set(recurrence.workItem.id, recurrence);
+      }
+    }
 
     const assignmentsByWorkItem = new Map<string, WorkItemAssignee[]>();
     for (const assignment of assignments) {
@@ -305,7 +355,12 @@ export const getProjectWorkItems = async (
     message: "Project work items retrieved successfully",
     data: {
       projectId: project.id,
-      workItems,
+      workItems: workItems.map((workItem) => ({
+        ...workItem,
+        recurrence: recurrenceResponse(
+          recurrenceByWorkItem.get(workItem.id) ?? null,
+        ),
+      })),
       pagination: getPaginationMeta({
         page,
         limit,
@@ -530,7 +585,9 @@ export const escalateWorkItem = async (
         ),
       );
     } catch (err) {
-      console.error("Escalation notification failed:", err);
+      console.error("Escalation notification failed.", {
+        name: err instanceof Error ? err.name : "UnknownError",
+      });
     }
   }
 

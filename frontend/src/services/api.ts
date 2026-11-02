@@ -15,41 +15,90 @@ import type {
   User,
   Workflow,
   WorkflowStatus,
+  RecurrenceConfig,
 } from '../types';
+import { backendRecurrenceToRule } from '../domain/recurrence';
 
-export const API_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
+export function resolveApiBaseUrl(
+  configuredUrl: string | undefined,
+  isProduction: boolean
+): string {
+  const value = configuredUrl?.trim();
+  if (!value) {
+    if (isProduction) {
+      throw new Error(
+        'VITE_API_URL must be configured for production (use an HTTPS API URL or "/" for a same-origin API proxy).'
+      );
+    }
+    return 'http://localhost:3000';
+  }
 
-export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
+  if (value === '/') return value;
 
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      'VITE_API_URL must be an absolute HTTP(S) URL or "/" for a same-origin API proxy.'
+    );
+  }
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      'VITE_API_URL must use HTTP or HTTPS and must not contain credentials, a query, or a fragment.'
+    );
+  }
+  if (isProduction && url.protocol !== 'https:') {
+    throw new Error('VITE_API_URL must use HTTPS in production.');
+  }
+  return value.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = resolveApiBaseUrl(
+  import.meta.env?.VITE_API_URL,
+  import.meta.env?.PROD === true
+);
+
+const LEGACY_AUTH_TOKEN_KEY = 'taskflow_auth_token';
 let memoryToken: string | null = null;
+let authFailureHandler: (() => void) | null = null;
 
 export function getAuthToken(): string | null {
-  if (memoryToken) return memoryToken;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem(AUTH_TOKEN_KEY);
-    }
-  } catch {}
-  return null;
+  return memoryToken;
 }
 
 export function setAuthToken(token: string): void {
   memoryToken = token;
+}
+
+function removeLegacyStoredToken(): void {
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
     }
   } catch {}
 }
 
 export function clearAuthToken(): void {
   memoryToken = null;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-    }
-  } catch {}
+  removeLegacyStoredToken();
+}
+
+removeLegacyStoredToken();
+
+export function setAuthFailureHandler(handler: (() => void) | null): void {
+  authFailureHandler = handler;
+}
+
+function handleAuthFailure(): void {
+  clearAuthToken();
+  authFailureHandler?.();
 }
 
 export class ApiError extends Error {
@@ -67,7 +116,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions extends RequestInit {
-  _retry?: boolean;
+  skipAuthRefresh?: boolean;
 }
 
 let refreshPromise: Promise<string | null> | null = null;
@@ -78,8 +127,8 @@ async function executeTokenRefresh(): Promise<string | null> {
   }
 
   refreshPromise = (async () => {
+    const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/users/refresh`;
     try {
-      const url = `${API_BASE_URL.replace(/\/+$/, '')}/api/users/refresh`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,19 +136,41 @@ async function executeTokenRefresh(): Promise<string | null> {
       });
 
       if (!res.ok) {
-        clearAuthToken();
-        return null;
+        const responseData = await res.json().catch(() => null);
+        const errData =
+          responseData && typeof responseData === 'object' ? responseData : {};
+        if (res.status === 401) {
+          handleAuthFailure();
+          return null;
+        }
+        throw new ApiError(
+          errData.message || `Token refresh failed with HTTP ${res.status}`,
+          res.status,
+          errData.code || 'TOKEN_REFRESH_FAILED',
+          errData
+        );
       }
 
       const data = await res.json().catch(() => null);
-      if (data?.token && typeof data.token === 'string') {
-        setAuthToken(data.token);
-        return data.token;
+      if (!data || typeof data.token !== 'string' || !data.token.trim()) {
+        throw new ApiError(
+          'Token refresh response did not include a valid access token.',
+          502,
+          'INVALID_REFRESH_RESPONSE'
+        );
       }
-      return getAuthToken();
-    } catch {
-      clearAuthToken();
-      return null;
+      setAuthToken(data.token);
+      return data.token;
+    } catch (error) {
+      handleAuthFailure();
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(
+        error instanceof Error ? error.message : 'Token refresh request failed.',
+        0,
+        'SERVER_UNREACHABLE'
+      );
     } finally {
       refreshPromise = null;
     }
@@ -108,45 +179,63 @@ async function executeTokenRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+async function fetchWithAuth(
+  url: string,
+  init: RequestInit,
+  skipAuthRefresh = false
+): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(init.headers);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers,
+  });
+  if (response.status !== 401 || skipAuthRefresh) {
+    return response;
+  }
+
+  const latestToken = getAuthToken();
+  const refreshedToken =
+    latestToken && latestToken !== token
+      ? latestToken
+      : await executeTokenRefresh();
+  if (!refreshedToken) {
+    return response;
+  }
+
+  headers.set('Authorization', `Bearer ${refreshedToken}`);
+  const retryResponse = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers,
+  });
+  if (retryResponse.status === 401) {
+    handleAuthFailure();
+  }
+  return retryResponse;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
   const url = `${API_BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
-  const token = getAuthToken();
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers as Record<string, string>),
-  };
+  const { skipAuthRefresh = false, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   try {
-    const response = await fetch(url, {
-      credentials: 'include',
-      ...options,
+    const response = await fetchWithAuth(url, {
+      ...requestOptions,
       headers,
-    });
-
-    if (response.status === 401 && !options._retry) {
-      options._retry = true;
-      const newToken = await executeTokenRefresh();
-
-      if (newToken) {
-        headers['Authorization'] = `Bearer ${newToken}`;
-        const retryResponse = await fetch(url, { ...options, headers });
-        if (!retryResponse.ok) {
-          const errData = await retryResponse.json().catch(() => ({}));
-          throw new ApiError(
-            errData.message || `HTTP ${retryResponse.status}`,
-            retryResponse.status,
-            errData.code,
-            errData
-          );
-        }
-        return retryResponse.json();
-      }
-    }
+    }, skipAuthRefresh);
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -158,6 +247,7 @@ async function request<T>(
       );
     }
 
+    if (response.status === 204) return undefined as T;
     return response.json();
   } catch (err: any) {
     if (err instanceof ApiError) throw err;
@@ -201,8 +291,9 @@ export async function registerOrganizationApi(
   const res = await request<RegisterOrganizationResponse>('/api/users/register', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
-  if (res?.token) {
+  if (typeof res?.token === 'string') {
     setAuthToken(res.token);
   }
   return res;
@@ -223,8 +314,9 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
   const res = await request<LoginResponse>('/api/users/login', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
-  if (res?.token) {
+  if (typeof res?.token === 'string') {
     setAuthToken(res.token);
   }
   return res;
@@ -234,6 +326,7 @@ export async function requestPasswordResetApi(email: string): Promise<{ message:
   return request<{ message: string }>('/api/auth/forgot-password', {
     method: 'POST',
     body: JSON.stringify({ email }),
+    skipAuthRefresh: true,
   });
 }
 
@@ -245,6 +338,7 @@ export async function resetPasswordApi(payload: {
   return request<{ message: string }>('/api/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
 }
 
@@ -258,7 +352,10 @@ export async function refreshTokenApi(): Promise<any> {
 
 export async function logoutApi(): Promise<any> {
   try {
-    return await request<any>('/api/users/logout', { method: 'POST' });
+    return await request<any>('/api/users/logout', {
+      method: 'POST',
+      skipAuthRefresh: true,
+    });
   } finally {
     clearAuthToken();
   }
@@ -290,6 +387,7 @@ export async function acceptInvitationApi(
   return request<any>('/api/users/accept-invitation', {
     method: 'POST',
     body: JSON.stringify({ ...payload, token }),
+    skipAuthRefresh: true,
   });
 }
 
@@ -517,6 +615,7 @@ export interface CreateWorkItemApiInput {
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
   labelId?: string | null;
   labels?: string[];
+  recurrence?: RecurrenceConfig;
 }
 
 export async function getProjectWorkItemsApi(
@@ -559,7 +658,7 @@ export async function uploadWorkItemAttachmentsApi(
     formData.append('attachments', file);
   });
 
-  const response = await fetch(
+  const response = await fetchWithAuth(
     `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
     {
       method: 'POST',
@@ -616,8 +715,16 @@ export interface CreateSprintApiInput {
   workItemIds?: string[];
 }
 
-export async function getProjectSprintsApi(projectId: string): Promise<any> {
-  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints`, {
+export async function getProjectSprintsApi(
+  projectId: string,
+  page?: number,
+  limit?: number
+): Promise<any> {
+  const pagination =
+    page !== undefined || limit !== undefined
+      ? `?page=${page ?? 1}&limit=${limit ?? 10}`
+      : '';
+  return request<any>(`/api/projects/${encodeURIComponent(projectId)}/sprints${pagination}`, {
     method: 'GET',
   });
 }
@@ -643,7 +750,7 @@ export async function getPersonalDashboardApi(): Promise<any> {
   return request<any>('/api/dashboard/personal', { method: 'GET' });
 }
 
-// Comments, Time Entries & Dependencies
+// Comments & Dependencies
 export async function getWorkItemCommentsApi(workItemId: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
     method: 'GET',
@@ -654,22 +761,6 @@ export async function addWorkItemCommentApi(workItemId: string, text: string): P
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ text }),
-  });
-}
-
-export async function getWorkItemTimeEntriesApi(workItemId: string): Promise<any> {
-  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
-    method: 'GET',
-  });
-}
-
-export async function addWorkItemTimeEntryApi(
-  workItemId: string,
-  entry: { hours: number; durationMinutes?: number; note?: string; date?: string }
-): Promise<any> {
-  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
-    method: 'POST',
-    body: JSON.stringify(entry),
   });
 }
 
@@ -890,7 +981,7 @@ export interface ChatLastMessage {
 
 export interface ChatConversation {
   id: string;
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string | null;
@@ -907,6 +998,7 @@ export interface ChatMessage {
   id: string;
   conversationId: string;
   senderId: string;
+  clientMessageId?: string;
   content: string;
   createdAt: string;
   sender?: {
@@ -918,20 +1010,28 @@ export interface ChatMessage {
   } | null;
 }
 
-export async function getChatConversationsApi(): Promise<any> {
-  return request<any>('/api/chat/conversations', { method: 'GET' });
+export async function getChatConversationsApi(page = 1, limit = 50): Promise<{ success: boolean; data: ChatConversation[] }> {
+  const query = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return request<{ success: boolean; data: ChatConversation[] }>(`/api/chat/conversations?${query}`, { method: 'GET' });
+}
+
+export async function markChatConversationReadApi(conversationId: string): Promise<void> {
+  await request<void>(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/read`,
+    { method: 'PATCH' },
+  );
 }
 
 export async function createChatConversationApi(payload: {
-  type: 'DIRECT' | 'CHANNEL' | 'PROJECT';
+  type: 'DIRECT' | 'GROUP' | 'PROJECT';
   name?: string | null;
   projectId?: string | null;
   organizationId?: string;
   participantId?: string;
   memberIds?: string[];
   recipientUserIds?: string[];
-}): Promise<any> {
-  return request<any>('/api/chat/conversations', {
+}): Promise<{ success: boolean; data: ChatConversation }> {
+  return request<{ success: boolean; data: ChatConversation }>('/api/chat/conversations', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -940,11 +1040,16 @@ export async function createChatConversationApi(payload: {
 export async function getChatMessagesApi(
   conversationId: string,
   limit = 50,
-  before?: string
-): Promise<any> {
-  let url = `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`;
-  if (before) url += `&before=${encodeURIComponent(before)}`;
-  return request<any>(url, { method: 'GET' });
+  before?: string,
+  beforeId?: string,
+): Promise<{ success: boolean; data: ChatMessage[] }> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before) query.set('before', before);
+  if (beforeId) query.set('beforeId', beforeId);
+  return request<{ success: boolean; data: ChatMessage[] }>(
+    `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?${query}`,
+    { method: 'GET' },
+  );
 }
 
 // Helpers & Converters
@@ -1207,9 +1312,23 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
   } else if (singleLabel) {
     const labelName = typeof singleLabel === 'string' ? singleLabel : singleLabel.name;
     if (labelName) labels = [labelName];
+  } else if (item.labelId || entity.labelId) {
+    const lid = item.labelId || entity.labelId;
+    if (typeof lid === 'string' && lid.length > 0) labels = [lid];
+  }
+
+  let tags: string[] = [];
+  const rawTags = item.tags || entity.tags;
+  if (Array.isArray(rawTags) && rawTags.length > 0) {
+    tags = rawTags
+      .map((t: any) => (typeof t === 'string' ? t : t.name || t.title || t.id))
+      .filter((name: any): name is string => typeof name === 'string' && name.length > 0);
+  } else if (labels.length > 0) {
+    tags = [...labels];
   }
 
   const rawSubtasks = entity.subtasks || item.subtasks || entity.children || item.children;
+  const recurrence = entity.recurrence !== undefined ? entity.recurrence : item.recurrence;
 
   return {
     id: entity.id || item.id,
@@ -1232,11 +1351,11 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
       (entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours) == null
         ? null
         : Number(entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours),
-    actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
     dependencyIds: Array.isArray(entity.dependencies || item.dependencies)
       ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
     labels,
+    tags: tags.length > 0 ? tags : labels,
     businessGoal: entity.businessGoal ?? item.businessGoal ?? '',
     successCriteria: entity.successCriteria ?? item.successCriteria ?? '',
     acceptanceCriteria: entity.acceptanceCriteria ?? item.acceptanceCriteria ?? '',
@@ -1258,8 +1377,12 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
         }))
       : [],
     comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
-    timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
-    recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
+    ...(recurrence !== undefined
+      ? {
+          recurrence: recurrence || null,
+          recurrenceRule: recurrence ? backendRecurrenceToRule(recurrence) : { frequency: 'none' },
+        }
+      : {}),
     sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
     version: typeof version === 'number' && Number.isInteger(version) && version >= 1
       ? version

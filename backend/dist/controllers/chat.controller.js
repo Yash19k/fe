@@ -33,7 +33,8 @@ const conversationQuerySchema = joi_1.default.object({
 const messageQuerySchema = joi_1.default.object({
     limit: joi_1.default.number().integer().min(1).max(100).default(50),
     before: joi_1.default.date().iso(),
-});
+    beforeId: uuid,
+}).with("beforeId", "before");
 function actor(req) {
     if (!req.user)
         throw new app_error_1.AppError("Authentication required.", 401, "UNAUTHORIZED");
@@ -116,19 +117,22 @@ async function getMessagesController(req, res) {
         return;
     return res.json({
         success: true,
-        data: await (0, chat_service_1.getMessages)(actor(req), conversationId, value.limit, value.before),
+        data: await (0, chat_service_1.getMessages)(actor(req), conversationId, value.limit, value.before, value.beforeId),
     });
 }
 async function sendMessageController(req, res) {
     const { error, value } = joi_1.default.object({
         content: joi_1.default.string().trim().min(1).max(4000).required(),
+        clientMessageId: uuid,
     }).validate(req.body, { stripUnknown: true });
     if (error)
         return validationError(res, error);
     const conversationId = uuidParam(req, res, "conversationId");
     if (!conversationId)
         return;
-    return res.status(201).json({ success: true, data: await (0, chat_service_1.saveMessage)(actor(req), conversationId, value.content) });
+    const message = await (0, chat_service_1.saveMessage)(actor(req), conversationId, value.content, value.clientMessageId);
+    await (0, chat_service_1.broadcastChatMessage)(message);
+    return res.status(201).json({ success: true, data: message });
 }
 async function markReadController(req, res) {
     const conversationId = uuidParam(req, res, "conversationId");

@@ -49,6 +49,7 @@ const user_validator_1 = require("../validations/user.validator");
 const auth_token_1 = require("../utils/auth.token");
 const user_session_entity_1 = require("../entities/user.session.entity");
 const app_error_1 = require("../errors/app.error");
+const config_1 = require("../config/config");
 // const invitedMemberSchema = Joi.array().items(
 //   Joi.object({
 //     email: Joi.string().email().required(),
@@ -132,7 +133,7 @@ async function registerOrganization(req, res, next) {
         res.cookie("refreshToken", rawRefreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
+            sameSite: config_1.config.cookieSameSite,
             path: "/api/auth/refresh",
             expires: refreshExpiry,
         });
@@ -155,7 +156,9 @@ async function registerOrganization(req, res, next) {
                 .status(409)
                 .json({ message: "Email already in use" });
         }
-        console.error(err);
+        console.error("Organization registration failed.", {
+            name: err instanceof Error ? err.name : "UnknownError",
+        });
         // return res.status(500).json({ message: "Something went wrong" });
         return next(err);
     }

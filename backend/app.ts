@@ -11,7 +11,7 @@ import dashboardRoutes from "./routes/dashboard.route";
 import notificationRoutes from "./routes/notification.routes";
 import slaRoutes from "./routes/sla.routes";
 import { errorHandler } from "./middleware/error.handler";
-import { config } from "./config/config";
+import { isAllowedOrigin } from "./config/config";
 import chatRoutes from "./routes/chat.routes";
 import whiteboardRoutes from "./routes/whiteboard.routes";
 import authRoutes from "./routes/auth.routes";
@@ -40,7 +40,7 @@ app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || config.corsOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
         return;
       }

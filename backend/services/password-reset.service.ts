@@ -67,7 +67,9 @@ export async function requestPasswordReset(email: string): Promise<void> {
       resetLink,
     });
   } catch (error) {
-    console.error("Password reset email delivery failed:", error);
+    console.error("Password reset email delivery failed.", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
   }
 }
 

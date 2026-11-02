@@ -73,12 +73,7 @@ async function sendPasswordResetEmail(params) {
         const rejected = (info.rejected ?? []).map((address) => String(address).trim().toLowerCase());
         const recipient = params.email.trim().toLowerCase();
         if (!accepted.includes(recipient) || rejected.includes(recipient)) {
-            console.error("SMTP did not accept the password reset recipient.", {
-                recipient,
-                accepted,
-                rejected,
-                response: info.response,
-            });
+            console.error("SMTP did not accept the password reset recipient.");
             throw new app_error_1.AppError("The password reset email could not be submitted.", 502, "EMAIL_SUBMISSION_FAILED");
         }
         return {
@@ -95,10 +90,6 @@ async function sendPasswordResetEmail(params) {
         const smtpError = error;
         console.error("Password reset email SMTP failure:", {
             name: smtpError.name,
-            message: smtpError.message,
-            code: smtpError.code,
-            command: smtpError.command,
-            response: smtpError.response,
             responseCode: smtpError.responseCode,
         });
         throw new app_error_1.AppError("The password reset email could not be submitted. Check backend logs for SMTP diagnostics.", 502, "EMAIL_SUBMISSION_FAILED");

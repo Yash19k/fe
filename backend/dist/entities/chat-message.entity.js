@@ -29,6 +29,10 @@ __decorate([
     __metadata("design:type", String)
 ], ChatMessage.prototype, "senderId", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ name: "client_message_id", type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], ChatMessage.prototype, "clientMessageId", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: "varchar", length: 4000 }),
     __metadata("design:type", String)
 ], ChatMessage.prototype, "content", void 0);
@@ -60,5 +64,9 @@ __decorate([
 ], ChatMessage.prototype, "sender", void 0);
 exports.ChatMessage = ChatMessage = __decorate([
     (0, typeorm_1.Entity)("chat_messages"),
-    (0, typeorm_1.Index)("IDX_chat_messages_conversation_created", ["conversationId", "createdAt"])
+    (0, typeorm_1.Index)("IDX_chat_messages_conversation_created", ["conversationId", "createdAt"]),
+    (0, typeorm_1.Index)("UQ_chat_messages_client_message", ["conversationId", "senderId", "clientMessageId"], {
+        unique: true,
+        where: '"client_message_id" IS NOT NULL',
+    })
 ], ChatMessage);

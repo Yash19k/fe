@@ -34,6 +34,8 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  console.error(error);
+  console.error("End-to-end feature check failed.", {
+    name: error instanceof Error ? error.name : "UnknownError",
+  });
   process.exitCode = 1;
 });

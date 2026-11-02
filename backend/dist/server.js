@@ -13,6 +13,7 @@ async function startServer() {
         console.log("Starting TaskFlow...");
         console.log("Connecting to PostgreSQL...");
         await data_source_1.AppDataSource.initialize();
+        (0, data_source_1.assertRequiredEntityMetadata)();
         console.log("Database connected successfully.");
         // Start background schedulers for automated SLA escalation and recurring tasks
         (0, scheduler_service_1.startScheduler)();
@@ -28,7 +29,10 @@ async function startServer() {
                 console.error(`Port ${config_1.config.port} is already in use. Stop the existing backend process or set a different PORT before starting TaskFlow.`);
             }
             else {
-                console.error("HTTP server error:", error);
+                console.error("HTTP server error:", {
+                    name: error.name,
+                    code: error.code,
+                });
             }
             process.exitCode = 1;
             server.close();
@@ -39,7 +43,9 @@ async function startServer() {
         });
     }
     catch (error) {
-        console.error("Application startup failed:", error);
+        console.error("Application startup failed:", {
+            name: error instanceof Error ? error.name : "UnknownError",
+        });
         process.exitCode = 1;
     }
 }

@@ -19,6 +19,12 @@ class PaginationInspectingQueryBuilder extends SelectQueryBuilder<ChatConversati
   }
 }
 
+class MessagePaginationInspectingQueryBuilder extends SelectQueryBuilder<ChatMessage> {
+  getPaginationOrder() {
+    return this.createOrderByCombinedWithSelectExpression("distinctAlias");
+  }
+}
+
 test("TypeORM resolves the aliased fallback order for joined entity pagination", async () => {
   const dataSource = new MetadataOnlyDataSource(AppDataSource.options);
   await dataSource.buildEntityMetadata();
@@ -42,6 +48,36 @@ test("TypeORM resolves the aliased fallback order for joined entity pagination",
   assert.match(selectedColumns, /conversationSortTimestamp/);
   assert.equal(orderBy['"distinctAlias"."conversationSortTimestamp"'], "DESC");
   assert.equal(orderBy['"distinctAlias"."conversation_id"'], "DESC");
+});
+
+test("TypeORM resolves the aliased millisecond timestamp for joined message pagination", async () => {
+  const dataSource = new MetadataOnlyDataSource(AppDataSource.options);
+  await dataSource.buildEntityMetadata();
+
+  const query = new MessagePaginationInspectingQueryBuilder(dataSource);
+  query
+    .select("message")
+    .from(ChatMessage, "message")
+    .leftJoin("message.sender", "sender")
+    .addSelect(["sender.id", "sender.fullName", "sender.email"])
+    .addSelect(
+      "date_trunc('milliseconds', message.createdAt)",
+      "messageCreatedAtMillis",
+    )
+    .orderBy("messageCreatedAtMillis", "DESC")
+    .addOrderBy("message.id", "DESC")
+    .take(50);
+  const [selectedColumns, orderBy] = query.getPaginationOrder();
+
+  assert.match(selectedColumns, /messageCreatedAtMillis/);
+  assert.equal(orderBy['"distinctAlias"."messageCreatedAtMillis"'], "DESC");
+  assert.equal(orderBy['"distinctAlias"."message_id"'], "DESC");
+  assert.deepEqual(
+    query.expressionMap.selects
+      .map((selection) => selection.selection)
+      .filter((selection) => selection.startsWith("sender.")),
+    ["sender.id", "sender.fullName", "sender.email"],
+  );
 });
 
 test("listConversations orders and paginates safely within the actor's access", async () => {
