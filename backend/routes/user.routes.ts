@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { currentUser, getOrganizationUsers, login, logout, refreshAccessToken, registerOrganization } from "../controllers/user.controller";
+import { currentUser, getOrganizationUsers, login, logout, refreshAccessToken, registerOrganization, updateUserProfile } from "../controllers/user.controller";
 import { asyncHandler } from "../middleware/async.handler";
 import { isLoggedIn } from "../middleware/is.loggedin";
 import { createRateLimiter } from "../middleware/rate.limiter";
@@ -25,11 +25,11 @@ router.post("/register", asyncHandler(registerOrganization));
 router.get("/", isLoggedIn, asyncHandler(getOrganizationUsers));
 router.post("/login", loginLimiter, asyncHandler(login));
 router.get("/me", isLoggedIn, asyncHandler(currentUser));
+router.patch("/me", isLoggedIn, asyncHandler(updateUserProfile));
 router.get("/me/audit-logs", isLoggedIn, asyncHandler(getMyAuditLogs));
 router.post("/logout", asyncHandler(logout));
 router.post("/refresh", refreshAccessToken);
 router.post("/invite", isLoggedIn, asyncHandler(inviteMembersController));
 router.post("/accept-invitation", asyncHandler(acceptInvitationController));
-
 
 export default router;
