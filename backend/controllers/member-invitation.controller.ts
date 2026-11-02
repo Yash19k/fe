@@ -4,7 +4,7 @@ import {
   acceptOrganizationInvitation,
   inviteOrganizationMembers,
 } from "../services/member-invitation.service";
-import { setAuthCookies } from "../services/auth-session.service";
+import { setAuthCookies } from "../services/auth.session.service";
 import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
 

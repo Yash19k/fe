@@ -7,7 +7,7 @@ import { MemberInvitation } from "../entities/member-invitation.entity";
 import { Organization } from "../entities/organization.entity";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
-import { createAuthSession } from "./auth-session.service";
+import { createAuthSession } from "./auth.session.service";
 import { sendInvitationEmail } from "./mail.service";
 
 function hashToken(token: string): string {
