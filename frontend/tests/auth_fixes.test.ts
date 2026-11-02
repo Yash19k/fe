@@ -51,7 +51,7 @@ describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests',
     assert.equal(isAuthenticated, false, 'Clean state must be strictly unauthenticated');
   });
 
-  test('TEST 1 & 11: Valid authenticated session restoration from valid storage', () => {
+  test('A cached identity loads as data but does not restore an authenticated session by itself', () => {
     localStorage.clear();
     const validUser = {
       id: 'usr-12345',
@@ -68,12 +68,8 @@ describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests',
     assert.equal(state.currentUser.id, 'usr-12345');
     assert.equal(state.currentUser.email, 'jane@taskflow.pro');
 
-    const isAuthenticated = Boolean(
-      state.currentUser &&
-      state.currentUser.id &&
-      state.currentUser.email
-    );
-    assert.equal(isAuthenticated, true, 'Valid user in storage restores authenticated state');
+    assert.equal(state.currentUser.id, validUser.id);
+    assert.equal(state.currentUser.email, validUser.email);
   });
 
   test('TEST 3 & 6: Logout and storage persistence clean up unauthenticated state', () => {
@@ -130,6 +126,13 @@ describe('TaskFlow Pro Authentication, Protected Routes & Error Handling Tests',
     // Direct navigation to /dashboard when logged out
     const dashboardView = resolveRouteView('/dashboard', emptyUser, false);
     assert.equal(dashboardView, 'AUTH_LOGIN_VIEW', 'Unauthenticated user cannot access /dashboard');
+
+    const cachedIdentity = { ...emptyUser, id: 'user-1', email: 'user@example.com' };
+    assert.equal(
+      resolveRouteView('/dashboard', cachedIdentity, true),
+      'LOADING_SPINNER',
+      'Cached identity must not bypass in-progress cookie-based session restoration'
+    );
 
     // Direct navigation to /project/:id when logged out
     const projectView = resolveRouteView('/project/proj-123/overview', emptyUser, false);

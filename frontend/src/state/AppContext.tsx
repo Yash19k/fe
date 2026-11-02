@@ -79,8 +79,9 @@ import {
   normalizeRole,
   toBackendRole,
   toBackendProjectRole,
-  getAuthToken,
   clearAuthToken,
+  refreshTokenApi,
+  setAuthFailureHandler,
   isPersistedWorkItemId,
   isUuid,
   toUserFriendlyErrorMessage,
@@ -101,12 +102,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<Label[]>(initial.labels || []);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
-  const [isInitializingAuth, setIsInitializingAuth] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return Boolean(getAuthToken() || localStorage.getItem(STORAGE_KEYS.CURRENT_USER));
-    }
-    return false;
-  });
+  const [isInitializingAuth, setIsInitializingAuth] = useState<boolean>(true);
 
   // Navigation & UI state
   const [activeRoute, setActiveRoute] = useState<string>(() => {
@@ -224,6 +220,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [workflowLoadByProjectId, setWorkflowLoadByProjectId] = useState<
     Record<string, { isLoading: boolean; error: string | null }>
   >({});
+
+  const clearAuthenticatedState = useCallback(() => {
+    clearAuthToken();
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem(STORAGE_KEYS.COMPANY);
+    } catch {}
+    setCurrentUser(emptyUser);
+    setCurrentCompany(null);
+    setProjects([]);
+    setTasks([]);
+    setWorkflows([]);
+    setSprints([]);
+    setLabels([]);
+    setAllUsers([]);
+    setAuditLog([]);
+    setNotifications([]);
+    setCurrentProjectId('');
+    lastLoadedProjectIdRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    setAuthFailureHandler(clearAuthenticatedState);
+    return () => setAuthFailureHandler(null);
+  }, [clearAuthenticatedState]);
 
   // Parallelized project asset loader
   const fetchProjectAssets = useCallback(async (projId: string, force: boolean = false) => {
@@ -480,31 +501,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     async function initBackend() {
       try {
-        const token = getAuthToken();
-        const savedUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-        if (!token && !savedUser) {
-          setCurrentUser(emptyUser);
-          setCurrentCompany(null);
-          if (!isCancelled) {
-            setIsInitializingAuth(false);
-            setIsLoadingBackend(false);
-          }
-          return;
-        }
-
         let authRes: any = null;
         try {
+          const token = await refreshTokenApi();
+          if (!token) {
+            if (!isCancelled) clearAuthenticatedState();
+            return;
+          }
           authRes = await currentUserApi();
         } catch (authErr: any) {
-          if (authErr?.code === 'SERVER_UNREACHABLE' || authErr?.status === 0) {
-            console.warn('TaskFlow: Server unreachable during boot auth verification');
-          } else {
-            clearAuthToken();
-            try {
-              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-              localStorage.removeItem(STORAGE_KEYS.COMPANY);
-            } catch {}
-          }
+          console.warn(
+            authErr?.code === 'SERVER_UNREACHABLE' || authErr?.status === 0
+              ? 'TaskFlow: Server unreachable during boot auth verification'
+              : 'TaskFlow: Authentication could not be restored during boot'
+          );
+          if (!isCancelled) clearAuthenticatedState();
           authRes = null;
         }
 
@@ -595,12 +606,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (resolvedProjectId && !isCancelled) {
             await fetchProjectAssets(resolvedProjectId);
           }
-        } else if (!isCancelled) {
-          setCurrentUser(emptyUser);
-          setCurrentCompany(null);
-        }
+        } else if (!isCancelled) clearAuthenticatedState();
       } catch (err: any) {
         console.warn('TaskFlow: Backend initialization notice:', err?.message);
+        if (!isCancelled) clearAuthenticatedState();
       } finally {
         if (!isCancelled) {
           setIsInitializingAuth(false);
@@ -613,7 +622,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isCancelled = true;
     };
-  }, [fetchProjectAssets]);
+  }, [clearAuthenticatedState, fetchProjectAssets]);
 
   useEffect(() => {
     if (!currentProjectId || isInitializingAuth || !currentUser?.id) return;
@@ -2650,25 +2659,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutApi().catch(() => null);
-    clearAuthToken();
-    try {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-      localStorage.removeItem(STORAGE_KEYS.COMPANY);
-    } catch {}
-    setCurrentUser(emptyUser);
-    setCurrentCompany(null);
-    setProjects([]);
-    setTasks([]);
-    setSprints([]);
-    setLabels([]);
-    setAllUsers([]);
-    setAuditLog([]);
-    setNotifications([]);
-    setCurrentProjectId('');
-    lastLoadedProjectIdRef.current = null;
+    clearAuthenticatedState();
     showToast('Signed out successfully', 'info');
     navigate('/login');
-  }, [navigate, showToast]);
+  }, [clearAuthenticatedState, navigate, showToast]);
 
   const register = useCallback(async (params: {
     name: string;

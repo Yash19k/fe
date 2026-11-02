@@ -251,11 +251,11 @@ describe('Phase 1 Remediation Tests: F-01, F-02, F-03, F-04, F-05, F-12', () => 
     test('never attaches Authorization header with active_session when token is absent', async () => {
       const originalFetch = globalThis.fetch;
       clearAuthToken();
-      let attachedHeaders: Record<string, string> = {};
+      let authorizationHeader: string | undefined;
       let usedCredentials = '';
 
       globalThis.fetch = (async (_url: any, init?: RequestInit) => {
-        attachedHeaders = (init?.headers || {}) as Record<string, string>;
+        authorizationHeader = new Headers(init?.headers).get('Authorization') || undefined;
         usedCredentials = String(init?.credentials);
         return {
           ok: true,
@@ -267,12 +267,12 @@ describe('Phase 1 Remediation Tests: F-01, F-02, F-03, F-04, F-05, F-12', () => 
       try {
         await escalateWorkItemApi('test-item');
         assert.equal(
-          attachedHeaders['Authorization'],
+          authorizationHeader,
           undefined,
           'Authorization header must NOT be attached when no real token is stored'
         );
         assert.notEqual(
-          attachedHeaders['Authorization'],
+          authorizationHeader,
           'Bearer active_session',
           'Must never send fake Bearer active_session'
         );
@@ -289,10 +289,10 @@ describe('Phase 1 Remediation Tests: F-01, F-02, F-03, F-04, F-05, F-12', () => 
     test('attaches valid Authorization header when real token is present', async () => {
       const originalFetch = globalThis.fetch;
       setAuthToken('real-jwt-token-xyz');
-      let attachedHeaders: Record<string, string> = {};
+      let authorizationHeader: string | undefined;
 
       globalThis.fetch = (async (_url: any, init?: RequestInit) => {
-        attachedHeaders = (init?.headers || {}) as Record<string, string>;
+        authorizationHeader = new Headers(init?.headers).get('Authorization') || undefined;
         return {
           ok: true,
           status: 200,
@@ -303,7 +303,7 @@ describe('Phase 1 Remediation Tests: F-01, F-02, F-03, F-04, F-05, F-12', () => 
       try {
         await escalateWorkItemApi('test-item');
         assert.equal(
-          attachedHeaders['Authorization'],
+          authorizationHeader,
           'Bearer real-jwt-token-xyz',
           'Valid token must be sent in Authorization header'
         );

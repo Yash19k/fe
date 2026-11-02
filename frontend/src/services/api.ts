@@ -65,36 +65,40 @@ export const API_BASE_URL = resolveApiBaseUrl(
   import.meta.env?.PROD === true
 );
 
-export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
-
+const LEGACY_AUTH_TOKEN_KEY = 'taskflow_auth_token';
 let memoryToken: string | null = null;
+let authFailureHandler: (() => void) | null = null;
 
 export function getAuthToken(): string | null {
-  if (memoryToken) return memoryToken;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem(AUTH_TOKEN_KEY);
-    }
-  } catch {}
-  return null;
+  return memoryToken;
 }
 
 export function setAuthToken(token: string): void {
   memoryToken = token;
+}
+
+function removeLegacyStoredToken(): void {
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
     }
   } catch {}
 }
 
 export function clearAuthToken(): void {
   memoryToken = null;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-    }
-  } catch {}
+  removeLegacyStoredToken();
+}
+
+removeLegacyStoredToken();
+
+export function setAuthFailureHandler(handler: (() => void) | null): void {
+  authFailureHandler = handler;
+}
+
+function handleAuthFailure(): void {
+  clearAuthToken();
+  authFailureHandler?.();
 }
 
 export class ApiError extends Error {
@@ -112,7 +116,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions extends RequestInit {
-  _retry?: boolean;
+  skipAuthRefresh?: boolean;
 }
 
 let refreshPromise: Promise<string | null> | null = null;
@@ -136,7 +140,7 @@ async function executeTokenRefresh(): Promise<string | null> {
         const errData =
           responseData && typeof responseData === 'object' ? responseData : {};
         if (res.status === 401) {
-          clearAuthToken();
+          handleAuthFailure();
           return null;
         }
         throw new ApiError(
@@ -158,6 +162,7 @@ async function executeTokenRefresh(): Promise<string | null> {
       setAuthToken(data.token);
       return data.token;
     } catch (error) {
+      handleAuthFailure();
       if (error instanceof ApiError) {
         throw error;
       }
@@ -174,50 +179,63 @@ async function executeTokenRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+async function fetchWithAuth(
+  url: string,
+  init: RequestInit,
+  skipAuthRefresh = false
+): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(init.headers);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers,
+  });
+  if (response.status !== 401 || skipAuthRefresh) {
+    return response;
+  }
+
+  const latestToken = getAuthToken();
+  const refreshedToken =
+    latestToken && latestToken !== token
+      ? latestToken
+      : await executeTokenRefresh();
+  if (!refreshedToken) {
+    return response;
+  }
+
+  headers.set('Authorization', `Bearer ${refreshedToken}`);
+  const retryResponse = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers,
+  });
+  if (retryResponse.status === 401) {
+    handleAuthFailure();
+  }
+  return retryResponse;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
   const url = `${API_BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
-  const token = getAuthToken();
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token && token !== 'active_session' ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers as Record<string, string>),
-  };
+  const { skipAuthRefresh = false, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   try {
-    const response = await fetch(url, {
-      credentials: 'include',
-      ...options,
+    const response = await fetchWithAuth(url, {
+      ...requestOptions,
       headers,
-    });
-
-    if (response.status === 401 && !options._retry) {
-      options._retry = true;
-      const newToken = await executeTokenRefresh();
-
-      if (newToken) {
-        headers['Authorization'] = `Bearer ${newToken}`;
-        const retryResponse = await fetch(url, {
-          credentials: 'include',
-          ...options,
-          headers,
-        });
-        if (!retryResponse.ok) {
-          const errData = await retryResponse.json().catch(() => ({}));
-          throw new ApiError(
-            errData.message || `HTTP ${retryResponse.status}`,
-            retryResponse.status,
-            errData.code,
-            errData
-          );
-        }
-        if (retryResponse.status === 204) return undefined as T;
-        return retryResponse.json();
-      }
-    }
+    }, skipAuthRefresh);
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -273,8 +291,9 @@ export async function registerOrganizationApi(
   const res = await request<RegisterOrganizationResponse>('/api/users/register', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
-  if (res?.token) {
+  if (typeof res?.token === 'string') {
     setAuthToken(res.token);
   }
   return res;
@@ -295,8 +314,9 @@ export async function loginApi(payload: LoginInput): Promise<LoginResponse> {
   const res = await request<LoginResponse>('/api/users/login', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
-  if (res?.token) {
+  if (typeof res?.token === 'string') {
     setAuthToken(res.token);
   }
   return res;
@@ -306,6 +326,7 @@ export async function requestPasswordResetApi(email: string): Promise<{ message:
   return request<{ message: string }>('/api/auth/forgot-password', {
     method: 'POST',
     body: JSON.stringify({ email }),
+    skipAuthRefresh: true,
   });
 }
 
@@ -317,6 +338,7 @@ export async function resetPasswordApi(payload: {
   return request<{ message: string }>('/api/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify(payload),
+    skipAuthRefresh: true,
   });
 }
 
@@ -330,7 +352,10 @@ export async function refreshTokenApi(): Promise<any> {
 
 export async function logoutApi(): Promise<any> {
   try {
-    return await request<any>('/api/users/logout', { method: 'POST' });
+    return await request<any>('/api/users/logout', {
+      method: 'POST',
+      skipAuthRefresh: true,
+    });
   } finally {
     clearAuthToken();
   }
@@ -362,6 +387,7 @@ export async function acceptInvitationApi(
   return request<any>('/api/users/accept-invitation', {
     method: 'POST',
     body: JSON.stringify({ ...payload, token }),
+    skipAuthRefresh: true,
   });
 }
 
@@ -632,7 +658,7 @@ export async function uploadWorkItemAttachmentsApi(
     formData.append('attachments', file);
   });
 
-  const response = await fetch(
+  const response = await fetchWithAuth(
     `${API_BASE_URL.replace(/\/+$/, '')}/api/work-items/${encodeURIComponent(workItemId)}/attachments`,
     {
       method: 'POST',
