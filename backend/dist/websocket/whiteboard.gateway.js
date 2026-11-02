@@ -113,7 +113,7 @@ function attachWhiteboardSocket(server) {
         maxHttpBufferSize: 1000000,
         cors: {
             origin: (origin, callback) => {
-                if (!origin || config_1.config.corsOrigins.includes(origin))
+                if ((0, config_1.isAllowedOrigin)(origin))
                     callback(null, true);
                 else
                     callback(new Error("Origin is not allowed by CORS"));

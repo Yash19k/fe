@@ -44,7 +44,10 @@ async function startServer(): Promise<void> {
           `Port ${config.port} is already in use. Stop the existing backend process or set a different PORT before starting TaskFlow.`,
         );
       } else {
-        console.error("HTTP server error:", error);
+        console.error("HTTP server error:", {
+          name: error.name,
+          code: error.code,
+        });
       }
 
       process.exitCode = 1;
@@ -56,7 +59,9 @@ async function startServer(): Promise<void> {
       console.error("HTTP server closed.");
     });
   } catch (error) {
-    console.error("Application startup failed:", error);
+    console.error("Application startup failed:", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
     process.exitCode = 1;
   }
 }

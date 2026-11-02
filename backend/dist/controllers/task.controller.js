@@ -9,6 +9,7 @@ const work_item_comment_entity_1 = require("../entities/work.item.comment.entity
 const work_item_time_entry_entity_1 = require("../entities/work.item.time.entry.entity");
 const work_item_attachment_entity_1 = require("../entities/work.item.attachment.entity");
 const work_item_dependency_entity_1 = require("../entities/work.item.dependency.entity");
+const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
 const project_label_entity_1 = require("../entities/project.label.entity");
 const audit_log_entity_1 = require("../entities/audit.log.entity");
 const work_item_attachment_service_1 = require("../services/work.item.attachment.service");
@@ -33,6 +34,27 @@ function requireWorkItemId(req) {
         throw new app_error_1.AppError("Invalid work item ID", 400, "INVALID_WORK_ITEM_ID");
     }
     return workItemId;
+}
+function recurrenceResponse(recurrence) {
+    if (!recurrence)
+        return null;
+    return {
+        id: recurrence.id,
+        frequency: recurrence.frequency,
+        interval: recurrence.interval,
+        daysOfWeek: recurrence.daysOfWeek,
+        monthlyPattern: recurrence.monthlyPattern,
+        dayOfMonth: recurrence.dayOfMonth,
+        startsOn: recurrence.startsOn,
+        endsOn: recurrence.endsOn,
+        timezone: recurrence.timezone,
+        timeOfDay: recurrence.timeOfDay,
+        weekdaysOnly: recurrence.weekdaysOnly,
+        isActive: recurrence.isActive,
+        nextRunAt: recurrence.nextRunAt,
+        createdAt: recurrence.createdAt,
+        updatedAt: recurrence.updatedAt,
+    };
 }
 // ==========================================
 // CREATE WORK ITEM
@@ -75,14 +97,17 @@ const updateWorkItem = async (req, res) => {
     res.status(200).json({
         success: true,
         message: "Work item updated successfully",
-        data: result,
+        data: {
+            ...result,
+            recurrence: recurrenceResponse(result.recurrence),
+        },
     });
 };
 exports.updateWorkItem = updateWorkItem;
 const getWorkItemById = async (req, res) => {
     const actor = await (0, work_item_service_1.getActiveActor)(requireUserId(req));
     const workItem = await (0, work_item_service_1.getAccessibleWorkItem)(requireWorkItemId(req), actor);
-    const [assignments, label] = await Promise.all([
+    const [assignments, label, recurrence] = await Promise.all([
         data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
             where: { workItemId: workItem.id },
             relations: { user: true },
@@ -92,12 +117,16 @@ const getWorkItemById = async (req, res) => {
                 where: { id: workItem.labelId, projectId: workItem.projectId },
             })
             : Promise.resolve(null),
+        data_source_1.AppDataSource.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence).findOne({
+            where: { workItem: { id: workItem.id } },
+        }),
     ]);
     const assigneeIds = assignments.map((assignment) => assignment.userId);
     res.status(200).json({
         success: true,
         data: {
             ...workItem,
+            recurrence: recurrenceResponse(recurrence),
             label,
             labels: label ? [label] : [],
             assignments,
@@ -141,9 +170,10 @@ const getProjectWorkItems = async (req, res) => {
         query.andWhere("workItem.type = :type", { type });
     }
     const [workItems, total] = await query.getManyAndCount();
+    const recurrenceByWorkItem = new Map();
     if (workItems.length > 0) {
         const workItemIds = workItems.map((workItem) => workItem.id);
-        const [assignments, comments, timeEntries, children, attachments, dependencies] = await Promise.all([
+        const [assignments, comments, timeEntries, children, attachments, dependencies, recurrenceRules,] = await Promise.all([
             data_source_1.AppDataSource.getRepository(work_item_assignee_entity_1.WorkItemAssignee).find({
                 where: { workItemId: (0, typeorm_1.In)(workItemIds) },
                 relations: { user: true },
@@ -164,7 +194,18 @@ const getProjectWorkItems = async (req, res) => {
                 where: { workItemId: (0, typeorm_1.In)(workItemIds) },
                 order: { id: "ASC" },
             }),
+            data_source_1.AppDataSource.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence)
+                .createQueryBuilder("recurrence")
+                .leftJoin("recurrence.workItem", "workItem")
+                .addSelect("workItem.id")
+                .where("workItem.id IN (:...workItemIds)", { workItemIds })
+                .getMany(),
         ]);
+        for (const recurrence of recurrenceRules) {
+            if (recurrence.workItem) {
+                recurrenceByWorkItem.set(recurrence.workItem.id, recurrence);
+            }
+        }
         const assignmentsByWorkItem = new Map();
         for (const assignment of assignments) {
             const current = assignmentsByWorkItem.get(assignment.workItemId) ?? [];
@@ -228,7 +269,10 @@ const getProjectWorkItems = async (req, res) => {
         message: "Project work items retrieved successfully",
         data: {
             projectId: project.id,
-            workItems,
+            workItems: workItems.map((workItem) => ({
+                ...workItem,
+                recurrence: recurrenceResponse(recurrenceByWorkItem.get(workItem.id) ?? null),
+            })),
             pagination: (0, pagination_1.getPaginationMeta)({
                 page,
                 limit,
@@ -390,7 +434,9 @@ const escalateWorkItem = async (req, res) => {
             })));
         }
         catch (err) {
-            console.error("Escalation notification failed:", err);
+            console.error("Escalation notification failed.", {
+                name: err instanceof Error ? err.name : "UnknownError",
+            });
         }
     }
     res.status(200).json({

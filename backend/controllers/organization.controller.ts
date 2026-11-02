@@ -12,6 +12,7 @@ import { generateAccessToken, generateRefreshToken } from "../utils/auth.token";
 import Joi from "joi";
 import { UserSession } from "../entities/user.session.entity";
 import { AppError } from "../errors/app.error";
+import { config } from "../config/config";
 
 // const invitedMemberSchema = Joi.array().items(
 //   Joi.object({
@@ -129,7 +130,7 @@ export async function registerOrganization(
     res.cookie("refreshToken", rawRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: config.cookieSameSite,
       path: "/api/auth/refresh",
       expires: refreshExpiry,
     });
@@ -153,7 +154,9 @@ export async function registerOrganization(
         .status(409)
         .json({ message: "Email already in use" });
     }
-    console.error(err);
+    console.error("Organization registration failed.", {
+      name: err instanceof Error ? err.name : "UnknownError",
+    });
     // return res.status(500).json({ message: "Something went wrong" });
     return next(err);
   }
@@ -435,4 +438,3 @@ export async function removeOrganizationMember(req: Request, res: Response) {
     message: "Member removed from organization successfully.",
   });
 }
-

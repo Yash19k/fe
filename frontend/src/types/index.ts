@@ -64,17 +64,6 @@ export interface TaskComment {
   createdAt: string;
 }
 
-export interface TimeEntry {
-  id: string;
-  userId: string;
-  hours?: number;
-  durationMinutes?: number;
-  date?: string;
-  startTime?: string;
-  note?: string;
-  description?: string;
-}
-
 export interface RecurrenceConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
   interval: number;
@@ -137,13 +126,11 @@ export interface Task {
   dueDate?: string | null;
   estimatedHours?: number | null;
   estimateHours?: number | null;
-  actualHours?: number;
   tags?: string[];
   order?: number;
   dependencies?: string[];
   subtasks?: EmbeddedSubtask[];
   comments?: TaskComment[];
-  timeEntries?: TimeEntry[];
   recurrence?: RecurrenceConfig | null;
   slaStatus?: string;
   sla?: SlaInfo;
@@ -346,7 +333,6 @@ export interface AppContextValue {
   addComment: (taskId: string, text: string) => Promise<void>;
   pendingSignupPassword?: string;
   setPendingSignupPassword?: (pwd: string) => void;
-  logTimeEntry: (taskId: string, hours: number, note?: string) => void;
   escalateTask: (taskId: string, reason?: string) => Promise<Task>;
   simulateExternalTaskEdit: (taskId: string) => void;
   auditLog: AuditLogEntry[];

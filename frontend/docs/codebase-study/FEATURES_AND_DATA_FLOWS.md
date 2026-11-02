@@ -120,13 +120,12 @@ $$\text{User Click / Action} \longrightarrow \text{UI Component} \longrightarrow
 
 ---
 
-### Journey 10: Comments, Subtasks, Time Tracking & Media Attachments
-- **User Action:** In `TaskDetailsDrawer`, user writes a comment, adds a subtask, logs hours, or attaches an image/video.
+### Journey 10: Comments, Subtasks & Media Attachments
+- **User Action:** In `TaskDetailsDrawer`, user writes a comment, adds a subtask, or attaches an image/video.
 - **Component:** `src/components/tasks/TaskDetailsDrawer.tsx` and `src/components/tasks/TaskAttachments.tsx`.
 - **Handlers:**
   - Comment: `addComment(taskId, text)` appends to `task.comments`.
   - Subtask: `addSubtask(taskId, title)` creates a first-class `Subtask` work item linked by `parentId`.
-  - Time Tracking: `logTimeEntry(taskId, hours, note)` increments `task.actualHours` and appends to `task.timeEntries`.
   - Attachments: `saveMediaBlob(blobKey, file)` saves binary file in IndexedDB (`dayflow-media`), appends metadata to `task.attachments`.
 - **Persistence:** Task metadata in `taskflow_tasks_v2`; binary media in browser IndexedDB.
 - **Views Updating:** Drawer tabs update immediately, List and Board progress badges increment.

@@ -20,6 +20,7 @@ const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.
 const project_label_entity_1 = require("../entities/project.label.entity");
 const organization_sla_entity_1 = require("../entities/organization.sla.entity");
 const recurrence_service_1 = require("./recurrence.service");
+const project_permission_1 = require("../middleware/project.permission");
 const app_error_1 = require("../errors/app.error");
 const notification_entity_1 = require("../entities/notification.entity");
 const audit_log_entity_1 = require("../entities/audit.log.entity");
@@ -31,6 +32,34 @@ function dateOnly(value) {
     if (value == null)
         return null;
     return (0, work_item_dependency_service_1.getProjectDate)(value);
+}
+function configureRecurrenceRule(rule, workItem, input) {
+    rule.workItem = workItem;
+    rule.frequency = input.frequency;
+    rule.interval = input.interval ?? 1;
+    rule.daysOfWeek =
+        input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.WEEKLY
+            ? input.daysOfWeek ?? []
+            : null;
+    rule.monthlyPattern =
+        input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.MONTHLY
+            ? input.monthlyPattern ?? null
+            : null;
+    rule.dayOfMonth =
+        input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.MONTHLY &&
+            input.monthlyPattern === work_item_recurrence_entity_1.MonthlyPattern.DAY_OF_MONTH
+            ? input.dayOfMonth ?? null
+            : null;
+    rule.startsOn = input.startsOn;
+    rule.endsOn = input.endsOn ?? null;
+    rule.timezone = recurrence_service_1.DEFAULT_RECURRENCE_TIMEZONE;
+    rule.timeOfDay = recurrence_service_1.RECURRENCE_TIME_OF_DAY;
+    rule.weekdaysOnly =
+        input.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.DAILY &&
+            Boolean(input.weekdaysOnly);
+    rule.nextRunAt = (0, recurrence_service_1.getInitialOccurrenceRunAt)(rule);
+    rule.isActive = rule.nextRunAt !== null;
+    return rule;
 }
 function assertWorkItemDateRange(plannedStartDate, dueDate) {
     const dueDateOnly = dateOnly(dueDate);
@@ -216,7 +245,7 @@ async function createWorkItemOrchestration(actor, input) {
         (0, recurrence_service_1.validateRecurrence)(recurrence, type);
     }
     const result = await data_source_1.AppDataSource.transaction(async (manager) => {
-        const project = await assertAccessibleProject(projectId, actor, manager);
+        const project = await (0, project_permission_1.authorizeWorkItemCreationForActor)(actor, projectId, manager);
         await validateWorkItemParent(manager, {
             type,
             parentWorkItemId: parentWorkItemId ?? null,
@@ -346,32 +375,7 @@ async function createWorkItemOrchestration(actor, input) {
         let savedRecurrence = null;
         if (recurrence) {
             const recurrenceRepository = manager.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence);
-            const timezone = recurrence_service_1.DEFAULT_RECURRENCE_TIMEZONE;
-            const recurrenceRule = recurrenceRepository.create({
-                workItem: savedWorkItem,
-                frequency: recurrence.frequency,
-                interval: recurrence.interval ?? 1,
-                daysOfWeek: recurrence.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.WEEKLY
-                    ? recurrence.daysOfWeek ?? []
-                    : null,
-                monthlyPattern: recurrence.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.MONTHLY
-                    ? recurrence.monthlyPattern ?? null
-                    : null,
-                dayOfMonth: recurrence.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.MONTHLY &&
-                    recurrence.monthlyPattern === work_item_recurrence_entity_1.MonthlyPattern.DAY_OF_MONTH
-                    ? recurrence.dayOfMonth ?? null
-                    : null,
-                startsOn: recurrence.startsOn,
-                endsOn: recurrence.endsOn ?? null,
-                nextRunAt: null,
-                timezone,
-                timeOfDay: recurrence_service_1.RECURRENCE_TIME_OF_DAY,
-                weekdaysOnly: recurrence.frequency === work_item_recurrence_entity_1.RecurrenceFrequency.DAILY &&
-                    Boolean(recurrence.weekdaysOnly),
-                isActive: true,
-            });
-            recurrenceRule.nextRunAt = (0, recurrence_service_1.getInitialOccurrenceRunAt)(recurrenceRule);
-            recurrenceRule.isActive = recurrenceRule.nextRunAt !== null;
+            const recurrenceRule = configureRecurrenceRule(recurrenceRepository.create(), savedWorkItem, recurrence);
             savedRecurrence = await recurrenceRepository.save(recurrenceRule);
         }
         const assignments = await manager
@@ -423,6 +427,14 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
         if (!reference) {
             throw new app_error_1.AppError("Work item not found", 404, "WORK_ITEM_NOT_FOUND");
         }
+        const recurrenceRepository = manager.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence);
+        const recurrenceRule = body.recurrence !== undefined
+            ? await recurrenceRepository
+                .createQueryBuilder("recurrence")
+                .where('"recurrence"."work_item_id" = :workItemId', { workItemId })
+                .setLock("pessimistic_write")
+                .getOne()
+            : null;
         if (touchesSchedule) {
             await (0, work_item_dependency_service_1.lockProjectSchedule)(manager, reference.projectId, actor.organizationId);
         }
@@ -607,7 +619,29 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
             });
             (0, sla_service_1.applySlaState)(workItem, new Date(), orgPolicy);
         }
+        if (body.recurrence !== undefined) {
+            if (body.recurrence !== null) {
+                (0, recurrence_service_1.validateRecurrence)(body.recurrence, workItem.type);
+            }
+            workItem.updatedAt = new Date(Math.max(Date.now(), workItem.updatedAt.getTime() + 1));
+        }
         const savedWorkItem = await manager.getRepository(work_item_entity_1.WorkItem).save(workItem);
+        let savedRecurrence = recurrenceRule;
+        if (body.recurrence === null) {
+            if (recurrenceRule) {
+                recurrenceRule.isActive = false;
+                recurrenceRule.nextRunAt = null;
+                savedRecurrence = await recurrenceRepository.save(recurrenceRule);
+            }
+        }
+        else if (body.recurrence !== undefined) {
+            savedRecurrence = await recurrenceRepository.save(configureRecurrenceRule(recurrenceRule ?? recurrenceRepository.create(), savedWorkItem, body.recurrence));
+        }
+        else {
+            savedRecurrence = await recurrenceRepository.findOne({
+                where: { workItem: { id: savedWorkItem.id } },
+            });
+        }
         const rescheduledTasks = touchesSchedule
             ? await (0, work_item_dependency_service_1.rescheduleAfterTaskEdit)(manager, actor, savedWorkItem)
             : [];
@@ -720,6 +754,7 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
             assigneeIds: currentAssigneeIds,
             assigneeId: currentAssigneeIds[0] || null,
             assignees: currentAssignments.map((a) => a.user).filter(Boolean),
+            recurrence: savedRecurrence,
             previousAssigneeIds,
         };
     });
@@ -762,5 +797,6 @@ async function updateWorkItemOrchestration(actor, workItemId, body) {
         assigneeIds: result.assigneeIds,
         assigneeId: result.assigneeId,
         assignees: result.assignees,
+        recurrence: result.recurrence,
     };
 }

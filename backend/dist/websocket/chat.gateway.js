@@ -86,11 +86,58 @@ function evictUserFromConversationRoom(conversationId, userId) {
         rooms.delete(conversationId);
 }
 (0, chat_service_1.registerRoomEvictor)(evictUserFromConversationRoom);
+async function broadcastToConversationRoom(conversationId, event, data) {
+    const room = rooms.get(conversationId);
+    if (!room)
+        return 0;
+    let emittedCount = 0;
+    await Promise.all(Array.from(room).map(async (memberSocket) => {
+        if (memberSocket.readyState !== ws_1.WebSocket.OPEN)
+            return;
+        const authorized = (await isActiveActor(memberSocket.actor)) &&
+            (await (0, chat_service_1.canAccessConversation)(memberSocket.actor, conversationId));
+        if (!authorized) {
+            memberSocket.joined.delete(conversationId);
+            room.delete(memberSocket);
+            try {
+                memberSocket.send(JSON.stringify({
+                    event: "conversation:removed",
+                    conversationId,
+                    message: "You no longer have access to this conversation.",
+                }));
+            }
+            catch {
+                memberSocket.close();
+            }
+            return;
+        }
+        try {
+            memberSocket.send(JSON.stringify({ event, data }));
+            emittedCount += 1;
+        }
+        catch {
+            memberSocket.close();
+        }
+    }));
+    if (room.size === 0)
+        rooms.delete(conversationId);
+    return emittedCount;
+}
+(0, chat_service_1.registerChatMessageBroadcaster)(async (message) => {
+    const recipientCount = await broadcastToConversationRoom(message.conversationId, "message:new", message);
+    console.info(JSON.stringify({
+        scope: "chat",
+        event: "message_new_broadcast_complete",
+        conversationId: message.conversationId,
+        messageId: message.id,
+        recipientCount,
+    }));
+});
 function attachChatWebSocket(server) {
     const wss = new ws_1.WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
     server.on("upgrade", (request, socket, head) => {
         const origin = request.headers.origin;
-        if (origin && !config_1.config.corsOrigins.includes(origin)) {
+        if (!(0, config_1.isAllowedOrigin)(origin)) {
             socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
             socket.destroy();
             return;
@@ -180,25 +227,17 @@ function attachChatWebSocket(server) {
                     sendError(socket, "Join the conversation before sending messages.");
                     return;
                 }
-                if (typeof event.content !== "string" || event.content.trim().length === 0 || event.content.length > 4000) {
+                if (typeof event.content !== "string" ||
+                    event.content.trim().length === 0 ||
+                    event.content.length > 4000 ||
+                    (event.clientMessageId !== undefined &&
+                        (typeof event.clientMessageId !== "string" ||
+                            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.clientMessageId)))) {
                     sendError(socket, "Message content must be between 1 and 4000 characters.");
                     return;
                 }
-                const message = await (0, chat_service_1.saveMessage)(socket.actor, conversationId, event.content);
-                const payload = JSON.stringify({
-                    event: "message:new",
-                    data: {
-                        id: message.id,
-                        conversationId: message.conversationId,
-                        senderId: message.senderId,
-                        content: message.content,
-                        createdAt: message.createdAt.toISOString(),
-                    },
-                });
-                for (const memberSocket of rooms.get(conversationId) ?? []) {
-                    if (memberSocket.readyState === ws_1.WebSocket.OPEN)
-                        memberSocket.send(payload);
-                }
+                const message = await (0, chat_service_1.saveMessage)(socket.actor, conversationId, event.content, event.clientMessageId);
+                await (0, chat_service_1.broadcastChatMessage)(message);
             })().catch(() => sendError(socket, "Unable to process the chat event."));
         });
         socket.on("close", leaveAllRooms);

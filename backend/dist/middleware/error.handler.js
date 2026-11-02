@@ -1,11 +1,19 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.errorHandler = void 0;
+const safeUpstreamErrorCodes = new Set([
+    "CLOUDINARY_AUTH_FAILED",
+    "CLOUDINARY_ACCESS_DENIED",
+    "CLOUDINARY_RATE_LIMITED",
+    "CLOUDINARY_UPLOAD_FAILED",
+]);
 const errorHandler = (err, _req, res, next) => {
     if (res.headersSent) {
         return next(err);
     }
-    console.error("Request error:", err);
+    console.error("Request error:", {
+        name: err instanceof Error ? err.name : "UnknownError",
+    });
     // PostgreSQL unique constraint violation (error code 23505)
     const isUniqueViolation = err.code === "23505" ||
         err?.driverError?.code === "23505";
@@ -36,10 +44,11 @@ const errorHandler = (err, _req, res, next) => {
         err.statusCode <= 599
         ? err.statusCode
         : 500;
+    const code = typeof err.code === "string" ? err.code : "INTERNAL_SERVER_ERROR";
     res.status(statusCode).json({
         success: false,
-        code: typeof err.code === "string" ? err.code : "INTERNAL_SERVER_ERROR",
-        message: statusCode >= 500
+        code,
+        message: statusCode >= 500 && !safeUpstreamErrorCodes.has(code)
             ? "Internal Server Error"
             : err.message || "Request failed",
         ...(err.code === "WORK_ITEM_VERSION_CONFLICT" && err.details

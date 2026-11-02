@@ -19,8 +19,51 @@ import type {
 } from '../types';
 import { backendRecurrenceToRule } from '../domain/recurrence';
 
-export const API_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
+export function resolveApiBaseUrl(
+  configuredUrl: string | undefined,
+  isProduction: boolean
+): string {
+  const value = configuredUrl?.trim();
+  if (!value) {
+    if (isProduction) {
+      throw new Error(
+        'VITE_API_URL must be configured for production (use an HTTPS API URL or "/" for a same-origin API proxy).'
+      );
+    }
+    return 'http://localhost:3000';
+  }
+
+  if (value === '/') return value;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      'VITE_API_URL must be an absolute HTTP(S) URL or "/" for a same-origin API proxy.'
+    );
+  }
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      'VITE_API_URL must use HTTP or HTTPS and must not contain credentials, a query, or a fragment.'
+    );
+  }
+  if (isProduction && url.protocol !== 'https:') {
+    throw new Error('VITE_API_URL must use HTTPS in production.');
+  }
+  return value.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = resolveApiBaseUrl(
+  import.meta.env?.VITE_API_URL,
+  import.meta.env?.PROD === true
+);
 
 export const AUTH_TOKEN_KEY = 'taskflow_auth_token';
 
@@ -157,7 +200,11 @@ async function request<T>(
 
       if (newToken) {
         headers['Authorization'] = `Bearer ${newToken}`;
-        const retryResponse = await fetch(url, { ...options, headers });
+        const retryResponse = await fetch(url, {
+          credentials: 'include',
+          ...options,
+          headers,
+        });
         if (!retryResponse.ok) {
           const errData = await retryResponse.json().catch(() => ({}));
           throw new ApiError(
@@ -677,7 +724,7 @@ export async function getPersonalDashboardApi(): Promise<any> {
   return request<any>('/api/dashboard/personal', { method: 'GET' });
 }
 
-// Comments, Time Entries & Dependencies
+// Comments & Dependencies
 export async function getWorkItemCommentsApi(workItemId: string): Promise<any> {
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
     method: 'GET',
@@ -688,22 +735,6 @@ export async function addWorkItemCommentApi(workItemId: string, text: string): P
   return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ text }),
-  });
-}
-
-export async function getWorkItemTimeEntriesApi(workItemId: string): Promise<any> {
-  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
-    method: 'GET',
-  });
-}
-
-export async function addWorkItemTimeEntryApi(
-  workItemId: string,
-  entry: { hours: number; durationMinutes?: number; note?: string; date?: string }
-): Promise<any> {
-  return request<any>(`/api/work-items/${encodeURIComponent(workItemId)}/time-entries`, {
-    method: 'POST',
-    body: JSON.stringify(entry),
   });
 }
 
@@ -1294,7 +1325,6 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
       (entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours) == null
         ? null
         : Number(entity.estimatedHours ?? entity.estimateHours ?? item.estimatedHours ?? item.estimateHours),
-    actualHours: Number(entity.actualHours ?? item.actualHours) || 0,
     dependencyIds: Array.isArray(entity.dependencies || item.dependencies)
       ? (entity.dependencies || item.dependencies).map((d: any) => d.dependsOnWorkItemId || d.id || d)
       : [],
@@ -1321,7 +1351,6 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
         }))
       : [],
     comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
-    timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
     ...(recurrence !== undefined
       ? {
           recurrence: recurrence || null,

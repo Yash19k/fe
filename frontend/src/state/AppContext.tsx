@@ -55,8 +55,6 @@ import {
   getOrganizationUsersApi,
   getWorkItemCommentsApi,
   addWorkItemCommentApi,
-  getWorkItemTimeEntriesApi,
-  addWorkItemTimeEntryApi,
   getWorkItemDependenciesApi,
   addWorkItemDependencyApi,
   deleteWorkItemDependencyApi,
@@ -1796,12 +1794,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       startDate: parentTask.startDate,
       dueDate: parentTask.dueDate,
       estimateHours: 2,
-      actualHours: 0,
       dependencyIds: [],
       tags: parentTask.tags || [],
       subtasks: [],
       comments: [],
-      timeEntries: [],
       recurrenceRule: { frequency: 'none' },
       sla: { isBreached: false, isApproaching: false, isEscalated: false },
       version: 1,
@@ -2049,63 +2045,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw err;
     }
   }, [currentUser?.id, recordAudit, showToast]);
-
-  const logTimeEntry = useCallback((taskId: string, durationMinutes: number, description: string = '') => {
-    const hours = Number((durationMinutes / 60).toFixed(2));
-    const entry = {
-      id: `te-${Date.now()}`,
-      userId: currentUser?.id || '',
-      durationMinutes: Number(durationMinutes),
-      hours,
-      description: description.trim(),
-      note: description.trim(),
-      date: new Date().toISOString().split('T')[0],
-      startTime: new Date().toISOString(),
-    };
-
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId) {
-          const existing = t.timeEntries || [];
-          const actualHours = Number(((existing.reduce((sum, e) => sum + (e.durationMinutes ?? (e.hours ? e.hours * 60 : 0)), 0) + entry.durationMinutes) / 60).toFixed(1));
-          return {
-            ...t,
-            actualHours,
-            timeEntries: [...existing, entry],
-            version: (t.version || 1) + 1,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      })
-    );
-    showToast(`Logged ${durationMinutes} minutes`, 'success');
-
-    if (isPersistedWorkItemId(taskId)) {
-      addWorkItemTimeEntryApi(taskId, {
-        hours,
-        durationMinutes,
-        note: description.trim(),
-        date: entry.date,
-      }).then((res) => {
-        const serverEntry = res?.data;
-        if (serverEntry?.id) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === taskId
-                ? {
-                    ...t,
-                    timeEntries: (t.timeEntries || []).map((te) => (te.id === entry.id ? { ...te, id: serverEntry.id } : te)),
-                  }
-                : t
-            )
-          );
-        }
-      }).catch((err) => {
-        console.warn('TaskFlow: Backend time entry save notice:', err.message);
-      });
-    }
-  }, [currentUser?.id, showToast]);
 
   const escalateTask = useCallback(async (taskId: string, reason?: string) => {
     if (!hasPermission(currentUser.role, PERMISSIONS.TRIGGER_ESCALATION)) {
@@ -3030,7 +2969,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addComment,
     pendingSignupPassword,
     setPendingSignupPassword,
-    logTimeEntry,
     escalateTask,
     simulateExternalTaskEdit,
     auditLog,
@@ -3112,7 +3050,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addComment,
     pendingSignupPassword,
     setPendingSignupPassword,
-    logTimeEntry,
     escalateTask,
     simulateExternalTaskEdit,
     auditLog,

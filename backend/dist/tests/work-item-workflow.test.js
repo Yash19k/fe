@@ -27,6 +27,31 @@ const auditlog_controller_1 = require("../controllers/auditlog.controller");
             error.code === "INVALID_STATUS_TRANSITION");
     });
 });
+(0, node_test_1.describe)("workflow configuration validation", () => {
+    (0, node_test_1.test)("normalizes names and transition references", () => {
+        const stages = (0, work_item_workflow_service_1.validateWorkflowConfiguration)([
+            { id: "stage-a", name: "  In   Progress ", color: "#12aBcD", allowedTransitions: ["stage-b"] },
+            { id: "stage-b", name: "Review", color: "#abcdef", allowedTransitions: ["  in progress "] },
+        ]);
+        strict_1.default.equal(stages[0].name, "In Progress");
+        strict_1.default.deepEqual(stages[0].allowedTransitions, ["Review"]);
+        strict_1.default.deepEqual(stages[1].allowedTransitions, ["In Progress"]);
+    });
+    (0, node_test_1.test)("rejects duplicate names regardless of case and whitespace", () => {
+        strict_1.default.throws(() => (0, work_item_workflow_service_1.validateWorkflowConfiguration)([
+            { id: "stage-a", name: "In Progress", color: "#112233" },
+            { id: "stage-b", name: " in   progress ", color: "#445566" },
+        ]), (error) => error instanceof app_error_1.AppError && error.code === "VALIDATION_ERROR");
+    });
+    (0, node_test_1.test)("rejects invalid colors and unknown transition targets", () => {
+        strict_1.default.throws(() => (0, work_item_workflow_service_1.validateWorkflowConfiguration)([
+            { id: "stage-a", name: "Backlog", color: "red", allowedTransitions: [] },
+        ]), (error) => error instanceof app_error_1.AppError && error.code === "VALIDATION_ERROR");
+        strict_1.default.throws(() => (0, work_item_workflow_service_1.validateWorkflowConfiguration)([
+            { id: "stage-a", name: "Backlog", color: "#112233", allowedTransitions: ["Missing"] },
+        ]), (error) => error instanceof app_error_1.AppError && error.code === "VALIDATION_ERROR");
+    });
+});
 (0, node_test_1.describe)("audit log writes", () => {
     (0, node_test_1.test)("rejects client-authored audit entries", async () => {
         await strict_1.default.rejects((0, auditlog_controller_1.createAuditLog)(), (error) => error instanceof app_error_1.AppError && error.code === "FORBIDDEN");

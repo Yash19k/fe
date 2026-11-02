@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireProjectPermission = exports.authorizeProjectPermission = exports.hasProjectPermission = void 0;
+exports.requireProjectPermission = exports.authorizeProjectPermission = exports.authorizeWorkItemCreationForActor = exports.getProjectMembership = exports.hasProjectPermission = void 0;
 const data_source_1 = require("../config/data.source");
 const project_entity_1 = require("../entities/project.entity");
 const user_entity_1 = require("../entities/user.entity");
@@ -65,18 +65,58 @@ const permissions = {
 };
 const hasProjectPermission = (role, action) => permissions[role]?.includes(action) ?? false;
 exports.hasProjectPermission = hasProjectPermission;
+const getProjectMembership = (projectId, userId, manager) => {
+    const repository = manager
+        ? manager.getRepository(project_member_entity_1.ProjectMember)
+        : data_source_1.AppDataSource.getRepository(project_member_entity_1.ProjectMember);
+    return repository.findOne({ where: { projectId, userId } });
+};
+exports.getProjectMembership = getProjectMembership;
+const authorizeWorkItemCreationForActor = async (actor, projectId, manager) => {
+    const userRepository = manager
+        ? manager.getRepository(user_entity_1.User)
+        : data_source_1.AppDataSource.getRepository(user_entity_1.User);
+    let organizationId = actor.organizationId ?? undefined;
+    if (!organizationId) {
+        const user = await userRepository.findOne({
+            where: { id: actor.id },
+            select: {
+                id: true,
+                organizationId: true,
+            },
+        });
+        if (!user) {
+            throw new app_error_1.AppError("Authenticated user not found.", 401, "USER_NOT_FOUND");
+        }
+        organizationId = user.organizationId ?? undefined;
+    }
+    if (!organizationId) {
+        throw new app_error_1.AppError("User is not associated with an organization.", 403, "ORGANIZATION_NOT_FOUND");
+    }
+    const projectRepository = manager
+        ? manager.getRepository(project_entity_1.Project)
+        : data_source_1.AppDataSource.getRepository(project_entity_1.Project);
+    const project = await projectRepository.findOne({
+        where: { id: projectId, organizationId },
+        select: { id: true, organizationId: true },
+    });
+    if (!project) {
+        throw new app_error_1.AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
+    }
+    const membership = await (0, exports.getProjectMembership)(project.id, actor.id, manager);
+    if (!membership) {
+        throw new app_error_1.AppError("You are not a member of this project.", 403, "PROJECT_MEMBERSHIP_REQUIRED");
+    }
+    if (!(0, exports.hasProjectPermission)(membership.role, "task:create")) {
+        throw new app_error_1.AppError("You do not have permission to perform this action.", 403, "PROJECT_PERMISSION_DENIED");
+    }
+    return project;
+};
+exports.authorizeWorkItemCreationForActor = authorizeWorkItemCreationForActor;
 const authorizeProjectPermission = async (req, action) => {
     const userId = req.user?.id;
-    let projectId = Array.isArray(req.params.projectId)
-        ? req.params.projectId[0]
-        : req.params.projectId;
-    if (!projectId && req.body && req.body.projectId) {
-        projectId = req.body.projectId;
-    }
-    if (!projectId && req.query && typeof req.query.projectId === 'string') {
-        projectId = req.query.projectId;
-    }
-    if (!projectId && req.params.workItemId) {
+    let projectId;
+    if (req.params.workItemId) {
         const workItem = await data_source_1.AppDataSource.getRepository(work_item_entity_1.WorkItem).findOne({
             where: { id: String(req.params.workItemId) },
             select: { projectId: true },
@@ -85,6 +125,17 @@ const authorizeProjectPermission = async (req, action) => {
             throw new app_error_1.AppError("Work item not found.", 404, "WORK_ITEM_NOT_FOUND");
         }
         projectId = workItem.projectId;
+    }
+    else {
+        projectId = Array.isArray(req.params.projectId)
+            ? req.params.projectId[0]
+            : req.params.projectId;
+        if (!projectId && req.body && req.body.projectId) {
+            projectId = req.body.projectId;
+        }
+        if (!projectId && req.query && typeof req.query.projectId === "string") {
+            projectId = req.query.projectId;
+        }
     }
     if (!projectId && req.params.whiteboardId) {
         const whiteboard = await data_source_1.AppDataSource.getRepository(whiteboard_entity_1.Whiteboard).findOne({
@@ -120,6 +171,13 @@ const authorizeProjectPermission = async (req, action) => {
     }
     if (!projectId) {
         throw new app_error_1.AppError("Project ID is required.", 400, "PROJECT_ID_REQUIRED");
+    }
+    if (action === "task:create") {
+        await (0, exports.authorizeWorkItemCreationForActor)({
+            id: userId,
+            organizationId: req.user?.organizationId,
+        }, projectId);
+        return;
     }
     let userRole = req.user?.role;
     let organizationId = req.user?.organizationId;

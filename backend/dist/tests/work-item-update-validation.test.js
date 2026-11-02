@@ -7,6 +7,7 @@ const node_test_1 = require("node:test");
 const strict_1 = __importDefault(require("node:assert/strict"));
 const work_item_validations_1 = require("../validations/work.item.validations");
 const work_item_entity_1 = require("../entities/work.item.entity");
+const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
 const projectId = "047fe1e7-7f4b-44ce-8e1f-d24a7f5d8f31";
 (0, node_test_1.describe)("work item dependency version validation", () => {
     (0, node_test_1.test)("requires a current version for dependency mutations", () => {
@@ -36,6 +37,22 @@ const projectId = "047fe1e7-7f4b-44ce-8e1f-d24a7f5d8f31";
     (0, node_test_1.test)("requires a version on updates", () => {
         strict_1.default.ok(work_item_validations_1.updateWorkItemSchema.validate({ title: "Updated" }).error);
         strict_1.default.ok(work_item_validations_1.updateWorkItemSchema.validate({ version: 0, title: "Updated" }).error);
+    });
+    (0, node_test_1.test)("accepts recurrence replacement and explicit disabling", () => {
+        const recurrence = {
+            frequency: work_item_recurrence_entity_1.RecurrenceFrequency.WEEKLY,
+            daysOfWeek: [1, 3],
+            startsOn: "2030-01-07",
+        };
+        const update = work_item_validations_1.updateWorkItemSchema.validate({ version: 2, recurrence });
+        strict_1.default.equal(update.error, undefined);
+        strict_1.default.equal(update.value.recurrence.interval, 1);
+        strict_1.default.equal(update.value.recurrence.timezone, "Asia/Kolkata");
+        strict_1.default.equal(work_item_validations_1.updateWorkItemSchema.validate({ version: 2, recurrence: null }).error, undefined);
+        strict_1.default.ok(work_item_validations_1.updateWorkItemSchema.validate({
+            version: 2,
+            recurrence: { ...recurrence, frequency: "YEARLY" },
+        }).error);
     });
     (0, node_test_1.test)("accepts valid details and estimate values including zero", () => {
         const result = work_item_validations_1.updateWorkItemSchema.validate({

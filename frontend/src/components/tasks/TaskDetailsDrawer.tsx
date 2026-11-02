@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
-  Clock,
   Trash2,
   CheckCircle2,
   AlertTriangle,
@@ -54,7 +53,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     toggleSubtask,
     deleteSubtask,
     addComment,
-    logTimeEntry,
     addDependency,
     removeDependency,
     escalateTask,
@@ -77,10 +75,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newCommentText, setNewCommentText] = useState('');
   const [selectedPredId, setSelectedPredId] = useState('');
-
-  // Live timer state
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [timerSeconds, setTimerSeconds] = useState(0);
 
   // Recurrence state
   const recurrenceRule = task.recurrenceRule;
@@ -195,19 +189,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     draft.dueDate <= draft.startDate
       ? 'Due date must be later than start date.'
       : null;
-
-  // Live timer tick
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (isTimerRunning) {
-      interval = setInterval(() => {
-        setTimerSeconds((prev) => prev + 1);
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isTimerRunning]);
 
   const currentType = draft.type;
   const slaInfo = evaluateTaskSla(task, undefined, currentWorkflow);
@@ -434,15 +415,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
     if (!selectedPredId) return;
     addDependency(selectedPredId, task.id);
     setSelectedPredId('');
-  }
-
-  function handleStopTimer() {
-    setIsTimerRunning(false);
-    if (timerSeconds >= 10) {
-      const minutes = Math.max(1, Math.round(timerSeconds / 60));
-      logTimeEntry(task.id, minutes, 'Live working session');
-    }
-    setTimerSeconds(0);
   }
 
   return (
@@ -918,7 +890,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 ? [{ id: 'subtasks', label: `Subtasks (${completedSubtasks}/${subtasksList.length})`, icon: CheckCircle2 }]
                 : []),
               { id: 'dependencies', label: `Dependencies (${predecessors.length + successors.length})`, icon: Network },
-              { id: 'time', label: `Time (${task.actualHours}/${task.estimateHours}h)`, icon: Clock },
               { id: 'recurrence', label: 'Recurrence', icon: Repeat },
               { id: 'comments', label: `Comments (${task.comments?.length || 0})`, icon: MessageSquare },
             ].map((t) => {
@@ -1123,52 +1094,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                   </Button>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Time Tracking Tab */}
-          {activeTab === 'time' && (
-            <div className="pt-3 space-y-4 text-xs">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-surface-elevated border border-border">
-                <div>
-                  <span className="text-text-muted text-[11px] block">Tracked vs Estimated</span>
-                  <p className="text-sm font-bold text-text-primary">
-                    {task.actualHours || 0}h / {task.estimateHours || 0}h
-                  </p>
-                </div>
-                <div>
-                  {isTimerRunning ? (
-                    <Button variant="danger" size="sm" onClick={handleStopTimer}>
-                      Stop ({Math.floor(timerSeconds / 60)}:{String(timerSeconds % 60).padStart(2, '0')})
-                    </Button>
-                  ) : (
-                    <Button variant="secondary" size="sm" onClick={() => setIsTimerRunning(true)}>
-                      Start Timer
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Logged Sessions */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] text-text-muted block font-medium">Logged Sessions</span>
-                {(task.timeEntries || []).length === 0 ? (
-                  <p className="text-text-muted italic">No time logs recorded yet.</p>
-                ) : (
-                  (task.timeEntries || []).map((te) => (
-                    <div
-                      key={te.id}
-                      className="flex items-center justify-between p-2 rounded bg-surface-elevated border border-border text-[11px]"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Clock size={12} className="text-brand-primary" />
-                        <span className="text-text-secondary">{te.note || 'Logged work'}</span>
-                      </div>
-                      <span className="font-mono text-text-primary">{te.durationMinutes}m</span>
-                    </div>
-                  ))
-                )}
-              </div>
             </div>
           )}
 

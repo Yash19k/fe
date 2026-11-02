@@ -585,7 +585,9 @@ export const escalateWorkItem = async (
         ),
       );
     } catch (err) {
-      console.error("Escalation notification failed:", err);
+      console.error("Escalation notification failed.", {
+        name: err instanceof Error ? err.name : "UnknownError",
+      });
     }
   }
 

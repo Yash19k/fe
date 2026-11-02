@@ -155,9 +155,6 @@ class AddProjectLabels1792399247543 {
         await queryRunner.query(`DROP TABLE "project_workflows"`);
         await queryRunner.query(`DROP INDEX "public"."IDX_notifications_user"`);
         await queryRunner.query(`DROP TABLE "notifications"`);
-        await queryRunner.query(`DROP INDEX "public"."IDX_audit_logs_project"`);
-        await queryRunner.query(`DROP INDEX "public"."IDX_audit_logs_org"`);
-        await queryRunner.query(`DROP TABLE "audit_logs"`);
         await queryRunner.query(`DROP INDEX "public"."IDX_project_labels_project_id"`);
         await queryRunner.query(`DROP TABLE "project_labels"`);
     }

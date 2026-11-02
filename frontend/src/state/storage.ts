@@ -35,7 +35,7 @@ export type StorageKeyName = keyof typeof STORAGE_KEYS;
  * - Normalizes missing `type` to 'Task'
  * - Maps legacy 'To Do' status to 'Backlog'
  * - Migrates embedded subtasks into first-class work items idempotently
- * - Preserves existing user IDs, data, time entries, comments, etc.
+ * - Preserves existing user IDs, data, comments, etc.
  */
 export function migrateTasks(rawTasks: any[]): Task[] {
   if (!Array.isArray(rawTasks)) return [];
@@ -77,11 +77,9 @@ export function migrateTasks(rawTasks: any[]): Task[] {
             dueDate: t.dueDate || null,
             estimatedHours: 2,
             estimateHours: 2,
-            actualHours: sub.completed ? 2 : 0,
             dependencyIds: [],
             tags: t.tags || [],
             comments: [],
-            timeEntries: [],
             recurrenceRule: { frequency: 'none' },
             sla: { isBreached: false, isApproaching: false, isEscalated: false },
             version: 1,

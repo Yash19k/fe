@@ -18,7 +18,9 @@ export const errorHandler: ErrorRequestHandler = (
     return next(err);
   }
 
-  console.error("Request error:", err);
+  console.error("Request error:", {
+    name: err instanceof Error ? err.name : "UnknownError",
+  });
 
   // PostgreSQL unique constraint violation (error code 23505)
   const isUniqueViolation =

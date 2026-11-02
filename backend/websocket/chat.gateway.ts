@@ -2,7 +2,7 @@ import { IncomingMessage, Server as HttpServer } from "http";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { WebSocket, WebSocketServer } from "ws";
 import { AppDataSource } from "../config/data.source";
-import { config } from "../config/config";
+import { config, isAllowedOrigin } from "../config/config";
 import { User, UserStatus } from "../entities/user.entity";
 import {
   broadcastChatMessage,
@@ -169,7 +169,7 @@ export function attachChatWebSocket(server: HttpServer) {
 
   server.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
-    if (origin && !config.corsOrigins.includes(origin)) {
+    if (!isAllowedOrigin(origin)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;

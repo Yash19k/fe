@@ -189,19 +189,9 @@ export const authorizeProjectPermission = async (
   action: ProjectAction,
 ): Promise<void> => {
     const userId = req.user?.id;
-    let projectId = Array.isArray(req.params.projectId)
-      ? req.params.projectId[0]
-      : req.params.projectId;
+    let projectId: string | undefined;
 
-    if (!projectId && req.body && req.body.projectId) {
-      projectId = req.body.projectId;
-    }
-
-    if (!projectId && req.query && typeof req.query.projectId === 'string') {
-      projectId = req.query.projectId;
-    }
-
-    if (!projectId && req.params.workItemId) {
+    if (req.params.workItemId) {
       const workItem = await AppDataSource.getRepository(WorkItem).findOne({
         where: { id: String(req.params.workItemId) },
         select: { projectId: true },
@@ -214,6 +204,18 @@ export const authorizeProjectPermission = async (
         );
       }
       projectId = workItem.projectId;
+    } else {
+      projectId = Array.isArray(req.params.projectId)
+        ? req.params.projectId[0]
+        : req.params.projectId;
+
+      if (!projectId && req.body && req.body.projectId) {
+        projectId = req.body.projectId;
+      }
+
+      if (!projectId && req.query && typeof req.query.projectId === "string") {
+        projectId = req.query.projectId;
+      }
     }
 
     if (!projectId && req.params.whiteboardId) {

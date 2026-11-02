@@ -58,7 +58,9 @@ async function requestPasswordReset(email) {
         });
     }
     catch (error) {
-        console.error("Password reset email delivery failed:", error);
+        console.error("Password reset email delivery failed.", {
+            name: error instanceof Error ? error.name : "UnknownError",
+        });
     }
 }
 async function resetPassword(token, newPassword) {

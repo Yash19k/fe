@@ -1,5 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.registerChatMessageBroadcaster = registerChatMessageBroadcaster;
+exports.broadcastChatMessage = broadcastChatMessage;
+exports.serializeChatMessage = serializeChatMessage;
 exports.canAccessConversation = canAccessConversation;
 exports.getConversationForActor = getConversationForActor;
 exports.createConversation = createConversation;
@@ -20,6 +23,43 @@ const project_member_entity_1 = require("../entities/project.member.entity");
 const project_entity_1 = require("../entities/project.entity");
 const user_entity_1 = require("../entities/user.entity");
 const app_error_1 = require("../errors/app.error");
+let messageBroadcaster = null;
+function registerChatMessageBroadcaster(broadcaster) {
+    messageBroadcaster = broadcaster;
+}
+async function broadcastChatMessage(message) {
+    if (!messageBroadcaster)
+        return;
+    try {
+        await messageBroadcaster(message);
+    }
+    catch (error) {
+        console.error(JSON.stringify({
+            scope: "chat",
+            event: "message_new_broadcast_failed",
+            conversationId: message.conversationId,
+            messageId: message.id,
+            errorName: error instanceof Error ? error.name : "UnknownError",
+        }));
+    }
+}
+function serializeChatMessage(message) {
+    return {
+        id: message.id,
+        conversationId: message.conversationId,
+        senderId: message.senderId,
+        ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
+        content: message.content,
+        createdAt: message.createdAt.toISOString(),
+        sender: message.sender
+            ? {
+                id: message.sender.id,
+                fullName: message.sender.fullName,
+                email: message.sender.email,
+            }
+            : null,
+    };
+}
 const conversations = () => data_source_1.AppDataSource.getRepository(chat_conversation_entity_1.ChatConversation);
 const members = () => data_source_1.AppDataSource.getRepository(chat_conversation_member_entity_1.ChatConversationMember);
 const messages = () => data_source_1.AppDataSource.getRepository(chat_message_entity_1.ChatMessage);
@@ -75,6 +115,9 @@ async function createConversation(actor, input) {
     if (input.type === chat_conversation_entity_1.ChatConversationType.DIRECT &&
         (input.projectId || memberIds.length !== 2 || memberIds[0] === memberIds[1])) {
         throw new app_error_1.AppError("A direct conversation must contain exactly one other user.", 400, "INVALID_DIRECT_CONVERSATION");
+    }
+    if (input.type === chat_conversation_entity_1.ChatConversationType.GROUP && memberIds.length < 3) {
+        throw new app_error_1.AppError("A group conversation must include at least two other participants.", 400, "INVALID_GROUP_CONVERSATION");
     }
     const validUsers = await data_source_1.AppDataSource.getRepository(user_entity_1.User).find({
         where: memberIds.map((id) => ({ id, organizationId: actor.organizationId, status: user_entity_1.UserStatus.ACTIVE })),
@@ -146,7 +189,8 @@ async function listConversations(actor, page = 1, limit = 50) {
           AND current_member.user_id = :userId
       )
     `, { userId: actor.id })
-        .orderBy("COALESCE(conversation.last_message_at, conversation.created_at)", "DESC")
+        .addSelect("COALESCE(conversation.lastMessageAt, conversation.createdAt)", "conversationSortTimestamp")
+        .orderBy("conversationSortTimestamp", "DESC")
         .addOrderBy("conversation.id", "DESC")
         .skip((page - 1) * limit)
         .take(limit);
@@ -176,12 +220,7 @@ async function listConversations(actor, page = 1, limit = 50) {
         .getMany();
     const lastMessageMap = new Map();
     for (const msg of latestMessages) {
-        lastMessageMap.set(msg.conversationId, {
-            id: msg.id,
-            content: msg.content,
-            createdAt: msg.createdAt,
-            senderId: msg.senderId,
-        });
+        lastMessageMap.set(msg.conversationId, msg);
     }
     const unreadCountMap = new Map();
     const unreadCounts = await messages()
@@ -201,7 +240,10 @@ async function listConversations(actor, page = 1, limit = 50) {
     return result.map((conversation) => {
         const currentMember = conversation.members.find((member) => member.userId === actor.id);
         const other = conversation.members.find((member) => member.userId !== actor.id)?.user;
-        const lastMessage = lastMessageMap.get(conversation.id) || null;
+        const lastMessageEntity = lastMessageMap.get(conversation.id);
+        const lastMessage = lastMessageEntity
+            ? serializeChatMessage(lastMessageEntity)
+            : null;
         const unreadCount = unreadCountMap.get(conversation.id) || 0;
         return {
             ...conversation,
@@ -249,30 +291,76 @@ async function removeMember(actor, conversationId, userId) {
         roomEvictor(conversationId, userId);
     }
 }
-async function getMessages(actor, conversationId, limit, before) {
+async function getMessages(actor, conversationId, limit, before, beforeId) {
     if (!(await canAccessConversation(actor, conversationId)))
         throw new app_error_1.AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
     const query = messages().createQueryBuilder("message")
-        .leftJoinAndSelect("message.sender", "sender")
+        .leftJoin("message.sender", "sender")
         .addSelect(["sender.id", "sender.fullName", "sender.email"])
         .where("message.conversation_id = :conversationId", { conversationId })
         .andWhere("message.deleted_at IS NULL");
-    if (before)
-        query.andWhere("message.created_at < :before", { before });
-    const page = await query.orderBy("message.created_at", "DESC").addOrderBy("message.id", "DESC").take(Math.min(limit, 100)).getMany();
-    return page.reverse();
+    if (before) {
+        if (beforeId) {
+            query.andWhere("(date_trunc('milliseconds', message.created_at) < :before OR " +
+                "(date_trunc('milliseconds', message.created_at) = :before AND message.id < :beforeId))", { before, beforeId });
+        }
+        else {
+            query.andWhere("date_trunc('milliseconds', message.created_at) < :before", { before });
+        }
+    }
+    const page = await query
+        .addSelect("date_trunc('milliseconds', message.createdAt)", "messageCreatedAtMillis")
+        .orderBy("messageCreatedAtMillis", "DESC")
+        .addOrderBy("message.id", "DESC")
+        .take(Math.min(limit, 100))
+        .getMany();
+    return page.reverse().map(serializeChatMessage);
 }
-async function saveMessage(actor, conversationId, content) {
+async function saveMessage(actor, conversationId, content, clientMessageId) {
     const normalized = content.trim();
     if (!normalized || normalized.length > 4000)
         throw new app_error_1.AppError("Message content must be between 1 and 4000 characters.", 400, "INVALID_MESSAGE");
     if (!(await canAccessConversation(actor, conversationId)))
         throw new app_error_1.AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-    return data_source_1.AppDataSource.transaction(async (manager) => {
-        const message = await manager.save(chat_message_entity_1.ChatMessage, { conversationId, senderId: actor.id, content: normalized });
-        await manager.update(chat_conversation_entity_1.ChatConversation, { id: conversationId }, { lastMessageAt: message.createdAt });
-        return message;
-    });
+    const findByClientId = () => clientMessageId
+        ? messages().findOne({
+            where: { conversationId, senderId: actor.id, clientMessageId },
+            relations: { sender: true },
+        })
+        : Promise.resolve(null);
+    const existing = await findByClientId();
+    if (existing)
+        return serializeChatMessage(existing);
+    try {
+        const message = await data_source_1.AppDataSource.transaction(async (manager) => {
+            const created = await manager.save(chat_message_entity_1.ChatMessage, {
+                conversationId,
+                senderId: actor.id,
+                content: normalized,
+                clientMessageId: clientMessageId ?? null,
+            });
+            await manager.update(chat_conversation_entity_1.ChatConversation, { id: conversationId }, { lastMessageAt: created.createdAt });
+            return created;
+        });
+        const savedMessage = await messages().findOne({
+            where: { id: message.id },
+            relations: { sender: true },
+        });
+        if (!savedMessage)
+            throw new app_error_1.AppError("Message could not be loaded after saving.", 500, "CHAT_MESSAGE_LOAD_FAILED");
+        return serializeChatMessage(savedMessage);
+    }
+    catch (error) {
+        const driverError = error instanceof typeorm_1.QueryFailedError
+            ? error.driverError
+            : undefined;
+        if (driverError?.code === "23505" && clientMessageId) {
+            const concurrentlySaved = await findByClientId();
+            if (concurrentlySaved)
+                return serializeChatMessage(concurrentlySaved);
+        }
+        throw error;
+    }
 }
 async function markConversationRead(actor, conversationId) {
     if (!(await canAccessConversation(actor, conversationId)))

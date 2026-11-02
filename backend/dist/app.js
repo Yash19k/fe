@@ -37,7 +37,7 @@ exports.app.use(express_1.default.json({ limit: "1mb" }));
 exports.app.use(express_1.default.urlencoded({ extended: false, limit: "1mb" }));
 exports.app.use((0, cors_1.default)({
     origin: (origin, callback) => {
-        if (!origin || config_1.config.corsOrigins.includes(origin)) {
+        if ((0, config_1.isAllowedOrigin)(origin)) {
             callback(null, true);
             return;
         }

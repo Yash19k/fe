@@ -12,7 +12,7 @@ const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const cookieOptions = {
   httpOnly: true,
-  sameSite: "lax" as const,
+  sameSite: config.cookieSameSite,
   secure: process.env.NODE_ENV === "production",
   path: "/",
 };

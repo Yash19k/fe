@@ -5,9 +5,12 @@ const data_source_1 = require("../config/data.source");
 const app_error_1 = require("../errors/app.error");
 const work_item_entity_1 = require("../entities/work.item.entity");
 const work_item_assignee_entity_1 = require("../entities/work.item-assignee.entity");
+const project_entity_1 = require("../entities/project.entity");
+const user_entity_1 = require("../entities/user.entity");
 const work_item_recurrence_entity_1 = require("../entities/work.item.recurrence.entity");
 const work_item_occurrence_entity_1 = require("../entities/work.item.occurrence.entity");
 const organization_sla_entity_1 = require("../entities/organization.sla.entity");
+const project_permission_1 = require("../middleware/project.permission");
 const sla_service_1 = require("./sla.service");
 exports.RECURRENCE_TIME_OF_DAY = "09:00";
 exports.DEFAULT_RECURRENCE_TIMEZONE = "Asia/Kolkata";
@@ -225,6 +228,34 @@ const processOneDueRecurrence = async () => data_source_1.AppDataSource.transact
         return false;
     const scheduledFor = getDateOnlyInTimezone(recurrence.nextRunAt, recurrence.timezone || exports.DEFAULT_RECURRENCE_TIMEZONE);
     const template = recurrence.workItem;
+    const project = await manager.getRepository(project_entity_1.Project).findOne({
+        where: {
+            id: template.projectId,
+            organizationId: template.organizationId,
+        },
+        select: { id: true },
+    });
+    const owner = await manager.getRepository(user_entity_1.User).findOne({
+        where: {
+            id: template.createdById,
+            organizationId: template.organizationId,
+            status: user_entity_1.UserStatus.ACTIVE,
+        },
+        select: { id: true },
+    });
+    const membership = project && owner
+        ? await (0, project_permission_1.getProjectMembership)(project.id, owner.id, manager)
+        : null;
+    if (!project ||
+        !owner ||
+        !membership ||
+        !(0, project_permission_1.hasProjectPermission)(membership.role, "task:create")) {
+        recurrence.isActive = false;
+        recurrence.nextRunAt = null;
+        await manager.getRepository(work_item_recurrence_entity_1.WorkItemRecurrence).save(recurrence);
+        console.warn(`[Recurrence Scheduler] Deactivated recurrence ${recurrence.id}: its project, owner, or project membership is no longer valid.`);
+        return true;
+    }
     // Existing occurrence means this date has already been processed; still advance the rule.
     const existingOccurrence = await manager.getRepository(work_item_occurrence_entity_1.WorkItemOccurrence).findOne({
         where: { recurrenceId: recurrence.id, scheduledFor },

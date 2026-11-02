@@ -125,6 +125,7 @@ describe('Backend API Contract & Error Handling Tests', () => {
         }
 
         assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer new-access-token');
+        assert.equal(init?.credentials, 'include');
         return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
