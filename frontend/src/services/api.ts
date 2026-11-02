@@ -15,7 +15,9 @@ import type {
   User,
   Workflow,
   WorkflowStatus,
+  RecurrenceConfig,
 } from '../types';
+import { backendRecurrenceToRule } from '../domain/recurrence';
 
 export const API_BASE_URL =
   (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:3000';
@@ -540,6 +542,7 @@ export interface CreateWorkItemApiInput {
   assignees?: Array<{ userId: string; startDate?: string | null; endDate?: string | null }>;
   labelId?: string | null;
   labels?: string[];
+  recurrence?: RecurrenceConfig;
 }
 
 export async function getProjectWorkItemsApi(
@@ -1260,6 +1263,7 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
   }
 
   const rawSubtasks = entity.subtasks || item.subtasks || entity.children || item.children;
+  const recurrence = entity.recurrence !== undefined ? entity.recurrence : item.recurrence;
 
   return {
     id: entity.id || item.id,
@@ -1310,7 +1314,12 @@ export function backendWorkItemToTask(item: any, fallbackProjectId?: string): Ta
       : [],
     comments: Array.isArray(entity.comments || item.comments) ? (entity.comments || item.comments) : [],
     timeEntries: Array.isArray(entity.timeEntries || item.timeEntries) ? (entity.timeEntries || item.timeEntries) : [],
-    recurrenceRule: entity.recurrenceRule || item.recurrenceRule || { frequency: 'none' },
+    ...(recurrence !== undefined
+      ? {
+          recurrence: recurrence || null,
+          recurrenceRule: recurrence ? backendRecurrenceToRule(recurrence) : { frequency: 'none' },
+        }
+      : {}),
     sla: entity.sla || item.sla || { isBreached: false, isApproaching: false, isEscalated: false },
     version: typeof version === 'number' && Number.isInteger(version) && version >= 1
       ? version

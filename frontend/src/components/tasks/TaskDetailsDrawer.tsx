@@ -83,9 +83,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
   const [timerSeconds, setTimerSeconds] = useState(0);
 
   // Recurrence state
-  const [recFrequency, setRecFrequency] = useState<string>(task.recurrenceRule?.frequency || 'none');
-  const [recInterval, setRecInterval] = useState<number | string>(task.recurrenceRule?.interval || 1);
-  const [recWeekdaysOnly, setRecWeekdaysOnly] = useState<boolean>(Boolean(task.recurrenceRule?.weekdaysOnly));
+  const recurrenceRule = task.recurrenceRule;
+  const hasRecurrenceData = task.recurrence !== undefined || recurrenceRule !== undefined;
+  const recFrequency = hasRecurrenceData ? recurrenceRule?.frequency || 'none' : null;
+  const recInterval = recurrenceRule?.interval || 1;
+  const recWeekdaysOnly = Boolean(recurrenceRule?.weekdaysOnly);
 
   // --- DRAFT STATE FOR EXPLICIT SAVE & CANCEL (Section 15) ---
   const initialDraft = useMemo(() => ({
@@ -441,16 +443,6 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
       logTimeEntry(task.id, minutes, 'Live working session');
     }
     setTimerSeconds(0);
-  }
-
-  function handleSaveRecurrence() {
-    const rule = {
-      frequency: recFrequency,
-      interval: Number(recInterval) || 1,
-      weekdaysOnly: recWeekdaysOnly,
-      endCondition: 'never',
-    };
-    updateTask(task.id, { recurrenceRule: rule }, snapshotVersion);
   }
 
   return (
@@ -1187,10 +1179,11 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 <div>
                   <label className="text-text-muted block mb-1">Frequency</label>
                   <select
-                    value={recFrequency}
-                    onChange={(e) => setRecFrequency(e.target.value)}
+                    value={recFrequency || 'unavailable'}
+                    disabled
                     className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none"
                   >
+                    {!recFrequency && <option value="unavailable">Unavailable</option>}
                     <option value="none">One-time (Does not repeat)</option>
                     <option value="daily">Daily</option>
                     <option value="weekly_monday">Weekly on Monday</option>
@@ -1207,22 +1200,28 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                     type="number"
                     min="1"
                     max="30"
-                    value={recInterval}
-                    onChange={(e) => setRecInterval(e.target.value)}
-                    disabled={recFrequency === 'weekly_monday' || recFrequency === 'monthly_first_day' || recFrequency === 'monthly_last_friday'}
+                    value={hasRecurrenceData ? recInterval : ''}
+                    disabled
+                    placeholder="Unavailable"
                     className="w-full h-8 rounded-lg bg-surface border border-border px-2 text-xs text-text-primary focus:outline-none disabled:opacity-50"
                   />
                 </div>
               </div>
 
-              {recFrequency !== 'none' && (
+              {!hasRecurrenceData && (
+                <p className="text-[11px] text-text-muted">
+                  Recurrence data is not included in the backend task retrieval response.
+                </p>
+              )}
+
+              {hasRecurrenceData && recFrequency !== 'none' && (
                 <div className="space-y-2.5">
                   {recFrequency === 'daily' && (
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary">
+                    <label className="flex items-center gap-2 text-xs text-text-secondary">
                       <input
                         type="checkbox"
                         checked={recWeekdaysOnly}
-                        onChange={(e) => setRecWeekdaysOnly(e.target.checked)}
+                        disabled
                         className="w-3.5 h-3.5 rounded border-border text-brand-primary"
                       />
                       <span>Weekdays only (skip Saturday & Sunday)</span>
@@ -1232,7 +1231,14 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                   <div className="p-2.5 rounded-lg bg-surface-elevated border border-border space-y-1">
                     <span className="text-[11px] text-text-muted block">Schedule Summary</span>
                     <p className="text-xs font-semibold text-brand-primary">
-                      {formatRecurrenceRule({ frequency: recFrequency, interval: Number(recInterval), weekdaysOnly: recWeekdaysOnly })}
+                      {formatRecurrenceRule(recurrenceRule)}
+                    </p>
+                    <p className="text-[11px] text-text-secondary">
+                      Starts {task.recurrence?.startsOn || 'date unavailable'}
+                      {' · Ends '}
+                      {task.recurrence?.endsOn || 'never'}
+                      {' · '}
+                      {task.recurrence?.timezone || 'timezone unavailable'}
                     </p>
                   </div>
 
@@ -1244,11 +1250,7 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                         {generateNextOccurrences(
                           {
                             ...task,
-                            recurrenceRule: {
-                              frequency: recFrequency,
-                              interval: Number(recInterval),
-                              weekdaysOnly: recWeekdaysOnly,
-                            },
+                            recurrenceRule,
                           },
                           3
                         ).map((occ) => (
@@ -1263,9 +1265,9 @@ function TaskDetailsContent({ task, onClose }: TaskDetailsContentProps) {
                 </div>
               )}
 
-              <Button variant="primary" size="sm" onClick={handleSaveRecurrence}>
-                Save Recurrence
-              </Button>
+              <p className="text-[11px] text-text-muted">
+                Recurrence editing is unavailable because the backend does not support recurrence updates.
+              </p>
             </div>
           )}
 

@@ -5,7 +5,6 @@ import {
   computeNextOccurrenceDate,
   formatRecurrenceRule,
   generateNextOccurrences,
-  createNextRecurringTask,
 } from '../src/domain/recurrence.ts';
 import { Task } from '../src/types/index.ts';
 
@@ -82,32 +81,6 @@ describe('Recurrence Engine Tests', () => {
     assert.equal(preview.length, 5);
     assert.equal(preview[0].date, '2026-11-27');
     assert.equal(preview[1].date, '2026-12-25');
-  });
-
-  it('creates next recurring task with reset Backlog status and uncompleted subtasks', () => {
-    const completedTask = {
-      id: 'task-10',
-      title: 'Monthly Review',
-      projectId: 'proj-1',
-      type: 'Task',
-      status: 'Done',
-      startDate: '2026-10-01',
-      dueDate: '2026-10-05',
-      recurrenceRule: { frequency: 'monthly_first_day' },
-      subtasks: [
-        { id: 'sub-1', title: 'Prep slides', completed: true },
-      ],
-      dependencyIds: ['task-9'],
-    } as unknown as Task;
-
-    const nextTask = createNextRecurringTask(completedTask, 'Queued');
-    assert.ok(nextTask);
-    assert.notEqual(nextTask.id, 'task-10');
-    assert.equal(nextTask.status, 'Queued');
-    assert.equal(nextTask.dueDate, '2026-11-01');
-    assert.equal(nextTask.startDate, '2026-10-28'); // preserved 4-day duration
-    assert.equal(nextTask.subtasks?.[0].completed, false);
-    assert.deepEqual(nextTask.dependencyIds, []);
   });
 
   it('formats human-readable descriptions', () => {

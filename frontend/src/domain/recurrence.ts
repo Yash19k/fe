@@ -1,21 +1,22 @@
 /**
  * Recurring Tasks Engine.
  * Formats recurrence rules into natural language,
- * validates configurations, computes future occurrences,
- * and generates next task occurrences upon completion.
+ * and computes future occurrences for previews.
  */
 
 import { addBusinessDays, formatLocalDate, parseLocalDate } from './businessDays';
-import { Task } from '../types';
+import { RecurrenceConfig, Task } from '../types';
 
 export interface RecurrenceRule {
   frequency?: string;
   interval?: number;
-  daysOfWeek?: string[];
+  daysOfWeek?: number[];
   endCondition?: string;
   occurrences?: number;
   weekdaysOnly?: boolean;
   endDate?: string;
+  startsOn?: string;
+  dayOfMonth?: number;
   customUnit?: string;
   [key: string]: any;
 }
@@ -23,8 +24,84 @@ export interface RecurrenceRule {
 export interface RecurrenceOccurrence {
   occurrenceNumber: number;
   date: string;
-  taskId: string;
-  title: string;
+}
+
+export function buildBackendRecurrence(
+  frequency: string,
+  interval: number,
+  weekdaysOnly: boolean,
+  startsOn: string,
+): RecurrenceConfig | undefined {
+  if (frequency === 'none') return undefined;
+  const intervalValue =
+    frequency === 'weekly_monday' ||
+    frequency === 'monthly_first_day' ||
+    frequency === 'monthly_last_friday'
+      ? 1
+      : interval;
+
+  const recurrence: RecurrenceConfig = {
+    frequency:
+      frequency === 'daily' ? 'DAILY' :
+      frequency === 'weekly' || frequency === 'weekly_monday' ? 'WEEKLY' :
+      'MONTHLY',
+    interval: intervalValue,
+    startsOn,
+    timezone: 'Asia/Kolkata',
+  };
+
+  if (frequency === 'daily') {
+    recurrence.weekdaysOnly = weekdaysOnly;
+  } else if (frequency === 'weekly_monday') {
+    recurrence.daysOfWeek = [1];
+  } else if (frequency === 'weekly') {
+    recurrence.daysOfWeek = [new Date(`${startsOn}T00:00:00.000Z`).getUTCDay()];
+  } else if (frequency === 'monthly_first_day') {
+    recurrence.monthlyPattern = 'FIRST_DAY';
+  } else if (frequency === 'monthly_last_friday') {
+    recurrence.monthlyPattern = 'LAST_FRIDAY';
+  } else {
+    recurrence.monthlyPattern = 'DAY_OF_MONTH';
+    recurrence.dayOfMonth = Number(startsOn.slice(8, 10));
+  }
+
+  return recurrence;
+}
+
+export function backendRecurrenceToRule(recurrence: RecurrenceConfig): RecurrenceRule {
+  let frequency: string;
+
+  if (recurrence.frequency === 'DAILY') {
+    frequency = 'daily';
+  } else if (recurrence.frequency === 'WEEKLY') {
+    frequency = recurrence.daysOfWeek?.length === 1 && recurrence.daysOfWeek[0] === 1
+      ? 'weekly_monday'
+      : 'weekly';
+  } else if (recurrence.monthlyPattern === 'FIRST_DAY') {
+    frequency = 'monthly_first_day';
+  } else if (recurrence.monthlyPattern === 'LAST_FRIDAY') {
+    frequency = 'monthly_last_friday';
+  } else {
+    frequency = 'monthly';
+  }
+
+  return {
+    frequency,
+    interval: recurrence.interval || 1,
+    ...(recurrence.frequency === 'DAILY'
+      ? { weekdaysOnly: Boolean(recurrence.weekdaysOnly) }
+      : {}),
+    ...(recurrence.frequency === 'WEEKLY'
+      ? { daysOfWeek: recurrence.daysOfWeek || [] }
+      : {}),
+    ...(recurrence.frequency === 'MONTHLY' && recurrence.dayOfMonth != null
+      ? { dayOfMonth: recurrence.dayOfMonth }
+      : {}),
+    ...(recurrence.startsOn ? { startsOn: recurrence.startsOn } : {}),
+    ...(recurrence.endsOn
+      ? { endCondition: 'on_date', endDate: recurrence.endsOn }
+      : {}),
+  };
 }
 
 /**
@@ -52,13 +129,20 @@ export function formatRecurrenceRule(rule?: RecurrenceRule | null): string {
       desc = `Repeats every ${interval} days`;
     }
   } else if (frequency === 'weekly') {
-    if (interval === 1) {
+    const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const days = rule.daysOfWeek || [];
+    if (days.length > 0) {
+      const selectedDays = days.map((day) => weekdayNames[day]).join(', ');
+      desc = `Repeats every ${interval === 1 ? '' : `${interval} `}week${interval === 1 ? '' : 's'} on ${selectedDays}`;
+    } else if (interval === 1) {
       desc = 'Repeats weekly';
     } else {
       desc = `Repeats every ${interval} weeks`;
     }
   } else if (frequency === 'monthly') {
-    if (interval === 1) {
+    if (rule.dayOfMonth) {
+      desc = `Repeats every ${interval === 1 ? '' : `${interval} `}month${interval === 1 ? '' : 's'} on day ${rule.dayOfMonth}`;
+    } else if (interval === 1) {
       desc = 'Repeats monthly on the same day';
     } else {
       desc = `Repeats every ${interval} months`;
@@ -172,8 +256,6 @@ export function generateNextOccurrences(task: Task, count: number = 5): Recurren
     occurrences.push({
       occurrenceNumber: i,
       date: nextDateStr,
-      taskId: `${task.id}-rec-${i}`,
-      title: `${task.title} (Occurrence ${i})`,
     });
     currentBaseStr = nextDateStr;
   }
@@ -218,64 +300,4 @@ export function getTaskDateContext(task: Task, targetDateStr: string): string | 
   }
 
   return null;
-}
-
-/**
- * Creates the next occurrence work item when a recurring task is completed.
- * Resets status to the project's initial workflow stage, uncompletes subtasks, and clears dependencies.
- */
-export function createNextRecurringTask(completedTask: Task, initialStatus: string): Task | null {
-  const rule = completedTask.recurrenceRule || (completedTask.recurrence as RecurrenceRule);
-  if (!rule || !rule.frequency || rule.frequency === 'none') {
-    return null;
-  }
-
-  const baseDateStr = completedTask.dueDate || completedTask.startDate || formatLocalDate(new Date());
-  const nextDueDateStr = computeNextOccurrenceDate(baseDateStr, rule);
-
-  // If rule has endCondition === 'on_date' and nextDueDate > rule.endDate, do not create
-  if (rule.endCondition === 'on_date' && rule.endDate && nextDueDateStr > rule.endDate) {
-    return null;
-  }
-
-  // Preserve task duration if start and due date existed
-  let nextStartDateStr: string | null = null;
-  if (completedTask.startDate && completedTask.dueDate) {
-    const start = parseLocalDate(completedTask.startDate);
-    const due = parseLocalDate(completedTask.dueDate);
-    const durationDays = Math.max(0, Math.round((due.getTime() - start.getTime()) / (1000 * 3600 * 24)));
-    const nextStart = parseLocalDate(nextDueDateStr);
-    nextStart.setDate(nextStart.getDate() - durationDays);
-    nextStartDateStr = formatLocalDate(nextStart);
-  } else if (completedTask.startDate && !completedTask.dueDate) {
-    nextStartDateStr = nextDueDateStr;
-  }
-
-  const newTaskId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const now = new Date().toISOString();
-
-  // Reset embedded subtasks
-  const resetSubtasks = (completedTask.subtasks || []).map((s) => ({
-    ...s,
-    id: `sub-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    completed: false,
-  }));
-
-  const nextTask: Task = {
-    ...completedTask,
-    id: newTaskId,
-    status: initialStatus,
-    startDate: nextStartDateStr,
-    dueDate: completedTask.dueDate ? nextDueDateStr : null,
-    actualHours: 0,
-    dependencyIds: [],
-    subtasks: resetSubtasks,
-    comments: [],
-    timeEntries: [],
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  return nextTask;
 }

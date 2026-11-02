@@ -263,6 +263,7 @@ export const updateWorkItemSchema = Joi.object({
   assigneeIds: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).unique().allow(null).optional(),
   labelId: Joi.string().guid({ version: ["uuidv4"] }).allow(null, "").optional(),
   labels: Joi.array().items(Joi.string().guid({ version: ["uuidv4"] })).max(1).allow(null).optional(),
+  recurrence: recurrenceSchema.allow(null).optional(),
 })
   .custom(validateSingleLabelPayload)
   .min(1)

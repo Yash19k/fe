@@ -7,7 +7,6 @@ import { calculateScheduleImpact, applyScheduleChanges } from '../domain/schedul
 import { canTransitionStatus, hasPermission, PERMISSIONS, canUserAccessProject } from '../domain/permissions';
 import { validateHierarchy } from '../domain/hierarchy';
 import { WORK_ITEM_TYPES, getWorkItemVersion, sanitizeWorkItemData } from '../domain/workItems';
-import { createNextRecurringTask } from '../domain/recurrence';
 import { getInitialWorkflowStatus, isWorkflowStatusComplete } from '../domain/workflow';
 import { normalizeProjectId, validateProjectId, generateSuggestedProjectId } from '../domain/projects';
 import { diffBusinessDays } from '../domain/businessDays';
@@ -895,6 +894,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           sanitized.status || getInitialWorkflowStatus(targetWorkflow)?.name || '',
         ),
         dueDate: sanitized.dueDate || null,
+        ...(sanitized.recurrence ? { recurrence: sanitized.recurrence } : {}),
         assignees: (
           Array.isArray(sanitized.assigneeIds)
             ? sanitized.assigneeIds
@@ -1428,14 +1428,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     const isComplete = isWorkflowStatusComplete(currentWorkflow, newStatus);
-    const wasComplete = isWorkflowStatusComplete(currentWorkflow, target.status);
-    const nextRecurring =
-      isComplete && !wasComplete
-        ? createNextRecurringTask(
-            target,
-            getInitialWorkflowStatus(currentWorkflow)?.name || target.status,
-          )
-        : null;
 
     setTasks((prev) => {
       let nextList = prev.map((t) => (t.id === taskId ? updated : t));
@@ -1450,22 +1442,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return t;
         });
       }
-      if (nextRecurring) {
-        nextList = [nextRecurring, ...nextList];
-      }
       return nextList;
     });
 
     recordAudit('status_changed', 'task', taskId, `Changed status of "${target.title}" from "${target.status}" to "${newStatus}"`, previousValue, { status: newStatus }, true, target.projectId);
     broadcastEvent('TASK_UPDATED', updated);
 
-    if (nextRecurring) {
-      recordAudit('created', 'task', nextRecurring.id, `Generated next recurring occurrence of "${target.title}" for ${nextRecurring.dueDate || nextRecurring.startDate}`, null, nextRecurring, false, target.projectId);
-      broadcastEvent('TASK_CREATED', nextRecurring);
-      if (!isPersistedWorkItemId(taskId)) {
-        showToast(`Completed "${target.title}". Next occurrence scheduled for ${nextRecurring.dueDate || nextRecurring.startDate}.`, 'success');
-      }
-    } else if (!isPersistedWorkItemId(taskId)) {
+    if (!isPersistedWorkItemId(taskId)) {
       showToast(`Status updated to ${newStatus}`, 'success');
     }
 

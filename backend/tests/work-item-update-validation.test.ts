@@ -10,6 +10,7 @@ import {
   WorkItemPriority,
   WorkItemType,
 } from "../entities/work.item.entity";
+import { RecurrenceFrequency } from "../entities/work.item.recurrence.entity";
 
 const projectId = "047fe1e7-7f4b-44ce-8e1f-d24a7f5d8f31";
 
@@ -56,6 +57,29 @@ describe("work item update validation", () => {
   test("requires a version on updates", () => {
     assert.ok(updateWorkItemSchema.validate({ title: "Updated" }).error);
     assert.ok(updateWorkItemSchema.validate({ version: 0, title: "Updated" }).error);
+  });
+
+  test("accepts recurrence replacement and explicit disabling", () => {
+    const recurrence = {
+      frequency: RecurrenceFrequency.WEEKLY,
+      daysOfWeek: [1, 3],
+      startsOn: "2030-01-07",
+    };
+
+    const update = updateWorkItemSchema.validate({ version: 2, recurrence });
+    assert.equal(update.error, undefined);
+    assert.equal(update.value.recurrence.interval, 1);
+    assert.equal(update.value.recurrence.timezone, "Asia/Kolkata");
+    assert.equal(
+      updateWorkItemSchema.validate({ version: 2, recurrence: null }).error,
+      undefined,
+    );
+    assert.ok(
+      updateWorkItemSchema.validate({
+        version: 2,
+        recurrence: { ...recurrence, frequency: "YEARLY" },
+      }).error,
+    );
   });
 
   test("accepts valid details and estimate values including zero", () => {

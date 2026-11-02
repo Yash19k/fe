@@ -9,7 +9,8 @@ import {
   BUG_SEVERITIES,
 } from '../../domain/workItems';
 import { getEligibleParents } from '../../domain/hierarchy';
-import { formatRecurrenceRule } from '../../domain/recurrence';
+import { buildBackendRecurrence, formatRecurrenceRule } from '../../domain/recurrence';
+import { formatLocalDate } from '../../domain/businessDays';
 import { WorkItemType, Priority, BugSeverity, TaskAttachment } from '../../types';
 import { TaskAttachments } from './TaskAttachments';
 import { LabelPicker } from '../ui/LabelPicker';
@@ -198,6 +199,12 @@ export function CreateTaskModal({
           ? [assigneeId]
           : [];
 
+      const recurrence = buildBackendRecurrence(
+        recFrequency,
+        Number(recInterval) || 1,
+        recWeekdaysOnly,
+        startDate || formatLocalDate(new Date()),
+      );
       const payload: Record<string, any> = {
         type,
         parentId: parentId || null,
@@ -218,15 +225,7 @@ export function CreateTaskModal({
         attachments: attachments.map(({ id, name, size, type, uploadedAt }) => ({
           id, name, size, type, uploadedAt,
         })),
-        recurrenceRule:
-          recFrequency !== 'none'
-            ? {
-                frequency: recFrequency,
-                interval: Number(recInterval) || 1,
-                weekdaysOnly: recWeekdaysOnly,
-                endCondition: 'never',
-              }
-            : { frequency: 'none' },
+        ...(recurrence ? { recurrence } : {}),
       };
 
       if (type === WORK_ITEM_TYPES.EPIC) {

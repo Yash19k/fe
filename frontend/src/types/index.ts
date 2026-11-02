@@ -76,11 +76,15 @@ export interface TimeEntry {
 }
 
 export interface RecurrenceConfig {
-  frequency: 'daily' | 'weekly' | 'monthly' | string;
+  frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
   interval: number;
-  endType?: 'never' | 'after' | 'on_date' | string;
-  endCount?: number;
-  endDate?: string;
+  daysOfWeek?: number[] | null;
+  monthlyPattern?: 'DAY_OF_MONTH' | 'FIRST_DAY' | 'LAST_FRIDAY' | null;
+  dayOfMonth?: number | null;
+  startsOn: string;
+  endsOn?: string | null;
+  timezone?: string;
+  weekdaysOnly?: boolean;
 }
 
 export interface SlaInfo {
