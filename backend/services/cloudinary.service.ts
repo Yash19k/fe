@@ -1,11 +1,10 @@
 import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
 import type { Express } from "express";
 import { AppError } from "../errors/app.error";
+import { config } from "../config/config";
 
 function getCloudinaryClient() {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  const { cloudName, apiKey, apiSecret } = config.cloudinary;
 
   if (!cloudName || !apiKey || !apiSecret) {
     throw new AppError(

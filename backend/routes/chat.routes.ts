@@ -12,19 +12,42 @@ import {
   removeConversationMemberController,
   sendMessageController,
 } from "../controllers/chat.controller";
+import { validateUuidRouteParam } from "../validations/route-params";
 
 const router = Router();
+for (const param of ["conversationId", "userId"]) {
+  router.param(param, validateUuidRouteParam);
+}
+
 router.use(isLoggedIn);
-router.post("/", asyncHandler(createConversationController));
-router.get("/", asyncHandler(listConversationsController));
+// router.post("/", asyncHandler(createConversationController));
+// router.get("/", asyncHandler(listConversationsController));
 router.get("/conversations", asyncHandler(listConversationsController));
 router.post("/conversations", asyncHandler(createConversationController));
 router.get("/members", asyncHandler(listMembersController));
-router.get("/:conversationId", asyncHandler(getConversationController));
-router.post("/:conversationId/members", asyncHandler(addConversationMemberController));
-router.delete("/:conversationId/members/:userId", asyncHandler(removeConversationMemberController));
-router.get("/:conversationId/messages", asyncHandler(getMessagesController));
-router.post("/:conversationId/messages", asyncHandler(sendMessageController));
-router.patch("/:conversationId/read", asyncHandler(markReadController));
+router.get(
+  "/conversations/:conversationId",
+  asyncHandler(getConversationController),
+);
+router.post(
+  "/conversations/:conversationId/members",
+  asyncHandler(addConversationMemberController),
+);
+router.delete(
+  "/conversations/:conversationId/members/:userId",
+  asyncHandler(removeConversationMemberController),
+);
+router.get(
+  "/conversations/:conversationId/messages",
+  asyncHandler(getMessagesController),
+);
+router.post(
+  "/conversations/:conversationId/messages",
+  asyncHandler(sendMessageController),
+);
+router.patch(
+  "/conversations/:conversationId/read",
+  asyncHandler(markReadController),
+);
 
 export default router;

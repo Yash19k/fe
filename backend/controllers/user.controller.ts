@@ -1,5 +1,4 @@
-
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import * as bcrypt from "bcrypt";
 import { createHash, randomBytes } from "crypto";
 
@@ -44,7 +43,10 @@ function hashRefreshToken(token: string): string {
 
 export async function registerOrganization(req: Request, res: Response) {
   let payload = req.body;
-  if (!payload.user && (payload.email || payload.adminName || payload.organizationName)) {
+  if (
+    !payload.user &&
+    (payload.email || payload.adminName || payload.organizationName)
+  ) {
     payload = {
       user: {
         fullName: payload.adminName || payload.fullName || "Workspace Admin",
@@ -98,6 +100,9 @@ export async function registerOrganization(req: Request, res: Response) {
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
     });
+
+    org.createdByUserId = newUser.id;
+    await m.save(Organization, org);
 
     await m.save(OrganizationSla, {
       organizationId: org.id,
@@ -230,7 +235,7 @@ export async function login(req: Request, res: Response) {
 }
 
 /**
-* POST /auth/refresh
+ * POST /auth/refresh
  * Uses the refresh cookie to issue a new access token
  * and rotates the refresh token.
  */
@@ -339,11 +344,7 @@ export async function currentUser(req: Request, res: Response) {
   });
 
   if (!user || user.status !== UserStatus.ACTIVE) {
-    throw new AppError(
-      "Invalid authentication token.",
-      401,
-      "INVALID_TOKEN",
-    );
+    throw new AppError("Invalid authentication token.", 401, "INVALID_TOKEN");
   }
 
   if (!user.organizationId) {
@@ -409,7 +410,11 @@ export async function logout(req: Request, res: Response) {
 export async function getOrganizationUsers(req: Request, res: Response) {
   const organizationId = req.user?.organizationId;
   if (!organizationId) {
-    throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
+    throw new AppError(
+      "Organization not found.",
+      404,
+      "ORGANIZATION_NOT_FOUND",
+    );
   }
 
   const users = await userRepository.find({
@@ -437,3 +442,77 @@ export async function getOrganizationUsers(req: Request, res: Response) {
     })),
   });
 }
+
+export const updateUserProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      throw new AppError("Authentication required.", 401);
+    }
+
+    const { fullName, avatarUrl } = req.body;
+
+    if (fullName === undefined && avatarUrl === undefined) {
+      throw new AppError("No profile fields provided.", 400);
+    }
+
+    const userRepository = AppDataSource.getRepository(User);
+
+    const user = await userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new AppError("User not found.", 404);
+    }
+
+    // Update name only when provided
+    if (fullName !== undefined) {
+      if (
+        typeof fullName !== "string" ||
+        fullName.trim().length < 2 ||
+        fullName.trim().length > 100
+      ) {
+        throw new AppError(
+          "Full name must be between 2 and 100 characters.",
+          400,
+        );
+      }
+
+      user.fullName = fullName.trim();
+    }
+
+    // Update avatar URL only when provided
+    if (avatarUrl !== undefined) {
+      if (avatarUrl !== null && typeof avatarUrl !== "string") {
+        throw new AppError("Avatar URL must be a string or null.", 400);
+      }
+
+      if (typeof avatarUrl === "string" && avatarUrl.length > 500) {
+        throw new AppError("Avatar URL is too long.", 400);
+      }
+
+      user.avatarUrl = avatarUrl;
+    }
+
+    const updatedUser = await userRepository.save(user);
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully.",
+      data: {
+        id: updatedUser.id,
+        fullName: updatedUser.fullName,
+        email: updatedUser.email,
+        avatarUrl: updatedUser.avatarUrl,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

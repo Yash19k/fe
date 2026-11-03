@@ -17,8 +17,14 @@ import {
 import { requireProjectPermission } from "../middleware/project.permission";
 import { asyncHandler } from "../middleware/async.handler";
 import { validateProjectId } from "../validations/project.validations";
+import { validateUuidRouteParam } from "../validations/route-params";
+import { validatePaginationQuery } from "../validations/request.validation";
 
 const router = Router();
+
+for (const param of ["projectId", "sprintId"]) {
+  router.param(param, validateUuidRouteParam);
+}
 
 // Create a sprint and optionally attach existing backlog work items
 router.post(
@@ -35,6 +41,7 @@ router.get(
   "/projects/:projectId/sprints",
   isLoggedIn,
   validateProjectId,
+  validatePaginationQuery(10, 100),
   requireProjectPermission("sprint:view"),
   asyncHandler(getProjectSprints)
 );

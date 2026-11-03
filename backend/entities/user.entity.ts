@@ -48,6 +48,13 @@ export class User {
   email: string;
 
   @Column({
+    type: "varchar",
+    length: 500,
+    nullable: true,
+  })
+  avatarUrl: string | null;
+
+  @Column({
     name: "password_hash",
     type: "varchar",
     length: 255,

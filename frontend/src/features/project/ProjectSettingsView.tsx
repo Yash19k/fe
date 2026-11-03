@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { getProjectAuditLogsApi, AuditPaginationMeta } from '../../services/api';
+import {
+  getProjectAuditLogsApi,
+  AuditPaginationMeta,
+  canRemoveProjectMember,
+} from '../../services/api';
 import { Input, Textarea } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
@@ -1146,7 +1150,6 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                         isWorkflowStatusComplete(currentWorkflow, task.status),
                       );
                       const activeCount = memberTasks.length - doneTasks.length;
-                      const isOwner = member.id === currentProject.ownerId;
                       const isSelf = Boolean(
                         currentUser?.id &&
                         (member.id === currentUser.id ||
@@ -1154,6 +1157,13 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
                       );
                       const currentRole =
                         currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
+                      const canRemoveMember = canRemoveProjectMember(
+                        currentUser?.role,
+                        currentProject.memberRoles?.[currentUser?.id || ''],
+                        currentUser?.id,
+                        member.id,
+                        currentProject.ownerId,
+                      );
 
                       return (
                         <div
@@ -1233,7 +1243,7 @@ export function ProjectSettingsView({ initialSection = 'general' }: ProjectSetti
 
                           {/* 6. Actions */}
                           <div className="flex items-center justify-end">
-                            {canManageMembers && !isOwner && !isSelf && (
+                            {canRemoveMember && !isSelf && (
                               <button
                                 type="button"
                                 onClick={() => setMemberToRemove(member)}
