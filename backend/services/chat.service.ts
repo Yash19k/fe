@@ -1,6 +1,9 @@
 import { QueryFailedError } from "typeorm";
 import { AppDataSource } from "../config/data.source";
-import { ChatConversation, ChatConversationType } from "../entities/chat-conversation.entity";
+import {
+  ChatConversation,
+  ChatConversationType,
+} from "../entities/chat-conversation.entity";
 import { ChatConversationMember } from "../entities/chat-conversation-member.entity";
 import { ChatMessage } from "../entities/chat-message.entity";
 import { ProjectMember, ProjectRole } from "../entities/project.member.entity";
@@ -8,7 +11,11 @@ import { Project } from "../entities/project.entity";
 import { User, UserRole, UserStatus } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
 
-export interface ChatActor { id: string; organizationId?: string; role: string; }
+export interface ChatActor {
+  id: string;
+  organizationId?: string;
+  role: string;
+}
 export interface ChatMessageResponse {
   id: string;
   conversationId: string;
@@ -19,34 +26,46 @@ export interface ChatMessageResponse {
   sender?: { id: string; fullName: string | null; email: string } | null;
 }
 
-type ChatMessageBroadcaster = (message: ChatMessageResponse) => Promise<void> | void;
+type ChatMessageBroadcaster = (
+  message: ChatMessageResponse,
+) => Promise<void> | void;
 let messageBroadcaster: ChatMessageBroadcaster | null = null;
 
-export function registerChatMessageBroadcaster(broadcaster: ChatMessageBroadcaster): void {
+export function registerChatMessageBroadcaster(
+  broadcaster: ChatMessageBroadcaster,
+): void {
   messageBroadcaster = broadcaster;
 }
 
-export async function broadcastChatMessage(message: ChatMessageResponse): Promise<void> {
+export async function broadcastChatMessage(
+  message: ChatMessageResponse,
+): Promise<void> {
   if (!messageBroadcaster) return;
   try {
     await messageBroadcaster(message);
   } catch (error) {
-    console.error(JSON.stringify({
-      scope: "chat",
-      event: "message_new_broadcast_failed",
-      conversationId: message.conversationId,
-      messageId: message.id,
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    }));
+    console.error(
+      JSON.stringify({
+        scope: "chat",
+        event: "message_new_broadcast_failed",
+        conversationId: message.conversationId,
+        messageId: message.id,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      }),
+    );
   }
 }
 
-export function serializeChatMessage(message: ChatMessage): ChatMessageResponse {
+export function serializeChatMessage(
+  message: ChatMessage,
+): ChatMessageResponse {
   return {
     id: message.id,
     conversationId: message.conversationId,
     senderId: message.senderId,
-    ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
+    ...(message.clientMessageId
+      ? { clientMessageId: message.clientMessageId }
+      : {}),
     content: message.content,
     createdAt: message.createdAt.toISOString(),
     sender: message.sender
@@ -76,67 +95,147 @@ function pairKey(first: string, second: string) {
   return [first, second].sort().join(":");
 }
 
-async function assertProjectAccess(actor: ChatActor, projectId: string): Promise<Project> {
-  const project = await AppDataSource.getRepository(Project).findOne({ where: { id: projectId } });
+async function assertProjectAccess(
+  actor: ChatActor,
+  projectId: string,
+): Promise<Project> {
+  const project = await AppDataSource.getRepository(Project).findOne({
+    where: { id: projectId },
+  });
   if (!project || project.organizationId !== actor.organizationId) {
     throw new AppError("Project not found.", 404, "PROJECT_NOT_FOUND");
   }
-  if (actor.role === UserRole.ADMIN || actor.role === UserRole.MANAGER) return project;
-  const membership = await AppDataSource.getRepository(ProjectMember).findOne({ where: { projectId, userId: actor.id } });
-  if (!membership) throw new AppError("You do not have access to this project.", 403, "FORBIDDEN");
+  if (actor.role === UserRole.ADMIN || actor.role === UserRole.MANAGER)
+    return project;
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId, userId: actor.id },
+  });
+  if (!membership)
+    throw new AppError(
+      "You do not have access to this project.",
+      403,
+      "FORBIDDEN",
+    );
   return project;
 }
 
-async function hasProjectAccess(actor: ChatActor, projectId: string): Promise<boolean> {
-  const project = await AppDataSource.getRepository(Project).findOne({ where: { id: projectId } });
+async function hasProjectAccess(
+  actor: ChatActor,
+  projectId: string,
+): Promise<boolean> {
+  const project = await AppDataSource.getRepository(Project).findOne({
+    where: { id: projectId },
+  });
   if (!project || project.organizationId !== actor.organizationId) return false;
-  if (actor.role === UserRole.ADMIN || actor.role === UserRole.MANAGER) return true;
+  if (actor.role === UserRole.ADMIN || actor.role === UserRole.MANAGER)
+    return true;
   if (project.visibility === "PUBLIC") return true;
-  const membership = await AppDataSource.getRepository(ProjectMember).findOne({ where: { projectId, userId: actor.id } });
+  const membership = await AppDataSource.getRepository(ProjectMember).findOne({
+    where: { projectId, userId: actor.id },
+  });
   return Boolean(membership);
 }
 
-export async function canAccessConversation(actor: ChatActor, conversationId: string) {
-  const conversation = await conversations().findOne({ where: { id: conversationId } });
-  if (!conversation || conversation.organizationId !== actor.organizationId) return false;
-  if (conversation.projectId && !(await hasProjectAccess(actor, conversation.projectId))) {
+export async function canAccessConversation(
+  actor: ChatActor,
+  conversationId: string,
+) {
+  const conversation = await conversations().findOne({
+    where: { id: conversationId },
+  });
+  if (!conversation || conversation.organizationId !== actor.organizationId)
+    return false;
+  if (
+    conversation.projectId &&
+    !(await hasProjectAccess(actor, conversation.projectId))
+  ) {
     return false;
   }
-  return Boolean(await members().findOne({ where: { conversationId, userId: actor.id } }));
+  return Boolean(
+    await members().findOne({ where: { conversationId, userId: actor.id } }),
+  );
 }
 
-export async function getConversationForActor(actor: ChatActor, conversationId: string) {
+export async function getConversationForActor(
+  actor: ChatActor,
+  conversationId: string,
+) {
   if (!(await canAccessConversation(actor, conversationId))) {
-    throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
+    throw new AppError(
+      "Conversation not found.",
+      404,
+      "CONVERSATION_NOT_FOUND",
+    );
   }
-  return conversations().findOne({ where: { id: conversationId }, relations: { members: { user: true } } });
+  return conversations().findOne({
+    where: { id: conversationId },
+    relations: { members: { user: true } },
+  });
 }
 
-export async function createConversation(actor: ChatActor, input: CreateConversationInput) {
-  if (!actor.organizationId || (input.organizationId && input.organizationId !== actor.organizationId)) {
-    throw new AppError("You can only create conversations in your organization.", 403, "FORBIDDEN");
+export async function createConversation(
+  actor: ChatActor,
+  input: CreateConversationInput,
+) {
+  if (
+    !actor.organizationId ||
+    (input.organizationId && input.organizationId !== actor.organizationId)
+  ) {
+    throw new AppError(
+      "You can only create conversations in your organization.",
+      403,
+      "FORBIDDEN",
+    );
   }
+
   if (input.projectId) await assertProjectAccess(actor, input.projectId);
-  const requested = input.memberIds ?? (input.participantId ? [input.participantId] : []);
+  const requested =
+    input.memberIds ?? (input.participantId ? [input.participantId] : []);
   const memberIds = [...new Set([actor.id, ...requested])];
-  if (input.type === ChatConversationType.DIRECT &&
-      (input.projectId || memberIds.length !== 2 || memberIds[0] === memberIds[1])) {
-    throw new AppError("A direct conversation must contain exactly one other user.", 400, "INVALID_DIRECT_CONVERSATION");
+  if (
+    input.type === ChatConversationType.DIRECT &&
+    (input.projectId || memberIds.length !== 2 || memberIds[0] === memberIds[1])
+  ) {
+    throw new AppError(
+      "A direct conversation must contain exactly one other user.",
+      400,
+      "INVALID_DIRECT_CONVERSATION",
+    );
   }
   if (input.type === ChatConversationType.GROUP && memberIds.length < 3) {
-    throw new AppError("A group conversation must include at least two other participants.", 400, "INVALID_GROUP_CONVERSATION");
+    throw new AppError(
+      "A group conversation must include at least two other participants.",
+      400,
+      "INVALID_GROUP_CONVERSATION",
+    );
   }
   const validUsers = await AppDataSource.getRepository(User).find({
-    where: memberIds.map((id) => ({ id, organizationId: actor.organizationId, status: UserStatus.ACTIVE })),
+    where: memberIds.map((id) => ({
+      id,
+      organizationId: actor.organizationId,
+      status: UserStatus.ACTIVE,
+    })),
     select: { id: true },
   });
+  
   if (validUsers.length !== memberIds.length) {
-    throw new AppError("All conversation members must be active users in your organization.", 400, "INVALID_MEMBERS");
+    throw new AppError(
+      "All conversation members must be active users in your organization.",
+      400,
+      "INVALID_MEMBERS",
+    );
   }
-  const directPairKey = input.type === ChatConversationType.DIRECT ? pairKey(actor.id, memberIds[1]) : null;
+  const directPairKey =
+    input.type === ChatConversationType.DIRECT
+      ? pairKey(actor.id, memberIds[1])
+      : null;
   if (directPairKey) {
     const existing = await conversations().findOne({
-      where: { organizationId: actor.organizationId, directPairKey, type: ChatConversationType.DIRECT },
+      where: {
+        organizationId: actor.organizationId,
+        directPairKey,
+        type: ChatConversationType.DIRECT,
+      },
     });
     if (existing) return getConversationForActor(actor, existing.id);
   }
@@ -194,18 +293,24 @@ export async function listConversations(
   limit = 50,
 ) {
   if (!actor.organizationId) return [];
-  const query = conversations().createQueryBuilder("conversation")
+  const query = conversations()
+    .createQueryBuilder("conversation")
     .innerJoinAndSelect("conversation.members", "member")
     .leftJoinAndSelect("member.user", "user")
-    .where("conversation.organization_id = :organizationId", { organizationId: actor.organizationId })
-    .andWhere(`
+    .where("conversation.organization_id = :organizationId", {
+      organizationId: actor.organizationId,
+    })
+    .andWhere(
+      `
       EXISTS (
         SELECT 1
         FROM chat_conversation_members current_member
         WHERE current_member.conversation_id = conversation.id
           AND current_member.user_id = :userId
       )
-    `, { userId: actor.id })
+    `,
+      { userId: actor.id },
+    )
     .addSelect(
       "COALESCE(conversation.lastMessageAt, conversation.createdAt)",
       "conversationSortTimestamp",
@@ -272,8 +377,12 @@ export async function listConversations(
   }
 
   return result.map((conversation) => {
-    const currentMember = conversation.members.find((member) => member.userId === actor.id);
-    const other = conversation.members.find((member) => member.userId !== actor.id)?.user;
+    const currentMember = conversation.members.find(
+      (member) => member.userId === actor.id,
+    );
+    const other = conversation.members.find(
+      (member) => member.userId !== actor.id,
+    )?.user;
     const lastMessageEntity = lastMessageMap.get(conversation.id);
     const lastMessage = lastMessageEntity
       ? serializeChatMessage(lastMessageEntity)
@@ -282,7 +391,9 @@ export async function listConversations(
 
     return {
       ...conversation,
-      otherParticipant: other ? { id: other.id, fullName: other.fullName, email: other.email } : null,
+      otherParticipant: other
+        ? { id: other.id, fullName: other.fullName, email: other.email }
+        : null,
       lastMessage,
       unreadCount,
       lastReadAt: currentMember?.lastReadAt ?? null,
@@ -290,25 +401,80 @@ export async function listConversations(
   });
 }
 
-async function assertConversationManager(actor: ChatActor, conversationId: string) {
-  const conversation = await conversations().findOne({ where: { id: conversationId } });
-  if (!conversation || conversation.organizationId !== actor.organizationId) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-  if (conversation.projectId && actor.role !== UserRole.ADMIN && actor.role !== UserRole.MANAGER) {
-    const membership = await AppDataSource.getRepository(ProjectMember).findOne({ where: { projectId: conversation.projectId, userId: actor.id } });
-    if (!membership || ![ProjectRole.ADMIN, ProjectRole.LEAD].includes(membership.role)) throw new AppError("You cannot manage this conversation.", 403, "FORBIDDEN");
-  } else if (!conversation.projectId && actor.role !== UserRole.ADMIN && actor.role !== UserRole.MANAGER) {
-    throw new AppError("You cannot manage this conversation.", 403, "FORBIDDEN");
+async function assertConversationManager(
+  actor: ChatActor,
+  conversationId: string,
+) {
+  const conversation = await conversations().findOne({
+    where: { id: conversationId },
+  });
+  if (!conversation || conversation.organizationId !== actor.organizationId)
+    throw new AppError(
+      "Conversation not found.",
+      404,
+      "CONVERSATION_NOT_FOUND",
+    );
+  if (
+    conversation.projectId &&
+    actor.role !== UserRole.ADMIN &&
+    actor.role !== UserRole.MANAGER
+  ) {
+    const membership = await AppDataSource.getRepository(ProjectMember).findOne(
+      { where: { projectId: conversation.projectId, userId: actor.id } },
+    );
+    if (
+      !membership ||
+      ![ProjectRole.ADMIN, ProjectRole.LEAD].includes(membership.role)
+    )
+      throw new AppError(
+        "You cannot manage this conversation.",
+        403,
+        "FORBIDDEN",
+      );
+  } else if (
+    !conversation.projectId &&
+    actor.role !== UserRole.ADMIN &&
+    actor.role !== UserRole.MANAGER
+  ) {
+    throw new AppError(
+      "You cannot manage this conversation.",
+      403,
+      "FORBIDDEN",
+    );
   }
   return conversation;
 }
 
-export async function addMember(actor: ChatActor, conversationId: string, userId: string) {
+export async function addMember(
+  actor: ChatActor,
+  conversationId: string,
+  userId: string,
+) {
   const conversation = await assertConversationManager(actor, conversationId);
-  if (conversation.type === ChatConversationType.DIRECT) throw new AppError("Direct conversations can only contain two users.", 400, "DIRECT_CONVERSATION_MEMBERS_LOCKED");
-  const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId, organizationId: conversation.organizationId, status: UserStatus.ACTIVE } });
-  if (!user) throw new AppError("User not found in this organization.", 404, "USER_NOT_FOUND");
+  if (conversation.type === ChatConversationType.DIRECT)
+    throw new AppError(
+      "Direct conversations can only contain two users.",
+      400,
+      "DIRECT_CONVERSATION_MEMBERS_LOCKED",
+    );
+  const user = await AppDataSource.getRepository(User).findOne({
+    where: {
+      id: userId,
+      organizationId: conversation.organizationId,
+      status: UserStatus.ACTIVE,
+    },
+  });
+  if (!user)
+    throw new AppError(
+      "User not found in this organization.",
+      404,
+      "USER_NOT_FOUND",
+    );
   await members().insert({ conversationId, userId });
-  return members().findOne({ where: { conversationId, userId }, relations: { user: true } });
+  return members().findOne({
+    where: { conversationId, userId },
+    relations: { user: true },
+  });
 }
 
 export type RoomEvictor = (conversationId: string, userId: string) => void;
@@ -317,9 +483,18 @@ export function registerRoomEvictor(evictor: RoomEvictor): void {
   roomEvictor = evictor;
 }
 
-export async function removeMember(actor: ChatActor, conversationId: string, userId: string) {
+export async function removeMember(
+  actor: ChatActor,
+  conversationId: string,
+  userId: string,
+) {
   const conversation = await assertConversationManager(actor, conversationId);
-  if (conversation.type === ChatConversationType.DIRECT) throw new AppError("Direct conversations must keep both participants.", 400, "DIRECT_CONVERSATION_MEMBERS_LOCKED");
+  if (conversation.type === ChatConversationType.DIRECT)
+    throw new AppError(
+      "Direct conversations must keep both participants.",
+      400,
+      "DIRECT_CONVERSATION_MEMBERS_LOCKED",
+    );
   await members().delete({ conversationId, userId });
 
   if (roomEvictor) {
@@ -334,8 +509,14 @@ export async function getMessages(
   before?: Date,
   beforeId?: string,
 ) {
-  if (!(await canAccessConversation(actor, conversationId))) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-  const query = messages().createQueryBuilder("message")
+  if (!(await canAccessConversation(actor, conversationId)))
+    throw new AppError(
+      "Conversation not found.",
+      404,
+      "CONVERSATION_NOT_FOUND",
+    );
+  const query = messages()
+    .createQueryBuilder("message")
     .leftJoin("message.sender", "sender")
     .addSelect(["sender.id", "sender.fullName", "sender.email"])
     .where("message.conversation_id = :conversationId", { conversationId })
@@ -348,7 +529,10 @@ export async function getMessages(
         { before, beforeId },
       );
     } else {
-      query.andWhere("date_trunc('milliseconds', message.created_at) < :before", { before });
+      query.andWhere(
+        "date_trunc('milliseconds', message.created_at) < :before",
+        { before },
+      );
     }
   }
   const page = await query
@@ -370,14 +554,25 @@ export async function saveMessage(
   clientMessageId?: string,
 ) {
   const normalized = content.trim();
-  if (!normalized || normalized.length > 4000) throw new AppError("Message content must be between 1 and 4000 characters.", 400, "INVALID_MESSAGE");
-  if (!(await canAccessConversation(actor, conversationId))) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-  const findByClientId = () => clientMessageId
-    ? messages().findOne({
-        where: { conversationId, senderId: actor.id, clientMessageId },
-        relations: { sender: true },
-      })
-    : Promise.resolve(null);
+  if (!normalized || normalized.length > 4000)
+    throw new AppError(
+      "Message content must be between 1 and 4000 characters.",
+      400,
+      "INVALID_MESSAGE",
+    );
+  if (!(await canAccessConversation(actor, conversationId)))
+    throw new AppError(
+      "Conversation not found.",
+      404,
+      "CONVERSATION_NOT_FOUND",
+    );
+  const findByClientId = () =>
+    clientMessageId
+      ? messages().findOne({
+          where: { conversationId, senderId: actor.id, clientMessageId },
+          relations: { sender: true },
+        })
+      : Promise.resolve(null);
   const existing = await findByClientId();
   if (existing) return serializeChatMessage(existing);
 
@@ -389,19 +584,30 @@ export async function saveMessage(
         content: normalized,
         clientMessageId: clientMessageId ?? null,
       });
-      await manager.update(ChatConversation, { id: conversationId }, { lastMessageAt: created.createdAt });
+      await manager.update(
+        ChatConversation,
+        { id: conversationId },
+        { lastMessageAt: created.createdAt },
+      );
       return created;
     });
     const savedMessage = await messages().findOne({
       where: { id: message.id },
       relations: { sender: true },
     });
-    if (!savedMessage) throw new AppError("Message could not be loaded after saving.", 500, "CHAT_MESSAGE_LOAD_FAILED");
+    if (!savedMessage)
+      throw new AppError(
+        "Message could not be loaded after saving.",
+        500,
+        "CHAT_MESSAGE_LOAD_FAILED",
+      );
     return serializeChatMessage(savedMessage);
   } catch (error) {
-    const driverError = error instanceof QueryFailedError
-      ? (error as QueryFailedError & { driverError?: { code?: string } }).driverError
-      : undefined;
+    const driverError =
+      error instanceof QueryFailedError
+        ? (error as QueryFailedError & { driverError?: { code?: string } })
+            .driverError
+        : undefined;
     if (driverError?.code === "23505" && clientMessageId) {
       const concurrentlySaved = await findByClientId();
       if (concurrentlySaved) return serializeChatMessage(concurrentlySaved);
@@ -410,7 +616,18 @@ export async function saveMessage(
   }
 }
 
-export async function markConversationRead(actor: ChatActor, conversationId: string) {
-  if (!(await canAccessConversation(actor, conversationId))) throw new AppError("Conversation not found.", 404, "CONVERSATION_NOT_FOUND");
-  await members().update({ conversationId, userId: actor.id }, { lastReadAt: new Date() });
+export async function markConversationRead(
+  actor: ChatActor,
+  conversationId: string,
+) {
+  if (!(await canAccessConversation(actor, conversationId)))
+    throw new AppError(
+      "Conversation not found.",
+      404,
+      "CONVERSATION_NOT_FOUND",
+    );
+  await members().update(
+    { conversationId, userId: actor.id },
+    { lastReadAt: new Date() },
+  );
 }

@@ -60,8 +60,8 @@ app.use("/api/organizations", organizationRoutes);
 app.use("/api/organization", organizationRoutes);
 app.use("/api/notifications", notificationRoutes);
 
-app.use("/api/chat/conversations", chatRoutes);
-app.use("/api/conversations", chatRoutes);
+// app.use("/api/chat/conversations", chatRoutes);
+// app.use("/api/conversations", chatRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api", whiteboardRoutes);
 

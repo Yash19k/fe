@@ -20,10 +20,14 @@ const createSchema = Joi.object({
   organizationId: uuid,
   participantId: uuid,
   projectId: uuid.allow(null),
-  type: Joi.string().valid(...Object.values(ChatConversationType)).required(),
+  type: Joi.string()
+    .valid(...Object.values(ChatConversationType))
+    .required(),
   name: Joi.string().trim().max(150).allow("", null),
   memberIds: Joi.array().items(uuid).unique(),
 }).or("participantId", "memberIds");
+
+
 const memberSchema = Joi.object({ userId: uuid.required() });
 const conversationQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).max(1_000_000).default(1),
@@ -36,7 +40,8 @@ const messageQuerySchema = Joi.object({
 }).with("beforeId", "before");
 
 function actor(req: Request) {
-  if (!req.user) throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
+  if (!req.user)
+    throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
   return req.user;
 }
 
@@ -44,7 +49,11 @@ function param(value: string | string[]): string {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function uuidParam(req: Request, res: Response, name: string): string | undefined {
+function uuidParam(
+  req: Request,
+  res: Response,
+  name: string,
+): string | undefined {
   const value = param(req.params[name]);
   const { error } = uuid.validate(value);
   if (error) {
@@ -59,12 +68,21 @@ function validationError(res: Response, error: Joi.ValidationError) {
     success: false,
     code: "VALIDATION_ERROR",
     message: "Validation failed.",
-    errors: error.details.map((detail) => ({ field: detail.path.join("."), message: detail.message })),
+    errors: error.details.map((detail) => ({
+      field: detail.path.join("."),
+      message: detail.message,
+    })),
   });
 }
 
-export async function createConversationController(req: Request, res: Response) {
-  const { error, value } = createSchema.validate(req.body, { abortEarly: false, stripUnknown: true });
+export async function createConversationController(
+  req: Request,
+  res: Response,
+) {
+  const { error, value } = createSchema.validate(req.body, {
+    abortEarly: false,
+    stripUnknown: true,
+  });
   if (error) return validationError(res, error);
   const conversation = await createConversation(actor(req), value);
   return res.status(201).json({ success: true, data: conversation });
@@ -89,11 +107,19 @@ export async function listMembersController(req: Request, res: Response) {
 export async function getConversationController(req: Request, res: Response) {
   const conversationId = uuidParam(req, res, "conversationId");
   if (!conversationId) return;
-  return res.json({ success: true, data: await getConversationForActor(actor(req), conversationId) });
+  return res.json({
+    success: true,
+    data: await getConversationForActor(actor(req), conversationId),
+  });
 }
 
-export async function addConversationMemberController(req: Request, res: Response) {
-  const { error, value } = memberSchema.validate(req.body, { stripUnknown: true });
+export async function addConversationMemberController(
+  req: Request,
+  res: Response,
+) {
+  const { error, value } = memberSchema.validate(req.body, {
+    stripUnknown: true,
+  });
   if (error) return validationError(res, error);
   const conversationId = uuidParam(req, res, "conversationId");
   if (!conversationId) return;
@@ -103,7 +129,10 @@ export async function addConversationMemberController(req: Request, res: Respons
   });
 }
 
-export async function removeConversationMemberController(req: Request, res: Response) {
+export async function removeConversationMemberController(
+  req: Request,
+  res: Response,
+) {
   const conversationId = uuidParam(req, res, "conversationId");
   const userId = uuidParam(req, res, "userId");
   if (!conversationId || !userId) return;
@@ -112,13 +141,22 @@ export async function removeConversationMemberController(req: Request, res: Resp
 }
 
 export async function getMessagesController(req: Request, res: Response) {
-  const { error, value } = messageQuerySchema.validate(req.query, { stripUnknown: true, convert: true });
+  const { error, value } = messageQuerySchema.validate(req.query, {
+    stripUnknown: true,
+    convert: true,
+  });
   if (error) return validationError(res, error);
   const conversationId = uuidParam(req, res, "conversationId");
   if (!conversationId) return;
   return res.json({
     success: true,
-    data: await getMessages(actor(req), conversationId, value.limit, value.before, value.beforeId),
+    data: await getMessages(
+      actor(req),
+      conversationId,
+      value.limit,
+      value.before,
+      value.beforeId,
+    ),
   });
 }
 
@@ -130,7 +168,12 @@ export async function sendMessageController(req: Request, res: Response) {
   if (error) return validationError(res, error);
   const conversationId = uuidParam(req, res, "conversationId");
   if (!conversationId) return;
-  const message = await saveMessage(actor(req), conversationId, value.content, value.clientMessageId);
+  const message = await saveMessage(
+    actor(req),
+    conversationId,
+    value.content,
+    value.clientMessageId,
+  );
   await broadcastChatMessage(message);
   return res.status(201).json({ success: true, data: message });
 }
