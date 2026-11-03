@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
 import { AppDataSource } from "../config/data.source";
 import { OrganizationSla } from "../entities/organization.sla.entity";
-import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
+import { hasOrganizationPermission } from "../middleware/check.permissions";
 
 const DEFAULT_SLA = {
   urgentHours: 4,
@@ -55,9 +55,9 @@ export async function updateOrganizationSla(req: Request, res: Response) {
     throw new AppError("Organization not found.", 404, "ORGANIZATION_NOT_FOUND");
   }
 
-  if (req.user?.role !== UserRole.ADMIN && req.user?.role !== UserRole.MANAGER) {
+  if (!hasOrganizationPermission(req.user?.role, "sla:manage")) {
     throw new AppError(
-      "Only organization administrators or managers can update SLA settings.",
+      "Only organization administrators can update SLA settings.",
       403,
       "FORBIDDEN",
     );

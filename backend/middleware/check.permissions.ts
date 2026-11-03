@@ -1,10 +1,11 @@
 
 import { Request, Response, NextFunction } from "express";
 
-import { User } from "../entities/user.entity";
+import { User, UserRole } from "../entities/user.entity";
 import { AppDataSource } from "../config/data.source";
+import { AppError } from "../errors/app.error";
 
-export type Role = "ADMIN" | "MANAGER" | "TEAMMATE";
+export type Role = UserRole;
 
 export type Permission =
   | "user:manage"
@@ -12,70 +13,51 @@ export type Permission =
   | "project:create"
   | "project:read:all"
   | "project:read"
-  | "project:update"
-  | "project:delete"
-  | "project:member:manage"
-  | "task:create"
-  | "task:read"
-  | "task:update"
-  | "task:delete"
-  | "task:assign"
-  | "task:comment";
+  | "sla:manage";
 
-const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
-  ADMIN: [
+const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
+  [UserRole.ADMIN]: [
     "user:manage",
     "role:manage",
     "project:create",
     "project:read:all",
     "project:read",
-    "project:update",
-    "project:delete",
-    "project:member:manage",
-    "task:create",
-    "task:read",
-    "task:update",
-    "task:delete",
-    "task:assign",
-    "task:comment",
+    "sla:manage",
   ],
 
-  MANAGER: [
+  [UserRole.MANAGER]: [
     "project:create",
     "project:read",
-    "project:update",
-    "project:member:manage",
-    "task:create",
-    "task:read",
-    "task:update",
-    "task:delete",
-    "task:assign",
-    "task:comment",
   ],
 
-  TEAMMATE: [
+  [UserRole.TEAMMATE]: [
     "project:read",
-    "task:read",
-    "task:update",
-    "task:comment",
   ],
 };
+
+const isRole = (role: string): role is Role =>
+  Object.values(UserRole).some((validRole) => validRole === role);
+
+export const hasOrganizationPermission = (
+  role: string | undefined,
+  permission: Permission,
+): boolean =>
+  role !== undefined &&
+  isRole(role) &&
+  ROLE_PERMISSIONS[role].includes(permission);
 
 export const checkPermission = (permission: Permission) => {
   return async (
     req: Request,
-    res: Response,
+    _res: Response,
     next: NextFunction
   ): Promise<void> => {
     if (!req.user?.id) {
-      res.status(401).json({
-        success: false,
-        message: "Authentication required.",
-      });
+      next(new AppError("Authentication required.", 401, "UNAUTHORIZED"));
       return;
     }
 
-    let role = req.user.role as Role | undefined;
+    let role: string | undefined = req.user.role;
 
     if (!role) {
       const userRepository = AppDataSource.getRepository(User);
@@ -85,28 +67,27 @@ export const checkPermission = (permission: Permission) => {
       });
 
       if (!user) {
-        res.status(401).json({
-          success: false,
-          message: "User not found. Please log in again.",
-        });
+        next(new AppError(
+          "User not found. Please log in again.",
+          401,
+          "USER_NOT_FOUND",
+        ));
         return;
       }
-      role = user.role as Role;
+      role = user.role;
     }
 
-   if (!Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role)) {
-      res.status(403).json({
-        success: false,
-        message: "Invalid user role.",
-      });
+    if (!role || !isRole(role)) {
+      next(new AppError("Invalid user role.", 403, "INVALID_ROLE"));
       return;
     }
 
-    if (!ROLE_PERMISSIONS[role].includes(permission)) {
-      res.status(403).json({
-        success: false,
-        message: "You do not have permission to perform this action.",
-      });
+    if (!hasOrganizationPermission(role, permission)) {
+      next(new AppError(
+        "You do not have permission to perform this action.",
+        403,
+        "PERMISSION_DENIED",
+      ));
       return;
     }
 

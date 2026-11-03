@@ -2,7 +2,7 @@ import Joi from "joi";
 import { AppError } from "../errors/app.error";
 import { NextFunction, Request, Response } from "express";
 
-const uuid = Joi.string().guid({ version: ["uuidv4"] });
+const uuid = Joi.string().uuid();
 const sceneData = Joi.object({
   elements: Joi.array().items(Joi.object().unknown(true)).required(),
   appState: Joi.object().unknown(true).default({}),

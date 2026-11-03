@@ -34,8 +34,24 @@ import { isLoggedIn } from "../middleware/is.loggedin";
 import { asyncHandler } from "../middleware/async.handler";
 import { checkPermission } from "../middleware/check.permissions";
 import { requireProjectPermission } from "../middleware/project.permission";
+import { validateUuidRouteParam } from "../validations/route-params";
+import Joi from "joi";
+import {
+  validatePaginationQuery,
+  validateRequestBody,
+} from "../validations/request.validation";
 
 const router = Router();
+
+for (const param of ["projectId", "memberId", "labelId", "logId"]) {
+  router.param(param, validateUuidRouteParam);
+}
+
+const createProjectLabelSchema = Joi.object({
+  name: Joi.string().trim().min(1).required(),
+})
+  .required()
+  .unknown(true);
 
 router.post(
   "/",
@@ -122,6 +138,7 @@ router.get(
 router.post(
   "/:projectId/labels",
   isLoggedIn,
+  validateRequestBody(createProjectLabelSchema),
   requireProjectPermission("project:update"),
   asyncHandler(createProjectLabel),
 );
@@ -165,6 +182,7 @@ router.post(
 router.get(
   "/:projectId/audit-logs",
   isLoggedIn,
+  validatePaginationQuery(50, 150),
   requireProjectPermission("project:view"),
   asyncHandler(getProjectAuditLogs),
 );

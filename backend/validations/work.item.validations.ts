@@ -15,6 +15,7 @@ import { AppError } from "../errors/app.error";
 import { DEFAULT_RECURRENCE_TIMEZONE } from "../services/recurrence.service";
 import { getProjectDate } from "../services/work-item-dependency.service";
 
+const uuidPath = Joi.string().uuid();
 
 const assigneeSchema = Joi.object({
   userId: Joi.string().guid({ version: ["uuidv4"] }).required(),
@@ -270,18 +271,12 @@ export const updateWorkItemSchema = Joi.object({
   .unknown(false);
 
 const workItemIdParamsSchema = Joi.object({
-  workItemId: Joi.string()
-    .guid({ version: ["uuidv4"] })
-    .required(),
+  workItemId: uuidPath.required(),
 }).unknown(false);
 
 const dependencyParamsSchema = Joi.object({
-  workItemId: Joi.string()
-    .guid({ version: ["uuidv4"] })
-    .required(),
-  depId: Joi.string()
-    .guid({ version: ["uuidv4"] })
-    .required(),
+  workItemId: uuidPath.required(),
+  depId: uuidPath.required(),
 }).unknown(false);
 
 export const workItemDependencyVersionBodySchema = Joi.object({
@@ -389,9 +384,7 @@ export const validateUpdateWorkItem = (
   next();
 };
 const viewProjectWorkItemsParamsSchema = Joi.object({
-  projectId: Joi.string()
-    .guid({ version: ["uuidv4"] })
-    .required(),
+  projectId: uuidPath.required(),
 }).unknown(false);
 
 const viewProjectWorkItemsQuerySchema = Joi.object({

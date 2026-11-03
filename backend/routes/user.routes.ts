@@ -4,6 +4,9 @@ import { asyncHandler } from "../middleware/async.handler";
 import { isLoggedIn } from "../middleware/is.loggedin";
 import { createRateLimiter } from "../middleware/rate.limiter";
 import { getMyAuditLogs } from "../controllers/auditlog.controller";
+import { validatePaginationQuery } from "../validations/request.validation";
+import Joi from "joi";
+import { validateRequestBody } from "../validations/request.validation";
 
 
 import {
@@ -19,14 +22,31 @@ const loginLimiter = createRateLimiter({
   message: "Too many login attempts. Please wait a minute and try again.",
   code: "LOGIN_RATE_LIMIT_EXCEEDED",
 });
+const profileBodySchema = Joi.object({
+  fullName: Joi.any(),
+  avatarUrl: Joi.any(),
+})
+  .min(1)
+  .required()
+  .unknown(true);
 
 router.post("/", asyncHandler(registerOrganization));  // when skip the add member step, this route will be used to register the organization and the first user
 router.post("/register", asyncHandler(registerOrganization));
 router.get("/", isLoggedIn, asyncHandler(getOrganizationUsers));
 router.post("/login", loginLimiter, asyncHandler(login));
 router.get("/me", isLoggedIn, asyncHandler(currentUser));
-router.patch("/me", isLoggedIn, asyncHandler(updateUserProfile));
-router.get("/me/audit-logs", isLoggedIn, asyncHandler(getMyAuditLogs));
+router.patch(
+  "/me",
+  isLoggedIn,
+  validateRequestBody(profileBodySchema),
+  asyncHandler(updateUserProfile),
+);
+router.get(
+  "/me/audit-logs",
+  isLoggedIn,
+  validatePaginationQuery(20, 100),
+  asyncHandler(getMyAuditLogs),
+);
 router.post("/logout", asyncHandler(logout));
 router.post("/refresh", refreshAccessToken);
 router.post("/invite", isLoggedIn, asyncHandler(inviteMembersController));

@@ -422,7 +422,7 @@ export const removeProjectMember = async (req: Request, res: Response) => {
   await AppDataSource.transaction(async (manager) => {
     const project = await getProject(projectId, actor.organizationId, manager);
 
-    if (memberId === actor.id && actor.role !== UserRole.ADMIN) {
+    if (memberId === actor.id) {
       throw new AppError(
         "You cannot remove yourself from the project using this endpoint.",
         403,
@@ -440,6 +440,14 @@ export const removeProjectMember = async (req: Request, res: Response) => {
         "Member not found in project.",
         404,
         "MEMBER_NOT_FOUND",
+      );
+    }
+
+    if (memberId === project.createdById) {
+      throw new AppError(
+        "Cannot remove the project creator.",
+        403,
+        "CANNOT_REMOVE_PROJECT_CREATOR",
       );
     }
 

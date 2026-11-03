@@ -12,8 +12,13 @@ import {
   validateWhiteboardParams,
   validateWhiteboardRevisionParams,
 } from "../validations/whiteboard.validation";
+import { validateUuidRouteParam } from "../validations/route-params";
 
 const router = Router();
+
+for (const param of ["projectId", "whiteboardId"]) {
+  router.param(param, validateUuidRouteParam);
+}
 
 router.post(
   "/projects/:projectId/whiteboards",

@@ -12,8 +12,13 @@ import {
   removeConversationMemberController,
   sendMessageController,
 } from "../controllers/chat.controller";
+import { validateUuidRouteParam } from "../validations/route-params";
 
 const router = Router();
+for (const param of ["conversationId", "userId"]) {
+  router.param(param, validateUuidRouteParam);
+}
+
 router.use(isLoggedIn);
 // router.post("/", asyncHandler(createConversationController));
 // router.get("/", asyncHandler(listConversationsController));

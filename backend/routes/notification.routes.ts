@@ -8,12 +8,16 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
 } from "../controllers/notification.controller";
+import { validateUuidRouteParam } from "../validations/route-params";
+import { validatePaginationQuery } from "../validations/request.validation";
 
 const router = Router();
 
+router.param("id", validateUuidRouteParam);
+
 router.use(isLoggedIn);
 
-router.get("/", asyncHandler(getUserNotifications));
+router.get("/", validatePaginationQuery(20, 100), asyncHandler(getUserNotifications));
 router.get("/unread-count", asyncHandler(getUnreadNotificationCount));
 router.patch("/read-all", asyncHandler(markAllNotificationsRead));
 router.patch("/:id/read", asyncHandler(markNotificationRead));

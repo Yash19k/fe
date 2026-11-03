@@ -8,8 +8,9 @@ import { createNotificationsBestEffort } from "./notification.service";
 
 let slaScheduler: Cron | undefined;
 let recurrenceScheduler: Cron | undefined;
-let isSlaJobRunning = false;
-let isRecurrenceJobRunning = false;
+let activeSlaJob: Promise<void> | undefined;
+let activeRecurrenceJob: Promise<void> | undefined;
+let isSchedulerStopping = false;
 const schedulerErrorLogIntervalMs = 5 * 60 * 1000;
 const schedulerErrorLogs = new Map<
   string,
@@ -37,6 +38,10 @@ function logSchedulerFailure(schedulerName: string, error: unknown): void {
 }
 
 export function startScheduler(): void {
+  if (isSchedulerStopping) {
+    throw new AppError("Scheduler is stopping and cannot be restarted", 503);
+  }
+
   if (!AppDataSource.isInitialized) {
     throw new AppError(
       "Database must be initialized before starting the scheduler",
@@ -55,26 +60,30 @@ export function startScheduler(): void {
       name: "sla-status-refresh",
       protect: true,
     },
-    async () => {
-      if (isSlaJobRunning) return;
+    () => {
+      if (isSchedulerStopping || activeSlaJob) return;
 
-      isSlaJobRunning = true;
-      try {
-        const result = await AppDataSource.transaction(
-          async (manager) => refreshSlaStatuses(manager),
-        );
-        await createNotificationsBestEffort(result.notifications, {
-          operation: "sla-refresh",
-        });
+      const job = (async () => {
+        try {
+          const result = await AppDataSource.transaction(
+            async (manager) => refreshSlaStatuses(manager),
+          );
+          await createNotificationsBestEffort(result.notifications, {
+            operation: "sla-refresh",
+          });
 
-        console.info(
-          `[SLA Scheduler] Completed. Updated ${result.updatedCount} work items.`,
-        );
-      } catch (error) {
-        logSchedulerFailure("SLA Scheduler", error);
-      } finally {
-        isSlaJobRunning = false;
-      }
+          console.info(
+            `[SLA Scheduler] Completed. Updated ${result.updatedCount} work items.`,
+          );
+        } catch (error) {
+          logSchedulerFailure("SLA Scheduler", error);
+        }
+      })();
+      activeSlaJob = job;
+      void job.then(() => {
+        if (activeSlaJob === job) activeSlaJob = undefined;
+      });
+      return job;
     },
   );
 
@@ -85,34 +94,62 @@ export function startScheduler(): void {
       name: "recurring-work-item-processor",
       protect: true,
     },
-    async () => {
-      if (isRecurrenceJobRunning) return;
+    () => {
+      if (isSchedulerStopping || activeRecurrenceJob) return;
 
-      isRecurrenceJobRunning = true;
-      try {
-        const processedCount = await processDueRecurrences(25);
-        if (processedCount > 0) {
-          console.info(
-            `[Recurrence Scheduler] Completed. Processed ${processedCount} due recurrences.`,
-          );
+      const job = (async () => {
+        try {
+          const processedCount = await processDueRecurrences(25);
+          if (processedCount > 0) {
+            console.info(
+              `[Recurrence Scheduler] Completed. Processed ${processedCount} due recurrences.`,
+            );
+          }
+        } catch (error) {
+          logSchedulerFailure("Recurrence Scheduler", error);
         }
-      } catch (error) {
-        logSchedulerFailure("Recurrence Scheduler", error);
-      } finally {
-        isRecurrenceJobRunning = false;
-      }
+      })();
+      activeRecurrenceJob = job;
+      void job.then(() => {
+        if (activeRecurrenceJob === job) activeRecurrenceJob = undefined;
+      });
+      return job;
     },
   );
 
   console.info("[Scheduler] SLA and recurrence schedulers started.");
 }
 
-export function stopScheduler(): void {
-  slaScheduler?.stop();
-  recurrenceScheduler?.stop();
+export async function stopScheduler(): Promise<void> {
+  isSchedulerStopping = true;
 
+  const stopFailures: string[] = [];
+  try {
+    slaScheduler?.stop();
+  } catch (error) {
+    logSchedulerFailure("SLA scheduler shutdown", error);
+    stopFailures.push("SLA");
+  }
+  try {
+    recurrenceScheduler?.stop();
+  } catch (error) {
+    logSchedulerFailure("Recurrence scheduler shutdown", error);
+    stopFailures.push("recurrence");
+  }
   slaScheduler = undefined;
   recurrenceScheduler = undefined;
+
+  await Promise.all(
+    [activeSlaJob, activeRecurrenceJob].filter(
+      (job): job is Promise<void> => job !== undefined,
+    ),
+  );
+
+  if (stopFailures.length > 0) {
+    throw new Error(
+      `Unable to stop ${stopFailures.join(" and ")} scheduler job(s).`,
+    );
+  }
 
   console.info("[Scheduler] SLA and recurrence schedulers stopped.");
 }

@@ -7,6 +7,7 @@ import { Plus, Trash2, Search, ShieldAlert } from 'lucide-react';
 import { AddProjectMemberDialog } from '../../components/modals/AddProjectMemberDialog';
 import type { User, Task, Role } from '../../types';
 import { isWorkflowStatusComplete } from '../../domain/workflow';
+import { canRemoveProjectMember } from '../../services/api';
 
 export function ProjectMembersView() {
   const {
@@ -158,7 +159,6 @@ export function ProjectMembersView() {
                 isWorkflowStatusComplete(currentWorkflow, task.status),
               );
               const activeCount = memberTasks.length - doneTasks.length;
-              const isOwner = member.id === currentProject.ownerId;
               const isSelf = Boolean(
                 currentUser?.id &&
                 (member.id === currentUser.id ||
@@ -166,6 +166,13 @@ export function ProjectMembersView() {
               );
               const effectiveRole =
                 currentProject.memberRoles?.[member.id] || member.role || 'Teammate';
+              const canRemoveMember = canRemoveProjectMember(
+                currentUser?.role,
+                currentProject.memberRoles?.[currentUser?.id || ''],
+                currentUser?.id,
+                member.id,
+                currentProject.ownerId,
+              );
 
               return (
                 <div
@@ -244,20 +251,11 @@ export function ProjectMembersView() {
 
                   {/* Remove Action */}
                   <div className="flex justify-end">
-                    {canManageMembers && !isSelf && (
+                    {canRemoveMember && !isSelf && (
                       <button
                         onClick={() => setMemberToRemove(member)}
-                        disabled={isOwner}
-                        className={`p-1.5 rounded transition-colors ${
-                          isOwner
-                            ? 'text-text-muted/40 cursor-not-allowed'
-                            : 'text-text-muted hover:text-rose-400 hover:bg-surface-elevated'
-                        }`}
-                        title={
-                          isOwner
-                            ? 'Project owner cannot be removed'
-                            : `Remove ${member.name} from project`
-                        }
+                        className="p-1.5 rounded transition-colors text-text-muted hover:text-rose-400 hover:bg-surface-elevated"
+                        title={`Remove ${member.name} from project`}
                       >
                         <Trash2 size={13} />
                       </button>

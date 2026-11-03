@@ -35,8 +35,17 @@ import {
 import { asyncHandler } from "../middleware/async.handler";
 import { requireProjectPermission } from "../middleware/project.permission";
 import { uploadWorkItemAttachments } from "../middleware/work.item.attachment.upload.middleware";
+import { validateUuidRouteParam } from "../validations/route-params";
+import { validateRequestBody } from "../validations/request.validation";
+import Joi from "joi";
 
 const router = Router();
+
+for (const param of ["workItemId", "projectId", "depId"]) {
+  router.param(param, validateUuidRouteParam);
+}
+
+const objectBodySchema = Joi.object().required().unknown(true);
 
 router.post(
   "/",
@@ -115,8 +124,8 @@ router.delete(
 router.get(
   "/project/:projectId",
   isLoggedIn,
-  requireProjectPermission("task:read"),
   validateViewProjectWorkItems,
+  requireProjectPermission("task:read"),
   asyncHandler(getProjectWorkItems)
 );
 
@@ -125,6 +134,7 @@ router.post(
   "/:workItemId/comments",
   isLoggedIn,
   validateWorkItemId,
+  validateRequestBody(objectBodySchema),
   requireProjectPermission("task:update"),
   asyncHandler(addWorkItemComment),
 );
@@ -141,6 +151,7 @@ router.post(
   "/:workItemId/time-entries",
   isLoggedIn,
   validateWorkItemId,
+  validateRequestBody(objectBodySchema),
   requireProjectPermission("task:update"),
   asyncHandler(addWorkItemTimeEntry),
 );

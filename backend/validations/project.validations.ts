@@ -5,14 +5,15 @@ import { ProjectVisibility } from "../entities/project.entity";
 import { ProjectRole } from "../entities/project.member.entity";
 
 const uuidV4 = Joi.string().guid({ version: ["uuidv4"] });
+const uuid = Joi.string().uuid();
 
 const projectIdSchema = Joi.object({
-  projectId: uuidV4.required(),
+  projectId: uuid.required(),
 }).unknown(false);
 
 const projectMemberParamsSchema = Joi.object({
-  projectId: uuidV4.required(),
-  memberId: uuidV4.required(),
+  projectId: uuid.required(),
+  memberId: uuid.required(),
 }).unknown(false);
 
 const createProjectSchema = Joi.object({

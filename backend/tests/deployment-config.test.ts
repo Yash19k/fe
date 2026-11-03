@@ -5,9 +5,28 @@ import {
   isAllowedOrigin,
   validateBackendHost,
   validateBackendPort,
+  validateBoolean,
   validateCorsOrigins,
   validateFrontendUrl,
+  validateNodeEnvironment,
+  validatePort,
 } from "../config/config";
+
+test("NODE_ENV and boolean settings accept only documented values", () => {
+  assert.equal(validateNodeEnvironment(undefined), "development");
+  assert.equal(validateNodeEnvironment("test"), "test");
+  assert.equal(validateNodeEnvironment("production"), "production");
+  assert.throws(() => validateNodeEnvironment("prod"), /NODE_ENV must be one of/);
+  assert.equal(validateBoolean(" TRUE ", "DB_SSL"), true);
+  assert.equal(validateBoolean(undefined, "DB_SSL"), false);
+  assert.throws(() => validateBoolean("yes", "DB_SSL"), /DB_SSL must be either/);
+});
+
+test("database and service ports are validated", () => {
+  assert.equal(validatePort("5432", "DB_PORT", 5432), 5432);
+  assert.throws(() => validatePort("0", "DB_PORT", 5432), /DB_PORT must be an integer/);
+  assert.throws(() => validatePort("bad", "SMTP_PORT", 587), /SMTP_PORT must be an integer/);
+});
 
 test("development backend listener defaults remain local", () => {
   assert.equal(validateBackendHost(undefined, false), "127.0.0.1");
@@ -64,6 +83,12 @@ test("production configuration startup fails clearly when HOST is missing", () =
         ACCESS_TOKEN_SECRET: "production_test_secret_at_least_32_characters",
         DB_PASSWORD: "configured-for-test",
         DB_SYNCHRONIZE: "false",
+        DB_LOGGING: "false",
+        DB_SSL: "false",
+        DB_HOST: "database.example.invalid",
+        DB_PORT: "5432",
+        DB_USERNAME: "taskflow",
+        DB_NAME: "taskflow",
       },
     },
   );
