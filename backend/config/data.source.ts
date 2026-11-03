@@ -66,6 +66,7 @@ export const AppDataSource = new DataSource({
   username: config.database.username,
   password: (config.database.password),
   database: config.database.name,
+  ssl: config.database.ssl,
 
   entities: registeredEntities,
 

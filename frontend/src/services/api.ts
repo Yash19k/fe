@@ -1424,7 +1424,7 @@ export function backendProjectToFrontend(proj: any): Project {
     visibility: proj.visibility === 'PUBLIC' ? 'global' : 'private',
     status: 'On Track',
     color: proj.color || '#7465F6',
-    ownerId: proj.ownerId || memberIds[0] || '',
+    ownerId: proj.createdById || '',
     memberIds,
     memberRoles,
     startDate: proj.startDate || '',
@@ -1439,6 +1439,27 @@ export function backendProjectToFrontend(proj: any): Project {
     createdAt: proj.createdAt || new Date().toISOString(),
     updatedAt: proj.updatedAt || new Date().toISOString(),
   };
+}
+
+export function canRemoveProjectMember(
+  organizationRole: Role | string | null | undefined,
+  projectRole: Role | string | null | undefined,
+  actorId: string | null | undefined,
+  targetId: string,
+  projectCreatorId?: string | null,
+): boolean {
+  if (
+    !actorId ||
+    targetId === actorId ||
+    (projectCreatorId && targetId === projectCreatorId)
+  ) {
+    return false;
+  }
+
+  return (
+    normalizeRole(organizationRole) === 'Admin' ||
+    normalizeRole(projectRole) === 'Admin'
+  );
 }
 
 export function backendSprintToFrontend(sprint: any): Sprint {

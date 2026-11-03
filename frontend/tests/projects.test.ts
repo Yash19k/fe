@@ -6,9 +6,28 @@ import {
   validateProjectId,
   validateProjectDates,
 } from '../src/domain/projects.ts';
-import { backendProjectToFrontend } from '../src/services/api.ts';
+import {
+  backendProjectToFrontend,
+  canRemoveProjectMember,
+} from '../src/services/api.ts';
 
 describe('Project Domain Logic Tests', () => {
+  it('uses the persisted project creator and effective member-removal permissions', () => {
+    const mapped = backendProjectToFrontend({
+      id: 'project-1',
+      createdById: 'creator-1',
+      memberships: [{ userId: 'first-member', role: 'ADMIN' }],
+    });
+    assert.equal(mapped.ownerId, 'creator-1');
+
+    assert.equal(canRemoveProjectMember('Teammate', 'Admin', 'actor', 'member'), true);
+    assert.equal(canRemoveProjectMember('Manager', 'LEAD', 'actor', 'member'), false);
+    assert.equal(canRemoveProjectMember('Teammate', 'MEMBER', 'actor', 'member'), false);
+    assert.equal(canRemoveProjectMember('Admin', undefined, 'actor', 'member'), true);
+    assert.equal(canRemoveProjectMember('Admin', 'ADMIN', 'actor', 'actor'), false);
+    assert.equal(canRemoveProjectMember('Admin', 'ADMIN', 'actor', 'creator', 'creator'), false);
+  });
+
   const existingProjects = [
     { id: 'proj-1', projectKey: 'ALPHA' },
     { id: 'proj-2', projectKey: 'BETA' },

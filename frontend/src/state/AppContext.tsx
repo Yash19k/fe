@@ -71,6 +71,7 @@ import {
   markAllNotificationsReadApi,
   createNotificationApi,
   backendProjectToFrontend,
+  canRemoveProjectMember,
   backendWorkItemToTask,
   backendSprintToFrontend,
   frontendStatusToBackend,
@@ -2480,16 +2481,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [projects, allUsers, recordAudit, showToast]);
 
   const removeProjectMember = useCallback((projectId: string, userId: string) => {
-    if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {
-      showToast('Permission denied: Only Managers and Admins can remove members', 'error');
+    const targetProj = projects.find((p) => p.id === projectId);
+    if (!currentUser || !targetProj) return false;
+
+    if (userId === targetProj.ownerId) {
+      showToast('Cannot remove the project creator.', 'error');
       return false;
     }
 
-    const targetProj = projects.find((p) => p.id === projectId);
-    if (!targetProj) return false;
-
-    if (userId === targetProj.ownerId) {
-      showToast('Cannot remove project owner. Reassign ownership first.', 'error');
+    if (!canRemoveProjectMember(
+      currentUser.role,
+      targetProj.memberRoles?.[currentUser.id],
+      currentUser.id,
+      userId,
+      targetProj.ownerId,
+    )) {
+      showToast('Permission denied: Only project admins or organization admins can remove members', 'error');
       return false;
     }
 
@@ -2521,7 +2528,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     return true;
-  }, [currentUser.role, projects, allUsers, recordAudit, showToast]);
+  }, [currentUser, projects, allUsers, recordAudit, showToast]);
 
   const updateProjectMemberRole = useCallback((projectId: string, userId: string, newRole: Role) => {
     if (!currentUser || !hasPermission(currentUser.role, PERMISSIONS.MANAGE_MEMBERS)) {

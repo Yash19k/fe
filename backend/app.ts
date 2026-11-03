@@ -12,6 +12,7 @@ import notificationRoutes from "./routes/notification.routes";
 import slaRoutes from "./routes/sla.routes";
 import { errorHandler } from "./middleware/error.handler";
 import { isAllowedOrigin } from "./config/config";
+import { AppError } from "./errors/app.error";
 import chatRoutes from "./routes/chat.routes";
 import whiteboardRoutes from "./routes/whiteboard.routes";
 import authRoutes from "./routes/auth.routes";
@@ -44,7 +45,7 @@ app.use(
         callback(null, true);
         return;
       }
-      callback(new Error("Origin is not allowed by CORS"));
+      callback(new AppError("Origin is not allowed by CORS.", 403, "CORS_ORIGIN_DENIED"));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

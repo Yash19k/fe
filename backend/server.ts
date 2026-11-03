@@ -32,9 +32,7 @@ async function startServer(): Promise<void> {
     attachChatWebSocket(server);
     attachWhiteboardSocket(server);
     server.listen(config.port, config.host, () => {
-      console.log(
-        `Server running at http://${config.host}:${config.port}`,
-      );
+      console.log(`Server listening on ${config.host}:${config.port}.`);
     });
 
     server.on("error", (error: NodeJS.ErrnoException) => {

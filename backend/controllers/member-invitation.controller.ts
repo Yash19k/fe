@@ -7,6 +7,7 @@ import {
 import { setAuthCookies } from "../services/auth.session.service";
 import { UserRole } from "../entities/user.entity";
 import { AppError } from "../errors/app.error";
+import { hasOrganizationPermission } from "../middleware/check.permissions";
 
 const singleMemberSchema = Joi.object({
   email: Joi.string().email().required(),
@@ -57,7 +58,7 @@ export async function inviteMembersController(req: Request, res: Response) {
   if (!authenticatedUser) {
     throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
   }
-  if (authenticatedUser.role !== UserRole.ADMIN) {
+  if (!hasOrganizationPermission(authenticatedUser.role, "user:manage")) {
     throw new AppError(
       "Only organization admins can invite members.",
       403,

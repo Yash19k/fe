@@ -8,7 +8,7 @@ import { config } from "../config/config";
 const authCookieOptions = {
   httpOnly: true,
   sameSite: config.cookieSameSite,
-  secure: process.env.NODE_ENV === "production",
+  secure: config.cookieSecure,
   path: "/",
 };
 

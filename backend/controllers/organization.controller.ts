@@ -13,6 +13,7 @@ import Joi from "joi";
 import { UserSession } from "../entities/user.session.entity";
 import { AppError } from "../errors/app.error";
 import { config } from "../config/config";
+import { hasOrganizationPermission } from "../middleware/check.permissions";
 
 // const invitedMemberSchema = Joi.array().items(
 //   Joi.object({
@@ -87,6 +88,9 @@ export async function registerOrganization(
         status: UserStatus.ACTIVE,
       });
 
+      org.createdByUserId = newUser.id;
+      await m.save(Organization, org);
+
       await m.save(OrganizationSla, {
         organizationId: org.id,
         urgentHours: 4,
@@ -129,7 +133,7 @@ export async function registerOrganization(
 
     res.cookie("refreshToken", rawRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: config.cookieSecure,
       sameSite: config.cookieSameSite,
       path: "/api/auth/refresh",
       expires: refreshExpiry,
@@ -203,10 +207,12 @@ export async function addOrganizationMembers(
       });
     }
 
-    if (authUser.role !== UserRole.ADMIN) {
-      return res.status(403).json({
-        message: "Only organization admins can add members",
-      });
+    if (!hasOrganizationPermission(authUser.role, "user:manage")) {
+      throw new AppError(
+        "Only organization admins can add members.",
+        403,
+        "ADMIN_REQUIRED",
+      );
     }
 
     if (!authUser.organizationId) {
@@ -293,7 +299,7 @@ export async function updateOrganizationMemberRole(req: Request, res: Response) 
     throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
   }
 
-  if (authUser.role !== UserRole.ADMIN) {
+  if (!hasOrganizationPermission(authUser.role, "role:manage")) {
     throw new AppError("Only organization administrators can update member roles.", 403, "ADMIN_REQUIRED");
   }
 
@@ -357,7 +363,7 @@ export async function removeOrganizationMember(req: Request, res: Response) {
     throw new AppError("Authentication required.", 401, "UNAUTHORIZED");
   }
 
-  if (authUser.role !== UserRole.ADMIN) {
+  if (!hasOrganizationPermission(authUser.role, "role:manage")) {
     throw new AppError("Only organization administrators can remove members.", 403, "ADMIN_REQUIRED");
   }
 
@@ -399,7 +405,7 @@ export async function removeOrganizationMember(req: Request, res: Response) {
     where: { id: authUser.organizationId },
   });
 
-  if (org && (org as any).createdByUserId === targetUserId) {
+  if (org?.createdByUserId === targetUserId) {
     throw new AppError("Cannot remove the organization owner.", 400, "CANNOT_REMOVE_OWNER");
   }
 

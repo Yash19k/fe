@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { config } from "../config/config";
 
 export interface AccessTokenPayload {
   userId: string;
@@ -8,15 +9,9 @@ export interface AccessTokenPayload {
 }
 
 export function generateAccessToken(payload: AccessTokenPayload): string {
-  const secret = process.env.ACCESS_TOKEN_SECRET || process.env.JWT_SECRET;
-
-  if (!secret) {
-    throw new Error("ACCESS_TOKEN_SECRET or JWT_SECRET must be configured");
-  }
-
   return jwt.sign(
     { ...payload, type: "ACCESS" },
-    secret,
+    config.accessTokenSecret,
     { expiresIn: "15m" }
   );
 }

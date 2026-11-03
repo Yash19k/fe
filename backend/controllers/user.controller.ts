@@ -99,6 +99,9 @@ export async function registerOrganization(req: Request, res: Response) {
       status: UserStatus.ACTIVE,
     });
 
+    org.createdByUserId = newUser.id;
+    await m.save(Organization, org);
+
     await m.save(OrganizationSla, {
       organizationId: org.id,
       urgentHours: 4,
