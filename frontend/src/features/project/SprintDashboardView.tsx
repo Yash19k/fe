@@ -259,9 +259,9 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
       {/* Sprint Header & Selector Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-surface border border-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
             <Zap size={18} />
           </div>
           <div>
@@ -343,7 +343,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
 
           {/* KPI Metrics Summary Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>Total Tasks</span>
                 <ListTodo size={14} className="text-brand-primary" />
@@ -352,7 +352,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-[11px] text-text-muted">In scope</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>Completed</span>
                 <CheckCircle2 size={14} className="text-emerald-400" />
@@ -361,7 +361,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-[11px] text-text-muted">{metrics.completionPercentage}% complete</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>In Progress</span>
                 <Clock size={14} className="text-blue-400" />
@@ -370,7 +370,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-[11px] text-text-muted">Active iterations</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>Remaining</span>
                 <Layers size={14} className="text-amber-400" />
@@ -379,7 +379,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-[11px] text-text-muted">To be done</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>Overdue</span>
                 <AlertTriangle size={14} className="text-rose-400" />
@@ -388,7 +388,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
               <span className="text-[11px] text-rose-400/80">Late deliverables</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-border">
+            <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
               <div className="flex items-center justify-between text-xs text-text-muted">
                 <span>Velocity</span>
                 <Zap size={14} className="text-brand-primary" />
@@ -401,7 +401,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
           </div>
 
           {/* Progress Bar & Status Distribution */}
-          <div className="p-5 rounded-xl bg-surface border border-border space-y-4">
+          <div className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-text-primary">Sprint Delivery Progress</span>
               <span className="font-mono font-bold text-brand-primary text-sm">
@@ -436,7 +436,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
 
           {/* Workload by Assigned Member */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="p-5 rounded-xl bg-surface border border-border space-y-4">
+            <div className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <div className="flex items-center gap-2">
                   <Users size={16} className="text-brand-primary" />
@@ -462,7 +462,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
                     return (
                       <div
                         key={assigneeId}
-                        className="p-3 rounded-lg bg-surface-elevated border border-border space-y-2"
+                        className="p-3 rounded-xl bg-surface-elevated/70 border border-border/80 space-y-2"
                       >
                         <div className="flex items-center justify-between text-xs">
                           <div className="flex items-center gap-2">
@@ -495,7 +495,7 @@ export function SprintDashboardView({ onOpenCreateSprint, onOpenCreateTask }: Sp
             </div>
 
             {/* Sprint Task Breakdown List */}
-            <div className="p-5 rounded-xl bg-surface border border-border space-y-4">
+            <div className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <div className="flex items-center gap-2">
                   <ListTodo size={16} className="text-brand-primary" />

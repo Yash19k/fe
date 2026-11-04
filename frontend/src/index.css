@@ -1,43 +1,73 @@
 @import "tailwindcss";
 
+/* Landing Page Inter Typography */
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/5A3Ce6C9YYmCjpQx9M4inSaKU.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+460-52F, U+1C80-1C88, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/Qx95Xyt0Ka3SGhinnbXIGpEIyP4.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+301, U+400-45F, U+490-491, U+4B0-4B1, U+2116; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/6mJuEAguuIuMog10gGvH5d3cl8.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+1F00-1FFF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/xYYWaj7wCU5zSQH0eXvSaS19wo.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+370-3FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/otTaNuNpVK4RbdlT7zDDdKvQBA.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+100-24F, U+259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/UjlFhCnUjxhNfep4oYBPqnEssyo.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+0-FF, U+131, U+152-153, U+2BB-2BC, U+2C6, U+2DA, U+2DC, U+2000-206F, U+2070, U+2074-207E, U+2080-208E, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/DolVirEGb34pEXEp8t8FQBSK4.woff2"); font-display: swap; font-style: normal; font-weight: 500; unicode-range: U+102-103, U+110-111, U+128-129, U+168-169, U+1A0-1A1, U+1AF-1B0, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/5vvr9Vy74if2I6bQbJvbw7SY1pQ.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+460-52F, U+1C80-1C88, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/EOr0mi4hNtlgWNn9if640EZzXCo.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+301, U+400-45F, U+490-491, U+4B0-4B1, U+2116; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/Y9k9QrlZAqio88Klkmbd8VoMQc.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+1F00-1FFF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/OYrD2tBIBPvoJXiIHnLoOXnY9M.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+370-3FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/JeYwfuaPfZHQhEG8U5gtPDZ7WQ.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+100-24F, U+259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/GrgcKwrN6d3Uz8EwcLHZxwEfC4.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+0-FF, U+131, U+152-153, U+2BB-2BC, U+2C6, U+2DA, U+2DC, U+2000-206F, U+2070, U+2074-207E, U+2080-208E, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/b6Y37FthZeALduNqHicBT6FutY.woff2"); font-display: swap; font-style: normal; font-weight: 400; unicode-range: U+102-103, U+110-111, U+128-129, U+168-169, U+1A0-1A1, U+1AF-1B0, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/hyOgCu0Xnghbimh0pE8QTvtt2AU.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+460-52F, U+1C80-1C88, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/NeGmSOXrPBfEFIy5YZeHq17LEDA.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+301, U+400-45F, U+490-491, U+4B0-4B1, U+2116; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/oYaAX5himiTPYuN8vLWnqBbfD2s.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+1F00-1FFF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/lEJLP4R0yuCaMCjSXYHtJw72M.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+370-3FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/cRJyLNuTJR5jbyKzGi33wU9cqIQ.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+100-24F, U+259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/yDtI2UI8XcEg1W2je9XPN3Noo.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+0-FF, U+131, U+152-153, U+2BB-2BC, U+2C6, U+2DA, U+2DC, U+2000-206F, U+2070, U+2074-207E, U+2080-208E, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/A0Wcc7NgXMjUuFdquHDrIZpzZw0.woff2"); font-display: swap; font-style: normal; font-weight: 600; unicode-range: U+102-103, U+110-111, U+128-129, U+168-169, U+1A0-1A1, U+1AF-1B0, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/DpPBYI0sL4fYLgAkX8KXOPVt7c.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+460-52F, U+1C80-1C88, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/4RAEQdEOrcnDkhHiiCbJOw92Lk.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+301, U+400-45F, U+490-491, U+4B0-4B1, U+2116; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/1K3W8DizY3v4emK8Mb08YHxTbs.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+1F00-1FFF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/tUSCtfYVM1I1IchuyCwz9gDdQ.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+370-3FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/VgYFWiwsAC5OYxAycRXXvhze58.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+100-24F, U+259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/syRNPWzAMIrcJ3wIlPIP43KjQs.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+0-FF, U+131, U+152-153, U+2BB-2BC, U+2C6, U+2DA, U+2DC, U+2000-206F, U+2070, U+2074-207E, U+2080-208E, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: Inter; src: url("https://framerusercontent.com/assets/GIryZETIX4IFypco5pYZONKhJIo.woff2"); font-display: swap; font-style: normal; font-weight: 700; unicode-range: U+102-103, U+110-111, U+128-129, U+168-169, U+1A0-1A1, U+1AF-1B0, U+1EA0-1EF9, U+20AB; }
+
 @theme {
-  /* Dynamic semantic tokens defined in :root / [data-theme] below */
+  /* Dynamic semantic tokens matching Framer TaskFlow Pro design language */
   --color-canvas: #0B1020;
   --color-background: #0B1020;
-  --color-surface: #151D32;
-  --color-surface-hover: #222E4A;
-  --color-surface-active: #2A3859;
-  --color-surface-elevated: #1B2540;
+  --color-surface: #161E2E;
+  --color-surface-hover: #1D293B;
+  --color-surface-active: #24334C;
+  --color-surface-elevated: #1D293B;
 
   /* Global rail and workspace sidebar */
   --color-rail-bg: #0B1020;
-  --color-sidebar: #10172A;
-  --color-sidebar-bg: #10172A;
-  --color-sidebar-hover: #19233C;
-  --color-sidebar-active: #222E4A;
+  --color-sidebar: #111827;
+  --color-sidebar-bg: #111827;
+  --color-sidebar-hover: #161E2E;
+  --color-sidebar-active: #1D293B;
 
   /* Borders & Dividers */
-  --color-border: #293652;
-  --color-border-subtle: #1C263B;
-  --color-border-strong: #39486A;
-  --color-border-muted: #202B42;
+  --color-border: #29374B;
+  --color-border-subtle: #1E293B;
+  --color-border-strong: #374B66;
+  --color-border-muted: #1E293B;
 
   /* Typography */
-  --color-text-primary: #F1F4FC;
-  --color-text-secondary: #A5B1CA;
-  --color-text-muted: #7E8BA8;
-  --color-text-disabled: #4D5A75;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #A1AEC0;
+  --color-text-muted: #64748B;
+  --color-text-disabled: #475569;
   --color-text-inverse: #0B1020;
 
-  /* Primary Brand Accent — Purple */
-  --color-primary: #7465F6;
-  --color-primary-hover: #887BFF;
-  --color-brand-primary: #7465F6;
-  --color-brand-hover: #887BFF;
-  --color-brand-pressed: #5F4FE6;
-  --color-brand-subtle: #211D48;
-  --color-brand-border: rgba(116, 101, 246, 0.35);
-  --color-brand-text: #B8B0FF;
+  /* Primary Brand Accent — Vibrant Landing Blue (#2563EB) */
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-brand-primary: #2563EB;
+  --color-brand-hover: #1D4ED8;
+  --color-brand-pressed: #1E40AF;
+  --color-brand-subtle: #EFF6FF;
+  --color-brand-border: #BFDBFE;
+  --color-brand-text: #1D4ED8;
 
   /* Secondary Accent — Cyan */
   --color-accent-cyan: #35D5F2;
@@ -46,7 +76,7 @@
   --color-accent-cyan-border: rgba(53, 213, 242, 0.28);
   --color-accent-cyan-text: #8DE9F8;
 
-  /* Semantic status colors */
+  /* Semantic status colors (preserved) */
   --color-success: #36C98F;
   --color-warning: #F2BA55;
   --color-danger: #F07187;
@@ -77,8 +107,8 @@
   --color-status-purple-border: rgba(116, 101, 246, 0.35);
   --color-status-purple-text: #B8B0FF;
 
-  --color-input-bg: #151D32;
-  --color-input-border: #293652;
+  --color-input-bg: #161E2E;
+  --color-input-border: #29374B;
   --color-modal-backdrop: rgba(5, 8, 16, 0.75);
 
   /* Shadows - restrained */
@@ -92,7 +122,7 @@
 }
 
 /* ======================================================== */
-/* 1. DARK THEME — PRESERVE EXISTING TASKIFY DESIGN         */
+/* 1. DARK THEME — REFINED TASKFLOW PRO DARK PALETTE        */
 /* ======================================================== */
 :root,
 :root[data-theme="dark"],
@@ -102,40 +132,40 @@
   /* Canvas and Core Surfaces */
   --color-canvas: #0B1020;
   --color-background: #0B1020;
-  --color-surface: #151D32;
-  --color-surface-hover: #222E4A;
-  --color-surface-active: #2A3859;
-  --color-surface-elevated: #1B2540;
+  --color-surface: #161E2E;
+  --color-surface-hover: #1D293B;
+  --color-surface-active: #24334C;
+  --color-surface-elevated: #1D293B;
 
   /* Global rail and workspace sidebar */
   --color-rail-bg: #0B1020;
-  --color-sidebar: #10172A;
-  --color-sidebar-bg: #10172A;
-  --color-sidebar-hover: #19233C;
-  --color-sidebar-active: #222E4A;
+  --color-sidebar: #111827;
+  --color-sidebar-bg: #111827;
+  --color-sidebar-hover: #161E2E;
+  --color-sidebar-active: #1D293B;
 
   /* Borders & Dividers */
-  --color-border: #293652;
-  --color-border-subtle: #1C263B;
-  --color-border-strong: #39486A;
-  --color-border-muted: #202B42;
+  --color-border: #29374B;
+  --color-border-subtle: #1E293B;
+  --color-border-strong: #374B66;
+  --color-border-muted: #1E293B;
 
   /* Typography */
-  --color-text-primary: #F1F4FC;
-  --color-text-secondary: #A5B1CA;
-  --color-text-muted: #7E8BA8;
-  --color-text-disabled: #4D5A75;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #A1AEC0;
+  --color-text-muted: #64748B;
+  --color-text-disabled: #475569;
   --color-text-inverse: #0B1020;
 
-  /* Primary Brand Accent — Purple */
-  --color-primary: #7465F6;
-  --color-primary-hover: #887BFF;
-  --color-brand-primary: #7465F6;
-  --color-brand-hover: #887BFF;
-  --color-brand-pressed: #5F4FE6;
-  --color-brand-subtle: #211D48;
-  --color-brand-border: rgba(116, 101, 246, 0.35);
-  --color-brand-text: #B8B0FF;
+  /* Primary Brand Accent — Blue */
+  --color-primary: #3B82F6;
+  --color-primary-hover: #60A5FA;
+  --color-brand-primary: #3B82F6;
+  --color-brand-hover: #60A5FA;
+  --color-brand-pressed: #2563EB;
+  --color-brand-subtle: rgba(59, 130, 246, 0.15);
+  --color-brand-border: rgba(59, 130, 246, 0.35);
+  --color-brand-text: #93C5FD;
 
   /* Secondary Accent — Cyan */
   --color-accent-cyan: #35D5F2;
@@ -144,7 +174,7 @@
   --color-accent-cyan-border: rgba(53, 213, 242, 0.28);
   --color-accent-cyan-text: #8DE9F8;
 
-  /* Semantic status colors */
+  /* Semantic status colors (preserved) */
   --color-success: #36C98F;
   --color-warning: #F2BA55;
   --color-danger: #F07187;
@@ -175,8 +205,8 @@
   --color-status-purple-border: rgba(116, 101, 246, 0.35);
   --color-status-purple-text: #B8B0FF;
 
-  --color-input-bg: #151D32;
-  --color-input-border: #293652;
+  --color-input-bg: #161E2E;
+  --color-input-border: #29374B;
   --color-modal-backdrop: rgba(5, 8, 16, 0.75);
 
   /* Shadows - restrained */
@@ -187,49 +217,49 @@
 }
 
 /* ======================================================== */
-/* 2. LIGHT THEME — PURPOSE-DESIGNED PREMIUM LIGHT PALETTE  */
+/* 2. LIGHT THEME — FRAMER LANDING PAGE CONSISTENT PALETTE  */
 /* ======================================================== */
 :root[data-theme="light"],
 .light {
   color-scheme: light;
 
   /* Canvas and Core Surfaces */
-  --color-canvas: #F6F8FC;
-  --color-background: #F6F8FC;
+  --color-canvas: #F8FAFC;
+  --color-background: #F8FAFC;
   --color-surface: #FFFFFF;
-  --color-surface-hover: #F0F3FA;
-  --color-surface-active: #E9E7FF;
+  --color-surface-hover: #F1F5F9;
+  --color-surface-active: #EFF6FF;
   --color-surface-elevated: #FFFFFF;
 
   /* Global rail and workspace sidebar */
   --color-rail-bg: #FFFFFF;
-  --color-sidebar: #F1F4FA;
-  --color-sidebar-bg: #F1F4FA;
-  --color-sidebar-hover: #E8EDF6;
-  --color-sidebar-active: #E2E7F2;
+  --color-sidebar: #F8FAFC;
+  --color-sidebar-bg: #F8FAFC;
+  --color-sidebar-hover: #F1F5F9;
+  --color-sidebar-active: #EFF6FF;
 
   /* Borders & Dividers */
-  --color-border: #E0E6F0;
-  --color-border-subtle: #E8EDF5;
-  --color-border-strong: #C8D1E2;
-  --color-border-muted: #E8EDF5;
+  --color-border: #E5EAF2;
+  --color-border-subtle: #EEF2F6;
+  --color-border-strong: #DCE4EF;
+  --color-border-muted: #EEF2F6;
 
   /* Typography */
-  --color-text-primary: #172033;
-  --color-text-secondary: #526078;
-  --color-text-muted: #718096;
-  --color-text-disabled: #94A3B8;
+  --color-text-primary: #111827;
+  --color-text-secondary: #64748B;
+  --color-text-muted: #94A3B8;
+  --color-text-disabled: #CBD5E1;
   --color-text-inverse: #FFFFFF;
 
-  /* Primary Brand Accent — Purple */
-  --color-primary: #6655E8;
-  --color-primary-hover: #5947D8;
-  --color-brand-primary: #6655E8;
-  --color-brand-hover: #5947D8;
-  --color-brand-pressed: #4E3BC7;
-  --color-brand-subtle: #EEEBFF;
-  --color-brand-border: #D4CCFF;
-  --color-brand-text: #5443CE;
+  /* Primary Brand Accent — Vibrant Blue (#2563EB) */
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-brand-primary: #2563EB;
+  --color-brand-hover: #1D4ED8;
+  --color-brand-pressed: #1E40AF;
+  --color-brand-subtle: #EFF6FF;
+  --color-brand-border: #BFDBFE;
+  --color-brand-text: #1D4ED8;
 
   /* Secondary Accent — Cyan */
   --color-accent-cyan: #087F97;
@@ -238,7 +268,7 @@
   --color-accent-cyan-border: #B6EAF4;
   --color-accent-cyan-text: #08687C;
 
-  /* Semantic status colors for Light surfaces */
+  /* Semantic status colors for Light surfaces (preserved) */
   --color-success: #15803D;
   --color-warning: #B45309;
   --color-danger: #DC2626;
@@ -270,14 +300,14 @@
   --color-status-purple-text: #5443CE;
 
   --color-input-bg: #FFFFFF;
-  --color-input-border: #D0D7E3;
+  --color-input-border: #E5EAF2;
   --color-modal-backdrop: rgba(15, 23, 42, 0.45);
 
   /* Light Shadows - restrained & elegant */
   --shadow-sm: 0 1px 2px 0 rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(16, 24, 40, 0.08), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(16, 24, 40, 0.07), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
   --shadow-lg: 0 10px 15px -3px rgba(16, 24, 40, 0.08), 0 4px 6px -4px rgba(16, 24, 40, 0.04);
-  --shadow-overlay: 0 20px 25px -5px rgba(16, 24, 40, 0.12), 0 8px 10px -6px rgba(16, 24, 40, 0.08);
+  --shadow-overlay: 0 20px 25px -5px rgba(16, 24, 40, 0.12), 0 8px 10px -6px rgba(16, 24, 40, 0.06);
 }
 
 /* Base styles */

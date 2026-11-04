@@ -195,7 +195,7 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
       {/* List Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-xl bg-surface border border-border text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface border border-border/80 shadow-xs text-xs">
         <div className="flex flex-wrap items-center gap-2 flex-1">
           <Button variant="primary" size="sm" icon={Plus} onClick={onOpenCreateTask}>
             Add Work Item
@@ -304,12 +304,12 @@ export function ProjectListView({ onOpenCreateTask }: ProjectListViewProps) {
           return (
             <div
               key={group.id}
-              className="bg-surface rounded-xl border border-border overflow-hidden"
+              className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden"
             >
               {/* Group Header */}
               <div
                 onClick={() => toggleGroup(group.id)}
-                className="flex items-center justify-between px-4 py-2.5 bg-surface-elevated border-b border-border text-xs font-semibold text-text-primary cursor-pointer hover:bg-surface-hover transition-colors select-none"
+                className="flex items-center justify-between px-4 py-2.5 bg-surface-elevated/40 border-b border-border text-xs font-semibold text-text-primary cursor-pointer hover:bg-surface-hover transition-colors select-none"
               >
                 <div className="flex items-center gap-2">
                   {isCollapsed ? (

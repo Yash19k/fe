@@ -155,7 +155,7 @@ export function MyTasksView() {
       </div>
 
       {/* Control Bar: Search, Filters, Grouping, Sorting */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-surface border border-border text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface border border-border/80 shadow-xs text-xs">
         <div className="flex flex-wrap items-center gap-2 flex-1">
           {/* Search Input */}
           <div className="relative min-w-[180px]">

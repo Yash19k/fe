@@ -3,73 +3,73 @@
    ========================================================================== */
 
 :root {
-  --kb-bg: #f7f7f8;
-  --kb-surface: #ffffff;
-  --kb-col: #f0f0f2;
-  --kb-line: #e4e4e8;
-  --kb-fg: #18181b;
-  --kb-muted: #71717a;
-  --kb-faint: #a1a1aa;
-  --kb-accent: #3f3f46;
-  --kb-drop: #d4d4dc;
-  --kb-lbl-blue-bg: #e8f0fe; --kb-lbl-blue-fg: #2858b8;
-  --kb-lbl-green-bg: #e4f5ea; --kb-lbl-green-fg: #1d7a43;
-  --kb-lbl-amber-bg: #fdf1dc; --kb-lbl-amber-fg: #94600c;
-  --kb-lbl-rose-bg: #fde8ea; --kb-lbl-rose-fg: #b4283c;
-  --kb-lbl-violet-bg: #efeafd; --kb-lbl-violet-fg: #6a42c2;
-  --kb-p-high: #e5484d; --kb-p-med: #e9a23b; --kb-p-low: #9aa0ab;
-  --kb-s-backlog: #a1a1aa; --kb-s-progress: #e9a23b; --kb-s-review: #6a7be8; --kb-s-done: #3fa66b;
-  --kb-shadow: 0 1px 2px rgba(24,24,27,.04);
-  --kb-lift: 0 14px 30px rgba(24,24,27,.14), 0 2px 6px rgba(24,24,27,.08);
-  --kb-sans: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --kb-bg: #F8FAFC;
+  --kb-surface: #FFFFFF;
+  --kb-col: #F1F5F9;
+  --kb-line: #E5EAF2;
+  --kb-fg: #111827;
+  --kb-muted: #64748B;
+  --kb-faint: #94A3B8;
+  --kb-accent: #2563EB;
+  --kb-drop: #DCE4EF;
+  --kb-lbl-blue-bg: #EFF6FF; --kb-lbl-blue-fg: #1D4ED8;
+  --kb-lbl-green-bg: #E8F8F0; --kb-lbl-green-fg: #167448;
+  --kb-lbl-amber-bg: #FEF8E7; --kb-lbl-amber-fg: #9A6700;
+  --kb-lbl-rose-bg: #FDECEF; --kb-lbl-rose-fg: #C5223D;
+  --kb-lbl-violet-bg: #EEEBFF; --kb-lbl-violet-fg: #5443CE;
+  --kb-p-high: #e5484d; --kb-p-med: #e9a23b; --kb-p-low: #94A3B8;
+  --kb-s-backlog: #94A3B8; --kb-s-progress: #2563EB; --kb-s-review: #7C3AED; --kb-s-done: #10B981;
+  --kb-shadow: 0 1px 3px 0 rgba(16, 24, 40, 0.05);
+  --kb-lift: 0 14px 30px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
+  --kb-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --kb-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --kb-bg: #121214; --kb-surface: #1b1b1e; --kb-col: #17171a; --kb-line: #2a2a2f;
-    --kb-fg: #ececef; --kb-muted: #8e8e98; --kb-faint: #5f5f69; --kb-accent: #d4d4d8; --kb-drop: #34343b;
-    --kb-lbl-blue-bg: #1c2740; --kb-lbl-blue-fg: #8db1f5;
-    --kb-lbl-green-bg: #172a20; --kb-lbl-green-fg: #7fd0a0;
-    --kb-lbl-amber-bg: #302512; --kb-lbl-amber-fg: #efbd6a;
-    --kb-lbl-rose-bg: #34181c; --kb-lbl-rose-fg: #f08c99;
-    --kb-lbl-violet-bg: #251e3d; --kb-lbl-violet-fg: #b59cf3;
+    --kb-bg: #0B1020; --kb-surface: #161E2E; --kb-col: #111827; --kb-line: #29374B;
+    --kb-fg: #F8FAFC; --kb-muted: #A1AEC0; --kb-faint: #64748B; --kb-accent: #3B82F6; --kb-drop: #1D293B;
+    --kb-lbl-blue-bg: rgba(59, 130, 246, 0.15); --kb-lbl-blue-fg: #93C5FD;
+    --kb-lbl-green-bg: rgba(54, 201, 143, 0.15); --kb-lbl-green-fg: #75E2B6;
+    --kb-lbl-amber-bg: rgba(242, 186, 85, 0.15); --kb-lbl-amber-fg: #F7D28B;
+    --kb-lbl-rose-bg: rgba(240, 113, 135, 0.15); --kb-lbl-rose-fg: #F8A4B3;
+    --kb-lbl-violet-bg: rgba(116, 101, 246, 0.2); --kb-lbl-violet-fg: #B8B0FF;
     --kb-shadow: none; --kb-lift: 0 14px 30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
   }
 }
 
 :root[data-theme="dark"],
 .dark {
-  --kb-bg: #121214; --kb-surface: #1b1b1e; --kb-col: #17171a; --kb-line: #2a2a2f;
-  --kb-fg: #ececef; --kb-muted: #8e8e98; --kb-faint: #5f5f69; --kb-accent: #d4d4d8; --kb-drop: #34343b;
-  --kb-lbl-blue-bg: #1c2740; --kb-lbl-blue-fg: #8db1f5;
-  --kb-lbl-green-bg: #172a20; --kb-lbl-green-fg: #7fd0a0;
-  --kb-lbl-amber-bg: #302512; --kb-lbl-amber-fg: #efbd6a;
-  --kb-lbl-rose-bg: #34181c; --kb-lbl-rose-fg: #f08c99;
-  --kb-lbl-violet-bg: #251e3d; --kb-lbl-violet-fg: #b59cf3;
+  --kb-bg: #0B1020; --kb-surface: #161E2E; --kb-col: #111827; --kb-line: #29374B;
+  --kb-fg: #F8FAFC; --kb-muted: #A1AEC0; --kb-faint: #64748B; --kb-accent: #3B82F6; --kb-drop: #1D293B;
+  --kb-lbl-blue-bg: rgba(59, 130, 246, 0.15); --kb-lbl-blue-fg: #93C5FD;
+  --kb-lbl-green-bg: rgba(54, 201, 143, 0.15); --kb-lbl-green-fg: #75E2B6;
+  --kb-lbl-amber-bg: rgba(242, 186, 85, 0.15); --kb-lbl-amber-fg: #F7D28B;
+  --kb-lbl-rose-bg: rgba(240, 113, 135, 0.15); --kb-lbl-rose-fg: #F8A4B3;
+  --kb-lbl-violet-bg: rgba(116, 101, 246, 0.2); --kb-lbl-violet-fg: #B8B0FF;
   --kb-shadow: none; --kb-lift: 0 14px 30px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
 }
 
 :root[data-theme="light"],
 .light {
-  --kb-bg: #f7f7f8;
-  --kb-surface: #ffffff;
-  --kb-col: #f0f0f2;
-  --kb-line: #e4e4e8;
-  --kb-fg: #18181b;
-  --kb-muted: #71717a;
-  --kb-faint: #a1a1aa;
-  --kb-accent: #3f3f46;
-  --kb-drop: #d4d4dc;
-  --kb-lbl-blue-bg: #e8f0fe; --kb-lbl-blue-fg: #2858b8;
-  --kb-lbl-green-bg: #e4f5ea; --kb-lbl-green-fg: #1d7a43;
-  --kb-lbl-amber-bg: #fdf1dc; --kb-lbl-amber-fg: #94600c;
-  --kb-lbl-rose-bg: #fde8ea; --kb-lbl-rose-fg: #b4283c;
-  --kb-lbl-violet-bg: #efeafd; --kb-lbl-violet-fg: #6a42c2;
-  --kb-p-high: #e5484d; --kb-p-med: #e9a23b; --kb-p-low: #9aa0ab;
-  --kb-s-backlog: #a1a1aa; --kb-s-progress: #e9a23b; --kb-s-review: #6a7be8; --kb-s-done: #3fa66b;
-  --kb-shadow: 0 1px 2px rgba(24,24,27,.04);
-  --kb-lift: 0 14px 30px rgba(24,24,27,.14), 0 2px 6px rgba(24,24,27,.08);
+  --kb-bg: #F8FAFC;
+  --kb-surface: #FFFFFF;
+  --kb-col: #F1F5F9;
+  --kb-line: #E5EAF2;
+  --kb-fg: #111827;
+  --kb-muted: #64748B;
+  --kb-faint: #94A3B8;
+  --kb-accent: #2563EB;
+  --kb-drop: #DCE4EF;
+  --kb-lbl-blue-bg: #EFF6FF; --kb-lbl-blue-fg: #1D4ED8;
+  --kb-lbl-green-bg: #E8F8F0; --kb-lbl-green-fg: #167448;
+  --kb-lbl-amber-bg: #FEF8E7; --kb-lbl-amber-fg: #9A6700;
+  --kb-lbl-rose-bg: #FDECEF; --kb-lbl-rose-fg: #C5223D;
+  --kb-lbl-violet-bg: #EEEBFF; --kb-lbl-violet-fg: #5443CE;
+  --kb-p-high: #e5484d; --kb-p-med: #e9a23b; --kb-p-low: #94A3B8;
+  --kb-s-backlog: #94A3B8; --kb-s-progress: #2563EB; --kb-s-review: #7C3AED; --kb-s-done: #10B981;
+  --kb-shadow: 0 1px 3px 0 rgba(16, 24, 40, 0.05);
+  --kb-lift: 0 14px 30px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
 }
 
 /* Base Board Wrapper */
@@ -185,20 +185,21 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  font-weight: 500;
-  padding: 5px 12px;
-  border-radius: 7px;
-  border: 1px solid var(--kb-line);
-  background: var(--kb-surface);
-  color: var(--kb-fg);
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--kb-accent);
+  background: var(--kb-accent);
+  color: #ffffff;
   cursor: pointer;
-  transition: background .15s ease, border-color .15s ease;
+  transition: all .15s ease;
   font-family: inherit;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
 .kb-btn-new-task:hover {
-  background: var(--kb-col);
-  border-color: var(--kb-faint);
+  opacity: 0.92;
+  box-shadow: 0 2px 6px 0 rgba(37, 99, 235, 0.25);
 }
 
 /* Board Layout & Grid */
@@ -248,7 +249,8 @@
 .kb-zone {
   position: relative;
   background: var(--kb-col);
-  border-radius: 12px;
+  border: 1px solid var(--kb-line);
+  border-radius: 14px;
   padding: 8px;
   min-height: 120px;
   display: flex;
@@ -275,7 +277,7 @@
 .kb-card {
   background: var(--kb-surface);
   border: 1px solid var(--kb-line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
   box-shadow: var(--kb-shadow);
   cursor: grab;
@@ -287,10 +289,12 @@
   gap: 10px;
   text-align: left;
   outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
 
 .kb-card:hover {
   border-color: var(--kb-accent);
+  box-shadow: 0 4px 12px -2px rgba(16, 24, 40, 0.08);
 }
 
 .kb-card:active {

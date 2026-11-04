@@ -185,9 +185,9 @@ export function ProjectHeader({ onOpenCreateTask, onOpenCreateSprint }: ProjectH
             <button
               key={tab.id}
               onClick={() => handleTabClick(tab.id)}
-              className={`flex items-center gap-2 py-2 px-3 text-xs font-medium border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-2 py-2.5 px-3.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
                 isActive
-                  ? 'border-brand-primary text-text-primary font-semibold'
+                  ? 'border-brand-primary text-brand-primary font-semibold'
                   : 'border-transparent text-text-muted hover:text-text-primary hover:border-border-strong'
               }`}
             >

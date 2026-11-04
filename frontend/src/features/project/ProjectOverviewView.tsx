@@ -265,7 +265,7 @@ export function ProjectOverviewView() {
         {/* Compact KPI Metric Cards Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Total Tracked Work Items */}
-          <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
             <div className="flex items-center justify-between text-xs text-text-muted">
               <span>Total Tracked Items</span>
               <ListTodo size={16} className="text-brand-primary" />
@@ -279,7 +279,7 @@ export function ProjectOverviewView() {
           </div>
 
           {/* Card 2: Completed Deliverables */}
-          <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
             <div className="flex items-center justify-between text-xs text-text-muted">
               <span>Completed Items</span>
               <CheckCircle2 size={16} className="text-emerald-400" />
@@ -293,7 +293,7 @@ export function ProjectOverviewView() {
           </div>
 
           {/* Card 3: Active / In Progress */}
-          <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
             <div className="flex items-center justify-between text-xs text-text-muted">
               <span>Active Work</span>
               <Clock size={16} className="text-brand-primary" />
@@ -307,7 +307,7 @@ export function ProjectOverviewView() {
           </div>
 
           {/* Card 4: Overdue Items */}
-          <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs">
             <div className="flex items-center justify-between text-xs text-text-muted">
               <span>Overdue Items</span>
               <AlertTriangle
@@ -333,7 +333,7 @@ export function ProjectOverviewView() {
         </div>
 
         {/* Deliverables Progress & Work Item Type Breakdown */}
-        <div className="p-4 rounded-xl bg-surface border border-border space-y-3">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-text-primary">Deliverable Completion Pace</span>
@@ -378,7 +378,7 @@ export function ProjectOverviewView() {
       {/* ==================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Section B: Dynamic Workflow Status Distribution */}
-        <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+        <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-text-primary">Tasks by Workflow Status</h3>
@@ -413,7 +413,7 @@ export function ProjectOverviewView() {
         </section>
 
         {/* Section C: Team Workload & Delivery Lead */}
-        <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+        <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-text-primary">Team & Workload</h3>
@@ -489,7 +489,7 @@ export function ProjectOverviewView() {
         {/* Left 2 Columns: Planning, CPM, and Blockers */}
         <div className="lg:col-span-2 space-y-6">
           {/* Section E: Project Planning & Schedule Boundaries */}
-          <section className="p-5 rounded-xl bg-surface border border-border space-y-3">
+          <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-text-primary">
                 Project Schedule & Planning
@@ -526,7 +526,7 @@ export function ProjectOverviewView() {
           </section>
 
           {/* Critical Path Method (CPM) Summary */}
-          <section className="p-5 rounded-xl bg-surface border border-border space-y-3">
+          <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <GitCommit size={15} className="text-brand-primary" />
@@ -570,7 +570,7 @@ export function ProjectOverviewView() {
           </section>
 
           {/* Identified Blockers Section (Modest empty state when none) */}
-          <section className="bg-surface rounded-xl border border-border overflow-hidden">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-elevated">
               <div className="flex items-center gap-2">
                 <Ban size={15} className={blockedTasks.length > 0 ? 'text-rose-400' : 'text-text-muted'} />
@@ -601,7 +601,7 @@ export function ProjectOverviewView() {
         <div className="space-y-6">
           {/* Active Sprint Summary Widget */}
           {activeSprint && (
-            <section className="p-4 rounded-xl bg-surface border border-border space-y-3">
+            <section className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Zap size={15} className="text-amber-400" />
@@ -637,7 +637,7 @@ export function ProjectOverviewView() {
           )}
 
           {/* Section D: Recent Project Events */}
-          <section className="bg-surface rounded-xl border border-border overflow-hidden">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden">
             <div className="px-4 py-3 border-b border-border bg-surface-elevated flex items-center justify-between">
               <h3 className="text-sm font-semibold text-text-primary">Recent Project Events</h3>
               <button

@@ -235,7 +235,7 @@ export function SettingsView() {
       </div>
 
       {/* User Profile Summary */}
-      <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+      <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
         <h3 className="text-sm font-semibold text-text-primary">Current User Profile</h3>
         <div className="flex items-center gap-4">
           <Avatar user={currentUser} size="lg" />
@@ -250,7 +250,7 @@ export function SettingsView() {
       </section>
 
       {/* Theme & Appearance Preferences */}
-      <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+      <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2">
           <Palette size={16} className="text-brand-primary" />
           <div>
@@ -266,7 +266,7 @@ export function SettingsView() {
 
       {/* Organization Members Management (Admins Only) */}
       {canManageOrgMembers && (
-        <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+        <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
             <div className="flex items-center gap-2">
               <Users size={16} className="text-brand-primary" />
@@ -461,7 +461,7 @@ export function SettingsView() {
       )}
 
       {/* SLA Policy Thresholds Form */}
-      <section className="p-5 rounded-xl bg-surface border border-border space-y-4">
+      <section className="p-5 rounded-2xl bg-surface border border-border/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2">
           <Shield size={16} className="text-brand-primary" />
           <h3 className="text-sm font-semibold text-text-primary">

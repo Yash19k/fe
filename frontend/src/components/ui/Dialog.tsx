@@ -140,7 +140,7 @@ export function Dialog({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className={`w-full ${maxWidth} bg-surface rounded-xl border border-border shadow-overlay overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none`}
+        className={`w-full ${maxWidth} bg-surface rounded-2xl border border-border/80 shadow-overlay overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none`}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>

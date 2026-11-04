@@ -28,7 +28,7 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [visibility, setVisibility] = useState<ProjectVisibility>('global');
-  const [color, setColor] = useState('#7465F6');
+  const [color, setColor] = useState('#2563EB');
   const [workflowId, setWorkflowId] = useState(workflows[0]?.id || 'wf-1');
 
   // Form errors
@@ -37,6 +37,7 @@ export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps)
   const [dateError, setDateError] = useState('');
 
   const colors = [
+    { label: 'Blue', hex: '#2563EB' },
     { label: 'Purple', hex: '#7465F6' },
     { label: 'Cyan', hex: '#35D5F2' },
     { label: 'Emerald', hex: '#36C98F' },

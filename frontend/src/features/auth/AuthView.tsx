@@ -198,7 +198,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>
-      <div className="w-full max-w-md bg-surface rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
+      <div className="w-full max-w-md bg-surface rounded-2xl p-6 sm:p-8 border border-border-subtle shadow-overlay space-y-6">
         {/* Brand */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center mx-auto">

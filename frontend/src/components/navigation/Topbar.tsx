@@ -84,7 +84,7 @@ export function Topbar({
       <div className="flex items-center gap-2">
         {/* Active Role indicator */}
         <div
-          className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded bg-surface-elevated border border-border text-xs text-text-secondary"
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand-subtle border border-brand-border/50 text-xs text-brand-text"
           title={`Active user role: ${currentUser.role}`}
         >
           <Shield size={12} className="text-brand-primary" />

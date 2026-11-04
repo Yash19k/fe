@@ -185,13 +185,15 @@ export function HomeView() {
       )}
 
       {/* KPI Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="p-3.5 rounded-xl bg-surface border border-border">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs hover:border-border-strong transition-all">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>My Active Tasks</span>
-            <CheckSquare size={14} className="text-brand-primary" />
+            <span className="font-medium">My Active Tasks</span>
+            <div className="w-7 h-7 rounded-lg bg-brand-subtle flex items-center justify-center text-brand-primary">
+              <CheckSquare size={14} />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-text-primary mt-1">
+          <p className="text-2xl font-bold text-text-primary mt-2">
             {personalMetrics.total - personalMetrics.completed}
           </p>
           <span className="text-[11px] text-text-muted">
@@ -199,48 +201,56 @@ export function HomeView() {
           </span>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-surface border border-border">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs hover:border-border-strong transition-all">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>Due Soon (≤5d)</span>
-            <Clock size={14} className="text-amber-400" />
+            <span className="font-medium">Due Soon (≤5d)</span>
+            <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+              <Clock size={14} />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-text-primary mt-1">
+          <p className="text-2xl font-bold text-text-primary mt-2">
             {personalMetrics.dueSoon}
           </p>
-          <span className="text-[11px] text-amber-400/90 font-medium">Upcoming deadlines</span>
+          <span className="text-[11px] text-amber-500/90 font-medium">Upcoming deadlines</span>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-surface border border-border">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs hover:border-border-strong transition-all">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>Overdue Work</span>
-            <AlertTriangle size={14} className="text-rose-400" />
+            <span className="font-medium">Overdue Work</span>
+            <div className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500">
+              <AlertTriangle size={14} />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-rose-400 mt-1">
+          <p className="text-2xl font-bold text-rose-500 mt-2">
             {personalMetrics.overdue}
           </p>
-          <span className="text-[11px] text-rose-400/90 font-medium">Action required</span>
+          <span className="text-[11px] text-rose-500/90 font-medium">Action required</span>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-surface border border-border">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs hover:border-border-strong transition-all">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>Blocked Work</span>
-            <Ban size={14} className="text-rose-400" />
+            <span className="font-medium">Blocked Work</span>
+            <div className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500">
+              <Ban size={14} />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-text-primary mt-1">
+          <p className="text-2xl font-bold text-text-primary mt-2">
             {personalMetrics.blocked}
           </p>
           <span className="text-[11px] text-text-muted">Predecessors incomplete</span>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-surface border border-border col-span-2 lg:col-span-1">
+        <div className="p-4 rounded-2xl bg-surface border border-border/80 shadow-xs hover:border-border-strong transition-all col-span-2 lg:col-span-1">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>Completed</span>
-            <CheckCircle2 size={14} className="text-emerald-400" />
+            <span className="font-medium">Completed</span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+              <CheckCircle2 size={14} />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-emerald-400 mt-1">
+          <p className="text-2xl font-bold text-emerald-500 mt-2">
             {personalMetrics.completed}
           </p>
-          <span className="text-[11px] text-emerald-400/90 font-medium">Sprint progress</span>
+          <span className="text-[11px] text-emerald-500/90 font-medium">Sprint progress</span>
         </div>
       </div>
 
@@ -248,8 +258,8 @@ export function HomeView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column (2 cols): Attention Queue */}
         <div className="lg:col-span-2 space-y-6">
-          <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-surface-elevated">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-surface-elevated/40">
               <div>
                 <h3 className="text-sm font-semibold text-text-primary">
                   Needs Attention (Personal Queue)
@@ -298,7 +308,7 @@ export function HomeView() {
           </section>
 
           {/* Active Projects Overview Cards */}
-          <section className="bg-surface rounded-xl border border-border p-5 space-y-4">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-text-primary">
                 Active Projects & Milestones
@@ -329,7 +339,7 @@ export function HomeView() {
                   <div
                     key={p.id}
                     onClick={() => navigate(`/project/${p.id}/overview`)}
-                    className="p-3.5 rounded-lg bg-surface-elevated border border-border hover:border-border-strong hover:bg-surface-hover cursor-pointer transition-colors space-y-2.5"
+                    className="p-4 rounded-xl bg-surface-elevated/40 border border-border/70 hover:border-brand-primary/40 hover:bg-surface-elevated/70 cursor-pointer transition-all space-y-3"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -359,7 +369,7 @@ export function HomeView() {
                           {pct}%
                         </span>
                       </div>
-                      <div className="w-full h-1.5 bg-surface rounded-full overflow-hidden">
+                      <div className="w-full h-1.5 bg-canvas rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full transition-all duration-300"
                           style={{ width: `${pct}%`, backgroundColor: p.color }}
@@ -381,8 +391,8 @@ export function HomeView() {
         {/* Right Column: SLA Alerts & Recent Activity Feed */}
         <div className="space-y-6">
           {/* SLA Alerts Widget */}
-          <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="px-4 py-3 border-b border-border bg-surface-elevated flex items-center justify-between">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-border bg-surface-elevated/40 flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
                 <ShieldAlert size={15} className="text-rose-400" />
                 <span>SLA Risk & Escalation Feed</span>
@@ -427,8 +437,8 @@ export function HomeView() {
           </section>
 
           {/* Recent Workspace Activity Feed */}
-          <section className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="px-4 py-3 border-b border-border bg-surface-elevated flex items-center justify-between">
+          <section className="bg-surface rounded-2xl border border-border/80 shadow-xs overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-border bg-surface-elevated/40 flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
                 <Activity size={15} className="text-brand-primary" />
                 <span>Recent Audit Activity</span>
