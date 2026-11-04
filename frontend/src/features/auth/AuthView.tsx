@@ -3,7 +3,8 @@ import { useApp } from '../../hooks/useApp';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { ThemeToggle } from '../../components/ui/ThemeToggle';
-import { Layers, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { TaskFlowLogoIcon } from '../../landing-page/components/TaskFlowLogo';
 
 export function classifyAuthError(err: any): string {
   const isNetwork =
@@ -197,11 +198,14 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>
-      <div className="w-full max-w-md bg-surface rounded-2xl border border-border-subtle p-6 sm:p-8 shadow-overlay space-y-6">
+      <div className="w-full max-w-md bg-surface rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
         {/* Brand */}
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 rounded-xl bg-brand-primary/15 border border-brand-primary/30 flex items-center justify-center text-brand-primary mx-auto">
-            <Layers size={22} strokeWidth={2.2} />
+          <div className="flex items-center justify-center mx-auto">
+            <TaskFlowLogoIcon
+              style={{ width: '42px', height: '32px' }}
+              preserveAspectRatio="xMidYMid meet"
+            />
           </div>
           <h1 className="text-xl font-bold text-text-primary tracking-tight">
             {isSignup ? 'Create your TaskFlow account' : 'Sign in to TaskFlow Pro'}
@@ -232,6 +236,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
                 label="Full Name"
                 placeholder="e.g. Yash Kshatriya"
                 value={name}
+                variant="borderless"
                 focusVariant="subtle"
                 onChange={(e) => {
                   setName(e.target.value);
@@ -242,8 +247,10 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
               />
               <Input
                 label="Company / Workspace Name"
+                className="auth-focus-exempt"
                 placeholder="e.g. Acme Corp"
                 value={companyName}
+                variant="borderless"
                 focusVariant="subtle"
                 onChange={(e) => {
                   setCompanyName(e.target.value);
@@ -260,6 +267,7 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             type="email"
             placeholder="name@taskflow.pro"
             value={email}
+            variant="borderless"
             focusVariant="subtle"
             onChange={(e) => {
               setEmail(e.target.value);
@@ -271,8 +279,10 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
 
           <Input
             label="Password"
+            placeholder="Enter Password"
             type={showPassword ? 'text' : 'password'}
             value={password}
+            variant="borderless"
             focusVariant="subtle"
             onChange={(e) => {
               setPassword(e.target.value);
@@ -313,7 +323,9 @@ export function AuthView({ isSignup = false }: AuthViewProps) {
             <Input
               label="Confirm Password"
               type="password"
+              placeholder="Enter Password"
               value={confirmPassword}
+              variant="borderless"
               focusVariant="subtle"
               onChange={(e) => {
                 setConfirmPassword(e.target.value);

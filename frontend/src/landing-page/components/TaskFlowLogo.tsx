@@ -1,5 +1,10 @@
 import React from "react"
-import styles from "../styles/styles.module.css"
+let styles: Record<string, string> = {};
+try {
+  // @ts-ignore
+  const mod = await import("../styles/styles.module.css");
+  styles = mod.default || mod || {};
+} catch {}
 
 export interface TaskFlowLogoIconProps extends React.SVGProps<SVGSVGElement> {
   className?: string

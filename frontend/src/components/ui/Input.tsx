@@ -8,6 +8,7 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   icon?: LucideIcon | React.ComponentType<{ size?: number; className?: string }>;
   rightElement?: React.ReactNode;
   focusVariant?: 'default' | 'subtle';
+  variant?: 'default' | 'borderless';
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
@@ -18,6 +19,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     icon: Icon,
     rightElement,
     focusVariant = 'default',
+    variant = 'default',
     type = 'text',
     className = '',
     id,
@@ -31,10 +33,23 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const helperId = helperText ? `${inputId}-helper` : undefined;
   const describedBy = [errorId, helperId].filter(Boolean).join(' ') || undefined;
 
-  const focusClasses =
-    focusVariant === 'subtle'
-      ? 'focus:ring-1 focus:ring-brand-primary/25 focus:border-brand-primary/60'
-      : 'focus:ring-1 focus:ring-brand-primary focus:border-brand-primary';
+  const isBorderless = variant === 'borderless' || focusVariant === 'subtle';
+
+  const focusClasses = isBorderless
+    ? 'focus:outline-none focus:ring-0 focus:shadow-none focus-visible:ring-1 focus-visible:ring-brand-primary/50'
+    : 'focus:ring-1 focus:ring-brand-primary focus:border-brand-primary';
+
+  const baseSurfaceClasses = isBorderless
+    ? 'bg-canvas/50 hover:bg-canvas/70 focus:bg-canvas shadow-none'
+    : 'bg-surface';
+
+  const borderClasses = isBorderless
+    ? error
+      ? 'border border-rose-500/80 focus:border-rose-500'
+      : 'border border-transparent hover:border-transparent focus:border-transparent'
+    : error
+      ? 'border border-rose-500/80 focus:ring-rose-500 focus:border-rose-500'
+      : 'border border-border hover:border-border-strong';
 
   return (
     <div className="w-full space-y-1.5">
@@ -55,13 +70,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           type={type}
           aria-invalid={Boolean(error)}
           aria-describedby={describedBy}
-          className={`w-full rounded-lg bg-surface border text-sm text-text-primary placeholder:text-text-muted transition-colors focus:outline-none ${focusClasses} ${
+          className={`w-full rounded-lg text-sm text-text-primary placeholder:text-text-muted transition-colors focus:outline-none ${baseSurfaceClasses} ${borderClasses} ${focusClasses} ${
             Icon ? 'pl-9' : 'pl-3'
-          } ${rightElement ? 'pr-10' : 'pr-3'} h-9 ${
-            error
-              ? 'border-rose-500/80 focus:ring-rose-500 focus:border-rose-500'
-              : 'border-border hover:border-border-strong'
-          } ${className}`}
+          } ${rightElement ? 'pr-10' : 'pr-3'} h-9 ${className}`}
           {...props}
         />
         {rightElement && (
