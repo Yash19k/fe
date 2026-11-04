@@ -38,6 +38,7 @@ const SettingsView = React.lazy(() => import('./features/settings/SettingsView')
 const CompanySetupView = React.lazy(() => import('./features/onboarding/CompanySetupView').then((m) => ({ default: m.CompanySetupView })));
 const ChatView = React.lazy(() => import('./features/chat/ChatView').then((m) => ({ default: m.ChatView })));
 import { NotFoundView } from './features/not-found/NotFoundView';
+import { LandingPage } from './landing-page';
 
 
 function isSettingsTab(tab: string): boolean {
@@ -141,7 +142,7 @@ function MainAppShell() {
     if (
       !isInitializingAuth &&
       !isAuthenticated &&
-      !['/login', '/signup', '/forgot-password', '/accept-invitation'].includes(activeRoute.split('?')[0]) &&
+      !['/', '', '/landing', '/login', '/signup', '/forgot-password', '/accept-invitation'].includes(activeRoute.split('?')[0]) &&
       !activeRoute.startsWith('/reset-password')
     ) {
       navigate('/login');
@@ -175,6 +176,11 @@ function MainAppShell() {
         </div>
       </div>
     );
+  }
+
+  // Public Landing Page view for unauthenticated visitors at root or any visitor at /landing
+  if ((!isAuthenticated && (activeRoute === '/' || activeRoute === '')) || activeRoute === '/landing') {
+    return <LandingPage />;
   }
 
   // Route Guard: Block protected workspace screens when unauthenticated or signed out
@@ -325,6 +331,8 @@ function MainAppShell() {
           ) : activeRoute === '/settings' ? (
             <SettingsView />
 
+          ) : activeRoute === '/dashboard' ? (
+            <HomeView />
           ) : activeRoute === '/chat' ? (
             <ChatView />
           ) : activeRoute === '/' || activeRoute === '' ? (
